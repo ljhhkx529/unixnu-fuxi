@@ -93,6 +93,8 @@ def main():
     parser.add_argument('--data-ramdisk', action='store_true',
                         help='/chosen/memory-map RAMDisk placeholder; the loader fills in the real range for a scratch Data seed')
     parser.add_argument('--trust-cache', action='store_true', help='Zeroed TrustCache sidecar handoff placeholder')
+    parser.add_argument('--system-volume-auth-blob', type=Path, default=None,
+                        help='validated iOS 21H461 SystemVolume root-hash payload for /chosen')
     args = parser.parse_args()
     if (args.unique_chip_id is None) != (args.chip_id is None):
         parser.error('--unique-chip-id and --chip-id must be supplied together')
@@ -102,6 +104,14 @@ def main():
             not 0x10000000 <= args.owned_memory_size <= 0x200000000
             or args.owned_memory_size % 0x200000):
         parser.error('Owned memory must be 256 MiB to 8 GiB, aligned to 2 MiB')
+    system_volume_auth_blob = None
+    auth_blob = args.system_volume_auth_blob or (ROOT / '.cache/firmware/fuxi/system-volume-auth-blob.bin')
+    if auth_blob.exists() or args.system_volume_auth_blob is not None:
+        if not auth_blob.is_file():
+            parser.error(f'--system-volume-auth-blob not found: {auth_blob}')
+        system_volume_auth_blob = auth_blob.read_bytes()
+        if len(system_volume_auth_blob) != 208 or struct.unpack_from('<4I', system_volume_auth_blob) != (2, 0, 1, 32):
+            parser.error('--system-volume-auth-blob must be the pinned 208-byte 21H461 SystemVolume payload')
 
     try:
         cpu_regs = [int(value, 0) for value in args.cpu_regs.split(',')]
@@ -155,6 +165,8 @@ def main():
                         # Strict policy for the original AMFI: platform code only. This keeps AMFI
                         # enforcing; it does not relax it.
                         ('amfi-only-platform-code', struct.pack('<I', 1)),
+                        *([('system-volume-auth-blob', system_volume_auth_blob)]
+                          if system_volume_auth_blob is not None else []),
                         *empty_nvram_proxy()],
              [node('memory-map', ([("PackedRAMDisk" if args.packed_data_ramdisk else "RAMDisk", bytes(16))] if (args.data_ramdisk or args.packed_data_ramdisk) else []) +
                                  ([('TrustCache', bytes(16))] if args.trust_cache else [])),

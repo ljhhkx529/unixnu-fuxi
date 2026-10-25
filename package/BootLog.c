@@ -588,16 +588,32 @@ static void writer(void *arg, wait_result_t result) {
 }
 
 // Called by the board page's monitor once a second; starts the writer the first time when sheng-log=1.
+// fuxi calls boot_log_tick very early (startup.c, before PE_init_iokit), so IOLockGroup is still
+// NULL there. Skip without consuming boot_log_started: the monitor retries every second until
+// IOLibInit has run.
 void boot_log_tick(unsigned now) {
   (void)now;
   if (boot_log_started) return;
-  boot_log_started = 1;
   uint32_t mode = 0;
   if (!PE_parse_boot_argn("sheng-log", &mode, sizeof mode) || mode != 1) return;
   if (!&native_ufs_log_open || !&native_ufs_log_write || !&native_ufs_log_sync) return;
+  if (!IOLockGroup) return;
   boot_log_buffer = (uint8_t *)IOMallocAligned(LogMsgBlocks * LogBlock, LogBlock);
   if (!boot_log_buffer) return;
   export_lock = IOLockAlloc();
+  if (!export_lock) {
+    IOFreeAligned(boot_log_buffer, LogMsgBlocks * LogBlock);
+    boot_log_buffer = NULL;
+    return;
+  }
   thread_t thread;
-  if (kernel_thread_start_priority(writer, 0, BASEPRI_KERNEL, &thread) == KERN_SUCCESS) thread_deallocate(thread);
+  if (kernel_thread_start_priority(writer, 0, BASEPRI_KERNEL, &thread) != KERN_SUCCESS) {
+    IOLockFree(export_lock);
+    export_lock = NULL;
+    IOFreeAligned(boot_log_buffer, LogMsgBlocks * LogBlock);
+    boot_log_buffer = NULL;
+    return;
+  }
+  boot_log_started = 1;
+  thread_deallocate(thread);
 }

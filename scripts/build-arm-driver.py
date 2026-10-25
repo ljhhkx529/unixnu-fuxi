@@ -76,8 +76,9 @@ if component in ('NativeVirtioBlock', 'NativeRamBlock', 'NativeUfs'):
     if args.verified_root_bundle:
         command += ['-DNATIVE_VERIFIED_BLOCK_MULTI_POLICY=1']
 if component == 'NativeUfs':
-    command += ['-I', str(ROOT / 'kits/VerifiedRoot/include'), '-I', str(ROOT / 'drivers/NativeVirtioBlock'),
-                '-DNATIVE_VERIFIED_BLOCK=1', '-DNATIVE_VERIFIED_BLOCK_MULTI_POLICY=1', '-mgeneral-regs-only']
+    # fuxi development transport publishes the SHNGROOT windows without a
+    # repository-carried verified-root policy; NativeVirtioBlock is not linked.
+    command += ['-mgeneral-regs-only']
 if component=='NativeOfflineGPU':
     command += ['-I',str(ROOT/'drivers/NativeVirtioConsole')]
 if component in ('NativeLegacyDisplay','NativeHidInput'):
@@ -106,5 +107,16 @@ if deployment != (2, 0x110000):
     raise SystemExit(f'Unexpected platform deployment {deployment}')
 archive = out / ('lib' + component + '.a')
 archive.unlink(missing_ok=True)
-subprocess.run(['xcrun', 'ar', 'rcs', archive, destination], check=True)
+archive_objects = [destination]
+if component == 'NativeUfs':
+    # fuxi has no repository-carried live storage capture. Link the pinned
+    # original IOStorageFamily imports from the unchanged iPadOS 17.7.11
+    # kernelcache instead of producing them from audit-storage-interface.py.
+    bindings_source = ROOT / 'scripts/data/native-storage-original-bindings.S'
+    bindings_object = out / 'storage-original-bindings.o'
+    sdk = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip()
+    subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-isysroot', sdk,
+                    '-Werror', '-Wno-incompatible-sysroot', '-c', bindings_source, '-o', bindings_object], check=True)
+    archive_objects.append(bindings_object)
+subprocess.run(['xcrun', 'ar', 'rcs', archive, *archive_objects], check=True)
 print(f'{component}: -Werror build and actual ARM64/iOS 17 object audit passed')

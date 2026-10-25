@@ -1,4 +1,4 @@
-# Board description of the Xiaomi Pad 6S Pro (sheng, SM8550), read by the unixnu build driver.
+# Board description of the Xiaomi 13 (fuxi, SM8550), read by the unixnu build driver.
 
 [board]
 name = "fuxi"
@@ -37,7 +37,7 @@ windows = [
 ]
 
 [kernel]
-defconfig = "fuxi_defconfig"
+defconfig = "fuxi_full_defconfig"
 # Archive builders of the kernel step, in order. Each is a script of the build tree with its arguments. The VerifiedRoot
 # and VirtIO verified bundles are not built here; they need the volume policies of the target image.
 archives = [
@@ -46,13 +46,14 @@ archives = [
   "build-arm-driver.py ArmDTPlatform",
   "build-arm-driver.py ArmCpu",
   "build-arm-driver.py NativeAES",
-  "audit-storage-interface.py",
-  "build-arm-driver.py NativeUfs",
   "build-native-aes-bindings.py",
-  "build-boot-progress.py",
+  "build-arm-driver.py NativeUfs",
+  "build-arm-driver.py NativeRamBlock",
   "build-libpthread-kernel.py",
   "build-legacy-stub.py",
+  "build-boot-log.py",
 ]
+
 
 [kernel.prelink]
 tool = "kits/NativePrelink/emit_prelink.py"
@@ -127,8 +128,9 @@ BUILDID_STRING = "fuxi-research"
 # the optional trust cache and Data seed. The loader (DarwinBoot) is part of the firmware volume.
 [payload]
 volume = "FUXIESP"
-size_mib = 192
+size_mib = 176
 loader = "firmware"
+tools = true                      # show the Tools menu (menu plugins, e.g. Advanced Logger)
 title = "fuxi first boot: source 4K XNU to console"
 dram_size = "0x80000000"             # SMEM RAM table observed on the device
 skip_setup_tool = "scripts/seed-data-skip-setup.py"   # used by --skip-setup
@@ -143,58 +145,29 @@ kernel_args = [
   "serial=3",
   "debug=0x14e",
   "kt_fixed_zones=120",
-  "offline-legacy-register=1",
-  "offline-legacy-gop=1",
-  "offline-legacy-unit-scale=2",
-  "offline-legacy-pm=1",
-  "offline-legacy-validate=1",
-  "offline-legacy-transfer=1",
-  "offline-legacy-cpu-present=1",
-  "offline-hid-home=1",
-  "offline-hid-input=1",
-  "offline-legacy-phase=4",
-  "offline-mobile-graphics-client=1",
-  "offline-mobile-graphics-load=1",
   "offline-apfs-load=1",
-  "boot-progress=2",
   "-apfs_shared_datavolume",
   "offline-key-events=1",
-  # First boot carries no storage stack: the owner root and the PMGR integration
-  # are not linked yet (package/StageAStorageStubs.c), so the UFS root path and
-  # the AMFI PMGR gate stay off. Boot progress draws before any root mount.
-  # "native-ufs-root=1",
-  # "sheng-pmgr=2",
+  "native-fuxi-ufs-root=1",
   "armcpu-diagnostics=1",
+  "armcpu-spi-ipi=1",
   "sheng-disable-watchdogd=1",
   "sheng-disable-jobs=com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.bluetoothd",
-  "boot-ui-focus3=Preferences",
-  "boot-ui-focus4=SpringBoard",
-  "sheng-smp=1",
-  "sheng-cpufreq=3",
-  "sheng-touch=4",
-  "sheng-aks=1",
-  "sheng-gpu-power=9",
-  "sheng-gpu-metal=1",
-  "sheng-fb-gpu=1",
-  "sheng-banner=0",
-  "sheng-gpu-perf=8",
-  "sheng-gpu-addon=1",
-  "armcpu-spi-ipi=1",
   "-no_slto_panic",
   "ml-timeout-lock-panic-scale=40",
-  "sheng-touch-hid=1",
-  "sheng-data-persist=2",
 ]
 
 [payload.adt]
 tool = "scripts/make-fuxi-adt.py"
 chip_id = "207"
-owned_memory_size = "0x130000000"
+# No owned_memory_size: let DarwinBoot use its default 256 MiB window. The
+# fuxi UEFI memory map reserves a 320 MiB conventional run at 0xC4000000 so
+# AllocatePages(AllocateAddress) has room for the kernel base's 2 MiB offset.
 root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
 cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x600,0x700"
 packed_data_ramdisk = true
 ipad_identity = true
-unique_chip_id = "required"          # the seed is passed with --unique-chip-id (or UNIXNU_UNIQUE_CHIP_ID)
+unique_chip_id = "required"          # the platform seed is not stored in any repository
 
 # Image parameters come from the Mu-Silicium device config; [bootimg.image] would override them.
 

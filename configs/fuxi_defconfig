@@ -1,6 +1,11 @@
-# Stage 2a: console only. No storage stack, so the archive step never needs
-# build/storage-abi, which cannot be produced before the prelink it depends on.
+# Stage 2a: console only. No storage stack.
+#
+# The boot-progress overlay is allowed by the device-local
+# scripts/build-xnu-4k-baseline.sh override, which accepts the staged stub
+# archive from scripts/build-boot-progress.py instead of the audited
+# UFS/owner-root/Virtio archive set.
 
+CONFIG_XNU_BUILD_ARCHIVES=y
 CONFIG_XNU_SOURCE_CORECRYPTO14=y
 CONFIG_XNU_SOURCE_PTHREAD=y
 CONFIG_XNU_ARM_DT_PLATFORM=y
@@ -14,10 +19,11 @@ CONFIG_XNU_BOOT_PROGRESS=y
 # No storage stack yet. Linking NativeUfs needs the original IOBlockStorageDevice
 # class (constructor, destructor, vtable and six virtual entries) resolved to the
 # addresses inside the prelinked kernelcache, and those come from
-# audit-storage-interface.py's live capture, which no repository carries. With the
-# driver off, boot progress draws zero block counts; the kernel still boots and
-# reports the missing root on screen.
+# audit-storage-interface.py's live capture, which no repository carries.
 # UFS needs the IOStorageFamily symbols that only exist after prelink.
 CONFIG_XNU_NATIVE_UFS=n
 CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
-CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/legacy-stub/libLegacyStub.a"
+# bsd_init.c references the legacy display probe unconditionally, and the real
+# archive needs a prelink candidate that cannot exist before the first link.
+# This stub answers only those two symbols.
+CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/legacy-stub/libLegacyStub.a {tree}/build/boot-log/libBootLog.a"
