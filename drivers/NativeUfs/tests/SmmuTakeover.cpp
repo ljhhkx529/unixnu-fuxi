@@ -14,7 +14,7 @@ int main()
   reset(); auto p=plan(); assert(!p.error && !p.reuse && p.slot==127 && p.bank==69);
   r[(0x800+4*110)/4]=0x80000060; r[(0xc00+4*110)/4]=69;
   r[(0x1000+4*69)/4]=0x10000;
-  p=plan(); assert(!p.error && p.reuse && p.slot==110);
+  p=plan(); assert(!p.error && !p.reuse && p.slot==110 && p.bank==69);
   r[(0x800+4*111)/4]=0x80000060; r[(0xc00+4*111)/4]=69; assert(plan().error);
   // Another stream still pointing at the top bank (a mapping left by an earlier run): the plan moves to the next free bank down.
   reset(); r[0x800/4]=0x80000061; r[0xc00/4]=69; p=plan(); assert(!p.error && !p.reuse && p.bank==68 && p.slot==127);
@@ -22,10 +22,13 @@ int main()
   reset(); r[0x800/4]=0x80000061; r[0xc00/4]=69; r[0x804/4]=0x80000062; r[0xc04/4]=68; r[(128+67)*4096/4]=1; p=plan(); assert(!p.error && p.bank==66);
   reset(); for(unsigned k=0;k<8;++k){r[(0x800+4*k)/4]=0x80000100+k;r[(0xc00+4*k)/4]=69-k;}
   p=plan(); assert(p.error && !__builtin_strcmp(p.error,"reserved context bank already used") && p.bank==69);
-  reset(); r[0x800/4]=0x80000060; r[0xc00/4]=1; assert(plan().error);
+  // UEFI left our exact stream on a low bank in an unknown context state: take
+  // that bank over for a fresh bypass configuration instead of refusing it.
+  reset(); r[0x800/4]=0x80000060; r[0xc00/4]=1; r[(128+1)*4096/4]=3; r[(0x1000+4*1)/4]=0;
+  p=plan(); assert(!p.error && !p.reuse && p.bank==1 && p.slot==0);
   // Our stream already mapped to the fallback bank by an earlier run (the top bank held by another stream): reused, not refused.
   reset(); r[0x800/4]=0x80000061; r[0xc00/4]=69; r[0x804/4]=0x80000060; r[0xc04/4]=68; r[(0x1000+4*68)/4]=0x10000;
-  p=plan(); assert(!p.error && p.reuse && p.bank==68 && p.slot==1);
+  p=plan(); assert(!p.error && !p.reuse && p.bank==68 && p.slot==1);
   reset(); r[0x800/4]=0x80010060; r[0xc00/4]=69; assert(plan().error);
   reset(); r[0x800/4]=0x80008060; r[0xc00/4]=1; assert(!plan().error); // Distinct 16-bit SID.
   reset(); r[(128+69)*4096/4]=1; p=plan(); assert(!p.error && p.bank==68); // translating top bank: use the next one
@@ -58,9 +61,14 @@ int main()
   assert(!configure() && !inputFault(0x8cb5e9000ULL));
   assert(!inputFault(0x8cb60afffULL)); // Final byte of the same allocation.
   assert(writes.size()==5);
-  p=plan(); writes.clear(); assert(p.reuse && !configure() && writes.empty());
+  p=plan(); writes.clear(); assert(!p.error && !p.reuse);
+  assert(!configure() && writes.size()==4);
   r[(0x1800+4*p.bank)/4]=0;
-  assert(!configure() && writes.size()==1 && writes[0].first==0x1800+4*p.bank);
+  writes.clear();
+  assert(!configure() && writes.size()==5);
+  bool repaired = false;
+  for (auto w : writes) if (w.first == 0x1800 + 4 * p.bank && w.second == 1) repaired = true;
+  assert(repaired);
   // A refused context-format write must stop before stream publication.
   for(unsigned offset : {0x1800+4*69, 0x1000+4*69, 0xc00+4*127, 0x800+4*127}) {
     reset(); p=plan(); writes.clear(); drop=offset;
@@ -82,9 +90,10 @@ int main()
   assert(!planUfsSmmu(0x60,0xfffffffffULL,1,read).error);
   r[0x28/4]&=~(1U<<12); assert(plan().error);
   reset(); r[0x20/4]&=~(1U<<30); assert(plan().error);
-  // Reused context with an unexpected VMID/attribute must not be repaired.
+  // Our own exact stream with an unexpected VMID/attribute is taken over and
+  // repaired, not refused.
   reset(); p=plan(); drop=0xffffffffU; assert(!configure());
-  r[(0x1800+4*p.bank)/4]=0x10001; p=plan(); assert(p.error);
-  writes.clear(); assert(configure() && writes.empty());
+  r[(0x1800+4*p.bank)/4]=0x10001; p=plan(); assert(!p.error && !p.reuse);
+  writes.clear(); assert(!configure() && !writes.empty());
   puts("PASS: SMMU geometry/conflicts, VA64 high-DMA regression, full-range width limits, ordered configuration, reuse/repair and blocked-write refusal");
 }

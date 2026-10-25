@@ -1749,6 +1749,10 @@ bool NativeUfs::start (IOService *provider)
   PE_parse_boot_argn ("native-ufs-root", &rootMode, sizeof (rootMode));
   PE_parse_boot_argn ("native-fuxi-ufs-root", &fuxiRoot, sizeof (fuxiRoot));
   native_ufs_probe_requested = probe != 0;
+  IOLog ("NativeUfs: start provider=%s probe=%u root=%u fuxi=%u root-device=%u\n",
+         provider ? provider->getMetaClass ()->getClassName () : "-",
+         probe, rootMode, fuxiRoot,
+         provider && OSDynamicCast (IOPlatformExpertDevice, provider) ? 1u : 0u);
   // Default: match for observability only, never touch the controller. Hardware work runs once,
   // from the root-device personality; the ufshc nub match stays observation-only.
   if ((!probe && !rootMode && !fuxiRoot) || !OSDynamicCast (IOPlatformExpertDevice, provider)) {

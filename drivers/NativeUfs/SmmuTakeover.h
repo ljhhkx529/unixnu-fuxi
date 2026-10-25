@@ -42,6 +42,39 @@ static UfsSmmuPlan planUfsSmmuBank(uint16_t stream, uint64_t dma, uint64_t bytes
   }
   if (count > 128) count = 128; // Firmware's reliably accessible groups only.
   if (bankFromTop >= banks - 1) {p.error = "no free context bank"; return p;}
+
+  // A UEFI UFSDxe hand-off often leaves the exact UFS stream already mapped on
+  // a low context bank. Take that bank over instead of refusing it: UEFI's
+  // SCTLR/CBAR state is not guaranteed to be our Linux-style bypass setup, so
+  // select the bank for a fresh configure rather than reusing the old context.
+  // Duplicate exact mappings remain fatal: the caller must not guess which
+  // stream group wins.
+  unsigned exactCount = 0, exactSlot = 0xffffffffU, exactBank = 0;
+  uint32_t exactSmr = 0, exactS2cr = 0;
+  for (unsigned i = 0; i < count; ++i) {
+    uint32_t smr = read(0x800 + 4 * i);
+    if (!(smr & 0x80000000U)) continue;
+    uint32_t mask = (smr >> 16) & 0x7fff;
+    uint32_t s2cr = read(0xc00 + 4 * i);
+    if (!mask && ((smr ^ stream) & 0xffff) == 0) {
+      exactCount++;
+      exactSlot = i; exactBank = s2cr & 0xff; exactSmr = smr; exactS2cr = s2cr;
+    }
+  }
+  if (exactCount > 1) {
+    p.slot = exactSlot; p.smr = exactSmr; p.s2cr = exactS2cr;
+    p.error = "conflicting UFS stream mapping"; return p;
+  }
+  if (exactCount == 1) {
+    if (exactBank >= banks) {
+      p.slot = exactSlot; p.smr = exactSmr; p.s2cr = exactS2cr;
+      p.error = "conflicting UFS stream mapping"; return p;
+    }
+    p.slot = exactSlot; p.bank = exactBank; p.smr = exactSmr; p.s2cr = exactS2cr;
+    p.reuse = false;
+    return p;
+  }
+
   p.bank = banks - 1 - bankFromTop;
   unsigned matches = 0;
   for (unsigned i = 0; i < count; ++i) {
