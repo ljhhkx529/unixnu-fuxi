@@ -3,7 +3,7 @@
 # Build only the native UFS root windows and the RAM-backed Data seed. The
 # audited UFS/owner-root/Virtio path stays off because fuxi has no Virtio
 # block transport and no repository-carried live storage capture. Sheng
-# GPU/PMGR/Adreno bring-up is intentionally not enabled here.
+# GPU/Adreno bring-up stays off; PMGR is required by native UFS root boot.
 
 CONFIG_XNU_BUILD_ARCHIVES=y
 CONFIG_XNU_BUILD_WERROR=n
@@ -43,6 +43,6 @@ CONFIG_XNU_ARMVIRT_PLATFORM=n
 CONFIG_XNU_BOOT_PROGRESS=n
 CONFIG_XNU_NATIVE_ADRENO=n
 CONFIG_XNU_NATIVE_LEGACY_DISPLAY=n
-CONFIG_XNU_SHENG_PMGR=n
+CONFIG_XNU_SHENG_PMGR=y
 CONFIG_XNU_SOURCE_MOCKFS=n
 CONFIG_XNU_ZONE_PGZ_ALIGNMENT_PROBE=n

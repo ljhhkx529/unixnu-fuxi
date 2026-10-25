@@ -18,6 +18,7 @@ claimed and no property is invented beyond these pinned sources.
 """
 from pathlib import Path
 import argparse
+import hashlib
 import os
 import struct
 import zlib
@@ -31,6 +32,10 @@ GIC_DIST_SIZE = 0x10000
 GIC_REDIST = 0x17180000
 GIC_REDIST_SIZE = 0x200000
 TIMEBASE = 19200000
+# iBoot's SHA-384 of the boot manifest; /sbin/mount -P 1 exits with
+# EX_NOINPUT (66) unless /chosen exposes this. A fixed stand-in value is
+# sufficient because the target volume only needs the property to exist.
+BOOT_MANIFEST_HASH = hashlib.sha384(b'fuxi boot manifest').digest()
 UFS_HC = 0x1d84000
 UFS_HC_SIZE = 0x3000
 UFS_PHY = 0x1d80000
@@ -158,6 +163,8 @@ def main():
                         # Image4 hash algorithm. The target iPad's DT specifies sha2-384 in /chosen; this
                         # selects the algorithm only and asserts nothing about Apple silicon or fuses.
                         ('crypto-hash-method', b'sha2-384\0'),
+                        # Keeps /sbin/mount -P 1 from exiting 66 during the launchd mount phase.
+                        ('boot-manifest-hash', BOOT_MANIFEST_HASH),
                         *( [('root-matching', ('<dict><key>IOProviderClass</key><string>IOMedia</string>'
                                                '<key>IOPropertyMatch</key><dict><key>UUID</key><string>' +
                                                args.root_match_volume_uuid.upper() + '</string></dict></dict>\0').encode())]

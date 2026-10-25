@@ -149,6 +149,7 @@ kernel_args = [
   "-apfs_shared_datavolume",
   "offline-key-events=1",
   "native-fuxi-ufs-root=1",
+  "sheng-pmgr=2",
   "armcpu-diagnostics=1",
   "armcpu-spi-ipi=1",
   "sheng-disable-watchdogd=1",
