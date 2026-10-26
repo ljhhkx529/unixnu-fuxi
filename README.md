@@ -6,46 +6,68 @@
   </picture>
 </p>
 
-<p align="center">
-  <a href="https://unixnu.com"><img alt="Documentation" src="https://img.shields.io/badge/docs-unixnu.com-2A5BD7?logo=readthedocs&logoColor=white"></a>
-  <a href="https://t.me/unixnu"><img alt="Telegram" src="https://img.shields.io/badge/Telegram-@unixnu-26A5E4?logo=telegram&logoColor=white"></a>
-  <a href="https://qun.qq.com/universal-share/share?ac=1&authKey=Pubz23DOCY76nxjlGuSms2zesk4jRvas4zrXJRYk7omf7CprXbGQigLEI%2BCoYR8D&busi_data=eyJncm91cENvZGUiOiIxMTI2MTE2NzU5IiwidG9rZW4iOiJwSHJsUDN1UnN2Vi8yM210TjJRbzBIcERmcUpyOS9lb0hHVVpadWdvVFdScVpSYUFLT1YzTk5TWC9mN2xWYmtIIiwidWluIjoiMzE1MTEwOTc0MSJ9&data=_cJgr-jX9yJ2-GXwVjRN5FOhDyk5B-HAfIk5LSunbW_XkkmKqNXbpH33wzP93J0p9DI1fbjgBUrUfTVhwDcxjg&svctype=4&tempid=h5_group_info"><img alt="QQ Group" src="https://img.shields.io/badge/QQ%20Group-join-12B7F5?logo=qq&logoColor=white"></a>
-  <a href="https://x.com/unixnu"><img alt="X" src="https://img.shields.io/badge/X-@unixnu-000000?logo=x&logoColor=white"></a>
-</p>
-
 # UniXNU-fuxi
 
-Device repository for the Xiaomi Pad 6S Pro (fuxi, SM8550). It holds the board file, kernel defconfig, device scripts, drivers and package.
-
-🎉 **News:** The native Metal GPU driver is fully working on fuxi. The render server composites the system UI through the Adreno 740, and listed processes get their own Metal devices.
+Device repository for the Xiaomi 13 (fuxi, SM8550). It holds the board file, kernel defconfigs, device scripts, drivers and package.
 
 - [Documentation](https://unixnu.com)
-- [Device page](https://unixnu.com/devices/fuxi)
 - [Porting guide](https://unixnu.com/porting/)
 - [Build](https://unixnu.com/building)
 
-Firmware: [uefi-fuxi](https://github.com/UniXNU/uefi-fuxi).
+Build with the `unixnu` driver of [UniXNU](https://github.com/UniXNU/UniXNU).
 
-Build with the `unixnu` driver of [UniXNU](https://github.com/UniXNU/UniXNU). Clone both repositories with `--recurse-submodules`; `unixnu fetch` also updates the module submodules.
+## State
 
-## Build
+The fuxi port (`Platforms/Xiaomi/fuxiPkg`) starts through `fastboot boot` and reaches its boot manager with the firmware framebuffer. The board file and the ADT generator carry the values read from the stock firmware and the stock device tree.
 
-Run these commands from the UniXNU checkout. The device repository is `../UniXNU-fuxi`.
+On top of that the tree boots iPadOS 17.7.11 (iPad7,1 userland): NativeUfs mounts the OS/SystemOS windows from userdata, `sheng-data-persist=2` keeps a persistent Data-store window at the end of userdata, and the Adreno 740 presents the UI through NativeAdreno/NativeMetal. Everything is RAM boots (`fastboot boot`); the platform seed is not stored in the repository (`unique_chip_id = "required"`).
 
-```sh
-./unixnu defconfig fuxi_defconfig -D ../UniXNU-fuxi
-./unixnu fetch
-./unixnu ipsw fetch
-./unixnu build kernel
-./unixnu build package
-./unixnu build firmware --uefi ../uefi-fuxi
-cd ../uefi-fuxi
-python3 uefi-fuxi/scripts/bootimage.py
-```
+## Known-good boot arguments
 
-The [device page](https://unixnu.com/devices/fuxi#build) adds the userdata image and the Data seed growth commands. The platform seed, trust cache and Data seed are device inputs. Use `--owner-trust-cache <bundle>` for an owner-signed bundle.
+Beyond the arguments the board generates, these are the fuxi-specific switches and why they are there:
 
-Without a Mac, run the kernel and userdata steps in the [macOS runner workflow](https://github.com/UniXNU/UniXNU/actions/workflows/macos.yml). The [build guide](https://unixnu.com/building#macos-runner) lists its inputs.
+| Argument | Why |
+| --- | --- |
+| `native-fuxi-ufs-root=1` | start NativeUfs from the root-device personality: publish the OS/SystemOS windows, authentication callback and root read path |
+| `offline-legacy-*` + `offline-mobile-graphics-*` | offline legacy platform/power/display bring-up and the mobile graphics client/load path |
+| `sheng-gpu-metal=1 sheng-fb-gpu=1 sheng-backlight=1 sheng-vsync=120` | Adreno 740 Metal, GPU scan-out hand-off, firmware backlight and the 120 Hz work-loop timer |
+| `sheng-pmgr=2` | publish the original PMGR nub (mode 2) |
+| `sheng-log=1` | write the boot/UFS log to the 32 MiB window reserved at the end of userdata |
+| `sheng-data-persist=2` | enable the read/write persistent Data-store window (`NativeRamBlock` overlay) |
+| `armcpu-spi-ipi=1` | start secondary CPUs using software-SPI IPIs |
+| `sheng-disable-watchdogd=1 sheng-disable-jobs=... sheng-lite=1` | disable watchdogd and noisy/network-only daemons so launchd and SpringBoard can make progress |
+| `qcom-usb-debug=1` | enable the fuxi USB debug adapter (`FuxiUsbCompat`) on top of `QcomXnuUsbDebug` |
+| `-no_slto_panic` | avoid spinlock-timeout panics during early bring-up |
+
+## Board values
+
+| Item | Value | Source |
+| --- | --- | --- |
+| SoC | SM8550, Xiaomi 13 (`fuxi`) | `board.toml` |
+| Target OS | iPad7,1 iPadOS 17.7.11, build 21H461 | `board.toml` |
+| Defconfig | `fuxi_full_defconfig` | `board.toml` |
+| CPU registers | `0,0x100,0x200,0x300,0x400,0x500,0x600,0x700` | `board.toml` |
+| Root volume UUID | `04769D26-2CA0-4825-B443-E2E5F88300F2` | `board.toml` |
+| UFS windows | OS + SystemOS from GPT `userdata` on LUN 0 | `board.toml` |
+| UFS host controller | `0x1d84000`, apps SMMU `0x15000000`, stream id `0x60` | `BUILD-PROGRESS.md`, stock DTB |
+| Chip id | `0x207` | `board.toml` |
+| Platform seed | `unique-chip-id` is required and never committed | `board.toml` |
+| Payload volume | `FUXIESP`, 176 MiB | `board.toml` |
+| Owned memory | `0x130000000` | `board.toml` |
+| Firmware | `Platforms/Xiaomi/fuxiPkg/fuxi.dsc`, config `fuxi` | `board.toml` |
+| Boot image | header v3, packed by `uefi-fuxi/scripts/bootimage.py` | `BUILD-PROGRESS.md` |
+
+## Scripts
+
+| Script | Purpose |
+| --- | --- |
+| `scripts/make-fuxi-adt.py` | Apple-format device tree for the first boot |
+| `scripts/build-fuxi-verified-root-policy.py` | signed OS/SystemOS policy bundle for VerifiedRootProbe |
+| `scripts/build-arm-driver.py` | compiles a generic driver against the XNU compile records |
+| `scripts/prepare-fuxi-gmu.py` + `prepare-fuxi-gmu-votes.py` + `prepare-fuxi-command-db-oracle.py` | prepare the Adreno GMU, votes and command-db inputs for NativeAdreno |
+| `scripts/build-native-legacy-display.py` | build the `NativeLegacyDisplay` archive |
+| `scripts/build-fuxi-usb-debug.py` | build the `QcomXnuUsbDebug` archive |
+| `scripts/read-sheng-log.py` | decode the UFS log window pulled from userdata |
 
 ## Device support
 
@@ -53,21 +75,22 @@ The original iPadOS userland runs from the IPSW; the home screen and Settings ar
 
 | Feature | State | Notes |
 | --- | --- | --- |
+| UEFI | ⚠️ | Mu-Silicium boot manager on the firmware framebuffer; no general UEFI storage or input stack |
 | Touch | ✅ | Novatek NT36532E |
-| Display | ✅ | |
-| UFS | ✅ | Native UFS root |
+| Display | ⚠️ | Firmware GOP framebuffer handed off to `NativeLegacyDisplay`; the panel is not re-initialised and refresh is a work-loop timer |
+| UFS | ⚠️ | XNU `NativeUfs` root read path and OS/SystemOS windows are verified; UEFI side has no general UFS access |
 | Wi-Fi | ❌ | |
 | Bluetooth | ❌ | |
 | Camera | ❌ | |
-| GPU | ✅ | Native Metal, GPU compositing, per-process devices and exported pipeline caches |
-| USB | ❌ | |
+| GPU | ⚠️ | Adreno 740 Metal through `NativeAdreno`; compositing works, but there is no panel-vblank hand-off or DCVS |
+| USB | ⚠️ | fuxi `QcomXnuUsbDebug` debug backend; no general USB host/peripheral stack |
 | Audio | ❌ | |
 | Sensors | ❌ | |
 | Battery driver | ❌ | |
 | MiPPS | ❌ | |
 | Suspend and resume | ❌ | |
 
-✅ available, ⚠️ partial, ❌ not available. The GPU details are in the [Adreno 740 driver](https://unixnu.com/drivers/native-adreno) page.
+✅ available, ⚠️ partial, ❌ not available.
 
 ## License
 
