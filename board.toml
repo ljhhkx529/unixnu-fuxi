@@ -57,6 +57,7 @@ archives = [
   "build-arm-driver.py NativeRamBlock",
   "build-libpthread-kernel.py",
   "build-legacy-stub.py",
+  "build-boot-progress.py",
   "build-boot-log.py",
 ]
 
@@ -150,6 +151,7 @@ kernel_args = [
   "-v",
   "serial=3",
   "debug=0x14e",
+  "boot-progress=2",
   "kt_fixed_zones=120",
   "offline-apfs-load=1",
   "-apfs_shared_datavolume",
