@@ -184,7 +184,7 @@ def main():
         *([node('psci', [('compatible', b'arm,psci-1.0\0'), ('method', args.psci_method.encode() + b'\0')])] if len(cpus) > 1 else []),
         # Suspend/resume is not implemented for this board. Use the original
         # root-domain policy input rather than allowing the CPU to park forever.
-        node('defaults', [('sleep-disabled', struct.pack('<I', 1))]),
+        node('defaults', [('sleep-disabled', struct.pack('<I', 1)), ('kern.maxvnodes', struct.pack('<I', 66560))]),
         node('options', []),
         # The original AppleImage4 panics without a product node. Name and model are the
         # board DT's own strings.
