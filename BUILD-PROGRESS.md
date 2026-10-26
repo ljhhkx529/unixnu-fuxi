@@ -197,3 +197,108 @@ sheng 的标准读法是用 `package/linux-log/`：mainline 内核 + initramfs�
   `build-linux-log-boot.py --boot ... --module nvmem-reboot-mode.ko`。
 
 在此之前，fuxi 用读端 A（Android dd）验证写链路；读端 B 仅差 fuxi DTB 这一块输入。
+
+## 十、union SystemOS 启动根因（SpringBoard 崩溃循环）
+
+### 结论
+
+最新一轮日志（`fuxi-20190100-000033 (2).log`）已越过 UFS 阶段：union SystemOS / OwnerData
+挂载成功，`load_init_program` 拉起 `/sbin/launchd`，用户态大量起来，但 **SpringBoard 每约 3 秒
+被拉起一次立即崩溃，触发 `Too many corpses being created`，始终到不了主屏**。
+
+这是「dyld 共享缓存 slide 未修正」导致的用户态崩溃循环，不是 UFS 问题。
+
+### 两条日志要分开看
+
+`shared_region: [1(launchd)] check_np(...) vm_shared_region_start_address() failed` 只在 launchd
+早期出现 2 次，是 **良性握手**，不是致命点：
+
+- dyld 每次进程启动先调 `shared_region_check_np()`（`bsd/vm/vm_unix.c:2093`）问「共享区是否已映射」。
+- 共享区还是空时，`vm_shared_region_start_address()`（`osfmk/vm/vm_shared_region.c:999`）发现
+  `sr_first_mapping == -1`，返回 `KERN_INVALID_ADDRESS`，内核打印该行并回 `ENOMEM`。
+- dyld 收到 `ENOMEM` 后自己去映射 dyld 共享缓存。**这一行 sheng 也必然出现，无需修。**
+
+真正致命的是后续的 SpringBoard 崩溃循环：
+
+```text
+SpringBoard[107] Corpse failure, too many 6
+Process[107] crashed: SpringBoard. Too many corpses being created.
+```
+
+### 根因：dyld 共享缓存 slide 未生效
+
+日志反复出现 `unnest ... DYLD shared region 0x1fdc00000-0x203000000`（非标准基址，slide 偏约
+1.98GB），并且 `[payload] text_fixups` 里 3 条 `dyld_shared_cache_arm64.*` fixup **一条都没 applied**，
+只有 `BTAudioHALPlugin` 那条 applied：
+
+```text
+text-fixup: BTAudioHALPlugin+0x38bec (8 bytes) applied
+```
+
+`cs_text_fixup_page()`（`UniXNU/patches/xnu/native-text-fixup.patch:151`）只挂在
+`vm_page_validate_cs_mapped_slow()`（同 patch 的 `osfmk/vm/vm_fault.c` 段）。dyld 共享缓存走的是
+shared-region 专用映射路径，不经过这个 UBC 校验点，所以针对 `dyld_shared_cache_arm64.*` 的 fixup
+永远打不上，slide 保持错误，dyld/SpringBoard 反复 crash → corpse loop。
+
+### sheng 怎么处理（`no ignition` 模式）
+
+sheng 不靠 `[payload] text_fixups` 去补 dyld cache（sheng 的 `board.toml` 没有这些条目），而是让
+dyld 直接跳过 shared-region 点火，把镜像认证交给已验证的只读 owner 挂载：
+
+- `CONFIG_XNU_OWNER_CACHE_MOUNT=y` + `CONFIG_XNU_OWNER_UNION_SYSTEMOS=y` 把 SystemOS cryptex
+  union 挂到 `/`（`UniXNU/patches/xnu/offline-owner-systemos-mount.patch`）。
+- owner cache 挂载成功后，`native_owner_cache_prepare()` 置 dyld 标志 bit 3
+  （`dyld_flags |= UINT64_C(8)`，`offline-owner-systemos-mount.patch:168`）：
+
+  ```c
+  /* Original dyld bit 3 selects no ignition; the owner chain and actual
+   * readonly mounts above supply image authentication in this mode. */
+  dyld_flags |= UINT64_C(8);
+  commpage_update_dyld_flags(dyld_flags);
+  ```
+
+- 于是 dyld 进入 `no ignition`：`check_np` 看到空共享区（正是那两行日志），**不再走
+  `shared_region_map_and_slide_2_np`**，改用私有映射；认证责任转移到只读 owner 链。
+- `UniXNU/patches/xnu/native-4k-user-abi.patch:66` 同时把 shared-region 子映射改为 4K page shift，
+  与 4K 用户 ABI / dyld cache 对齐。
+
+fuxi 已经继承 `OWNER_CACHE_MOUNT/STARTUP/UNION_SYSTEMOS=y` 和 `native-4k-user-abi.patch`，所以那两条
+`check_np` 日志对 fuxi 同样是良性的；fuxi 的差异是额外带了 3 条 dyld `text_fixups`，而这些 fixup 打不进
+shared-region 路径，等于白带，slide 依旧错误。
+
+### 已实施的修复（2026-10-26）
+
+对齐 sheng 的 slide 来源，而不是继续依赖 dyld `text_fixups`：
+
+- 三个检查点与 sheng 对比结果：
+  - `[kernel.prelink] slide = "-0x1000000"` → 与 sheng 一致，未改。
+  - `owned_memory_size` → fuxi `0x100000000` 改为 sheng 的 `0x130000000`（4.75 GiB，
+    fuxi 6 GiB conventional bank 放得下）。
+  - DT 内存窗口 `dram-base`/`dram-size` = `0x80000000`/`0x80000000` → 与 sheng 一致，未改。
+- 移除 `board.toml [payload] text_fixups` 中 3 条 `dyld_shared_cache_arm64.*`，
+  只保留实际会应用的 `BTAudioHALPlugin`。
+
+`owned_memory_size` 只进 ADT/payload，不改变 `kernel.macho`，因此只重建 payload + bootimage：
+
+```sh
+./unixnu build payload -D ../unixnu-fuxi --uefi ../uefi-fuxi \
+  --unique-chip-id ce854c9ae043320b \
+  --owner-trust-cache out/fuxi/payload/original-static-system.bundle \
+  --data-ramdisk out/fuxi/build/owner-data-fixture/owner-data-16g.dbr
+python3 ../uefi-fuxi/scripts/bootimage.py \
+  --ramdisk out/fuxi/payload/payload.img -o out/fuxi/boot/boot.img
+```
+
+产物：
+
+| 文件 | sha256 |
+| --- | --- |
+| `UniXNU/out/fuxi/payload/payload.img` | `e900e2fa013c1221937ca707316c0c6ac69510766de4334076dc14b4171fedbb` |
+| `UniXNU/out/fuxi/boot/boot.img` | `f7d3e12cf2eb6786c4149393882bd4e5ef1e26447dc55550330c41fb666dcc65` |
+
+### 待验证
+
+- [ ] 真机刷入新 `boot.img`，确认 launchd 后正常拉起 SpringBoard，无
+      `Too many corpses being created` / 高频 `caught waking the CPU`。
+- [ ] 若仍出现 corpse loop，再检查 dyld shared cache 的错误 slide 是否还来自
+      `owned_memory_size` 之外的因素（如 `fuxiPkg/MemoryMapLib` 的窗口基址 / 大小）。
