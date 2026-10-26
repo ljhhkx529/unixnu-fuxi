@@ -302,3 +302,153 @@ python3 ../uefi-fuxi/scripts/bootimage.py \
       `Too many corpses being created` / 高频 `caught waking the CPU`。
 - [ ] 若仍出现 corpse loop，再检查 dyld shared cache 的错误 slide 是否还来自
       `owned_memory_size` 之外的因素（如 `fuxiPkg/MemoryMapLib` 的窗口基址 / 大小）。
+
+## 十一、union SystemOS / 图形 / USB 后续 bring-up（2026-10-25 ~ 2026-10-27）
+
+按提交顺序补记后续遇到的现象、根因和修复。提交号可在本仓库用 `git log` 对应。
+
+### 11.1 让 owner SystemOS 对 launchd 可用
+
+**现象**
+
+owner SystemOS 挂起来之后，用户态仍找不到 dyld 共享缓存：`DYLD_SHARED_CACHE_DIR`
+路径被拼接错、release 的 `/sbin/launchd` 没有被选中，shared region 还要求 cache
+必须放在 root 或 cryptex 挂载点，而不是 UUID 选中的 SystemOS 卷。
+
+**修复**（`958dd51 xnu: make owner SystemOS mount usable by launchd`）
+
+- 保留 `DYLD_SHARED_CACHE_DIR` 的尾部 `/`，让 dyld 追加 `arm64` cache 文件名而不是把路径拼坏。
+- owner cache mount 生效时选择 release 的 `/sbin/launchd`。
+- 允许 shared region 直接使用挂在 `/private/preboot` 的 UUID 选定 SystemOS 卷。
+- 在应用其他 xnu patch 前先反向撤掉过期的 shared-region patch，避免和 owner cache carrier hunk 重叠。
+- 把 `XNU_OWNER_CACHE_MOUNT` 纳入 `vm_unix` 重建 stamp，避免缓存命中旧对象。
+
+### 11.2 PMGR 与 boot-manifest-hash
+
+**现象**
+
+- 启动早期报 `AMFI: NO PMGR?`，ApplePMGR 没有以 root-device 期望的形态发布。
+- launchd 挂载阶段 `/sbin/mount -P 1` 返回 `EX_NOINPUT (66)`，触发 critical-process panic。
+
+**修复**（`5d3a148 fuxi: enable PMGR and provide boot-manifest-hash`）
+
+- 打开 `CONFIG_XNU_SHENG_PMGR=y`，并在 `board.toml` 增加 `sheng-pmgr=2`。
+- `scripts/make-fuxi-adt.py` 向 `/chosen` 写入 `boot-manifest-hash`，先让 `mount -P 1`
+  有属性可读；后续 owner/verified 链中这一合成属性被真实 `/chosen/text-fixups` 替代。
+
+### 11.3 从 raw UFS 窗口切到 owner-root + verified-root
+
+**现象**
+
+早期 `fuxi_full_defconfig` 只挂 raw UFS 开发窗口，没有 audited owner/verified 链；
+同时 DarwinBoot 默认 256 MiB 窗口太小，进入 launchd 后仅剩约 32 MiB，jetsam
+不断杀掉 SpringBoard/powerd。
+
+**修复**
+
+- `f627c4c fuxi: enable owner-root and verified-root union SystemOS bring-up`
+  - `build-arm-driver.py` 支持 `NativeUfs --verified-root --verified-root-bundle`，
+    并让 `NativeVirtioBlock` 用 verified multi-policy bundle，两个块传输共用
+    fuxi 固定下来的原始 `IOBlockStorageDevice` bindings。
+  - 新增 `scripts/build-fuxi-verified-root-policy.py`，从固定的 21H461 OS/SystemOS
+    DMG 生成签名 VerifiedRoot manifest。
+  - 更新 owner cache-carrier、root-binding-audit、systemos-mount patch，删除过期
+    shared-region patch。
+  - `make-fuxi-adt.py` 改为输出 `/chosen/text-fixups`，不再使用合成
+    `boot-manifest-hash`；`board.toml` 把 `owned_memory_size` 提到 sheng 的
+    `0x130000000`（4.75 GiB）。
+- `9b88908 fuxi: switch full defconfig to union SystemOS bring-up`
+  - 在 `fuxi_full_defconfig` 打开 NativeVirtioBlock、VerifiedRoot、owner root
+    audit/trust、boot manifest、union SystemOS，以及 NativeAdreno、NativeLegacyDisplay、
+    boot-progress；并链接对应 archive。
+- `f041a17 fuxi: raise kern.maxvnodes in the generated ADT`
+  - 在生成 ADT 的 `/defaults` 中写 `kern.maxvnodes=66560`，解决首次启动 mount 和
+    文件查找阶段 vnode 池不足导致的停顿。
+- `81b4cc5 fuxi: replace legacy-stub with Sheng platform-power archive`
+  - 内核 archive 列表从 `build-legacy-stub.py` 换成 `build-sheng-platform-power.py`，
+    full union SystemOS boot 需要真正的 Sheng PMGR/power archive，而不是旧的显示 stub。
+
+### 11.4 boot progress、boot log 与 CrashReporter 导出
+
+**现象**
+
+旧的 stage-A storage/probe stub 没有 watchdog policy 和 boot-progress 后端；
+启动早期也拿不到 crash 文件，只能依赖 panic 屏或外部抓 UFS。
+
+**修复**
+
+- `10ad4d8 fuxi: rebuild boot-progress archive from Sheng sources`
+  - `build-boot-progress.py` 改从 `BootWatchdogPolicy`、`BootProgress`、
+    `BootFaultProbe` 编译 `libBootProgress.a`。
+  - 新增 `package/BootProgressShim.c`，boot-progress 关闭时保持 no-op，并在
+    IOKit / NativeUfs 就绪后重试 `boot_log_tick()`。
+  - `zzz-boot-progress.patch` 扩展 SystemOS mount panic，输出 owner-cache
+    stage/device/authorization 诊断；`board.toml` 增加 `boot-progress=2`。
+- `77b1e05 fuxi: persist CrashReporter snapshots in the UFS boot log`
+  - SHLOG001 窗口升级到 version 4。
+  - `BootCrashExport` 遍历 `/private/var/mobile/Library/Logs/CrashReporter`，
+    把最新 `.ips` 交给 boot-log writer，作为 `SHCRASH01` 保存。
+  - `BootLogStubs` 弱化 Adreno dashboard 符号，`BootLogTouchStats` 提供 touch
+    计数器，使 boot-log archive 在完整 GPU archive 之前也能链接。
+  - `build-boot-log.py` 编译 CrashExport 单元；`board.toml` 打开 `sheng-log=1`。
+
+### 11.5 legacy display 与 Adreno GMU/command-db
+
+**现象**
+
+之前的显示路径还是 no-op stub；NativeAdreno 的 GMU include 指向 sheng 输入，
+fuxi 的 GMU 寄存器、clock/vote 和 command-db fixture 没有真实来源。
+
+**修复**
+
+- `aca19ab fuxi: bring up the legacy display and vsync/refresh path`
+  - `LegacyDisplayProbe` 记录 6 个 vsync 事件并写进 prepare report。
+  - `LegacyDisplayStub` 增加 `native_gop_handoff_call/memory` no-op，让内核在完整
+    presenter archive 之前也能链接。
+  - `build-native-legacy-display.py` 绑定原始 vsync sender、slot 301 refresh
+    attributes 和 `setDisplayRefreshProperties`。
+  - `NativeHidInput` 先用 link stub 构建，等 v9 IOHIDFamily prelink candidate 就绪。
+  - ADT 的 artwork display gamut 改为 sRGB；board/defconfig 打开 legacy display
+    archive 与相关 boot-args。
+- `db0d411 fuxi: generate pinned Adreno GMU and command-db inputs`
+  - 新增 `prepare-fuxi-gmu.py`、`prepare-fuxi-gmu-votes.py`、
+    `prepare-fuxi-command-db-oracle.py`，从 `fuxi.dtb` 和固定 Linux/firmware 源
+    生成 fuxi 的 GMU/clock/vote 和 command-db fixture。
+  - `fuxi_adreno_common.py` 统一 DT 解析、来源锁定和缓存读取；
+    `fuxi-adreno-inputs.json` 固定固件 blob 与校验和。
+  - `build-native-adreno-kits.py` 嵌入 fuxi GMU/SQE/ZAP 固件；
+    `build-arm-driver.py` 把 NativeAdreno 指到 `build/fuxi-gmu`。
+
+### 11.6 QcomXnuUsbDebug CDC-ACM
+
+**现象**
+
+没有串口时，早期 XNU 日志只能靠 UFS log 窗口或 panic 屏，交互和实时采集很受限。
+
+**修复**
+
+- `354e4e7 fuxi: add QcomXnuUsbDebug CDC-ACM transport`
+  - 将 `drivers/QcomXnuUsbDebug` 作为 submodule 引入，并新增设备适配层
+    `package/FuxiUsbCompat.c`。
+  - `zzzd-fuxi-usb-debug.patch` 把 kprintf/serial 输出镜像到 USB writer。
+  - `build-fuxi-usb-debug.py` 用真实 XNU compile record 编译 DWC3/SMMU/CDC 源；
+    `board.toml` 打开 archive 和 `qcom-usb-debug=1`。
+- `e620bbb fuxi: update QcomXnuUsbDebug submodule`
+  - 将 submodule 固定到 `a5f7629`：在 `acquire()` 前映射 GCC/DWC3/SMMU IO，
+    并增加 USB 初始化/错误诊断。
+
+### 11.7 首启动减负与 persistent Data
+
+**现象**
+
+全新 Data 首次启动时，大量只会访问网络/iCloud/相册的 launchd job 和 SpringBoard
+抢 CPU 与内存；Data 写入默认不持久，`datamigrator` 和系统 app staging 不完整。
+
+**修复**（`8200896 fuxi: add sheng-lite policy and persistent Data seed`）
+
+- `BootWatchdogPolicy.c` 通过 scratch page 分块写 `sheng-lite` disabled-job 列表。
+- 新增 `scripts/seed-data-skip-setup.py`，把 SetupDone/mini-buddy preferences 和
+  container 目录直接烘进 Data seed。
+- `make-fuxi-adt.py` 增加 `--persistent-data`，让 datamigrator 和系统 app staging
+  在 persistent 路径运行；`board.toml` 打开 `sheng-lite=1`、`sheng-data-persist=2`
+  和 `persistent_data=true`。
