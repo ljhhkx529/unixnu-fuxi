@@ -7,10 +7,9 @@ the writer thread, which then waits for NativeUfs to publish the root layout and
 writes the kernel message buffer plus the boot-progress text into the last 32 MiB
 of userdata (read back with package/linux-log + scripts/read-sheng-log.py).
 
-BootLog.c was carried over from sheng unchanged; it links the same way the sheng
-display archive linked it. Its sheng-only dashboard rows are answered by
-package/BootLogStubs.c (zero data and empty rows) because fuxi builds no legacy
-display, Adreno, touch or boot-progress page.
+BootLog.c is compiled like the osfmk startup object. BootCrashExport.c walks
+the Data volume's CrashReporter directory, so it is compiled like
+bsd/kern_exec.c and archived next to the writer.
 """
 import json
 import subprocess
@@ -22,8 +21,10 @@ OUT.mkdir(parents=True, exist_ok=True)
 
 record = json.loads((ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/osfmk/DEVELOPMENT/startup.o.json')
                     .read_text().strip().rstrip(','))
+crash_record = json.loads((ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/kern_exec.o.json')
+                          .read_text().strip().rstrip(','))
 
-def compile_like(record, source, obj):
+def compile_like(record, source, obj, extra=()):
     command = []
     args = record['arguments']
     i = 0
@@ -40,16 +41,21 @@ def compile_like(record, source, obj):
         elif not arg.startswith('-W'):
             command.append(arg)
         i += 1
-    command += ['-Wall', '-Wextra', '-Werror', '-mgeneral-regs-only',
-                '-I', str(ROOT / '.cache/xnu-work/osfmk'),
-                '-I', str(ROOT / 'kits/sheng')]
+    command += ['-Wall', '-Wextra', '-Werror', '-mgeneral-regs-only']
+    command += list(extra)
     subprocess.run(command, cwd=record['directory'], check=True, timeout=120)
     return obj
 
-log_obj = compile_like(record, ROOT / 'kits/sheng/BootLog.c', OUT / 'BootLog.o')
-stub_obj = compile_like(record, ROOT / 'kits/sheng/BootLogStubs.c', OUT / 'BootLogStubs.o')
+log_obj = compile_like(record, ROOT / 'kits/sheng/BootLog.c', OUT / 'BootLog.o',
+                       ['-I', str(ROOT / '.cache/xnu-work/osfmk'),
+                        '-I', str(ROOT / 'kits/sheng')])
+crash_obj = compile_like(crash_record, ROOT / 'kits/sheng/BootCrashExport.c', OUT / 'BootCrashExport.o',
+                         ['-I', str(ROOT / 'kits/sheng')])
+touch_stats_obj = compile_like(record, ROOT / 'kits/sheng/BootLogTouchStats.c', OUT / 'BootLogTouchStats.o',
+                               [])
 
 archive = OUT / 'libBootLog.a'
 archive.unlink(missing_ok=True)
-subprocess.run(['xcrun', 'ar', 'rcs', str(archive), str(log_obj), str(stub_obj)], check=True, timeout=30)
+subprocess.run(['xcrun', 'ar', 'rcs', str(archive), str(log_obj), str(crash_obj), str(touch_stats_obj)],
+               check=True, timeout=30)
 print(f'boot log archive: {archive}')

@@ -4,10 +4,11 @@
 // NativeUfs's bounded log window, so a run can be read back afterwards (scripts/read-sheng-log.py over the Linux log reader).
 //
 // Window layout (4096-byte blocks): 0 header, 1..32 the kernel message buffer (oldest first), 33.. text slots of 8 blocks in a ring,
-// then the export (version 3, int-150): the newest complete blob that user space handed over (boot_log_export_put: the Metal plugin's
+// then the export (version 4): the newest complete blob that user space handed over (boot_log_export_put: the Metal plugin's
 // pipeline caches, so the next image can start with them) lies in NativeUfs's export region, the 256 MiB below the window, which the
-// reader fetches on its own. Its two halves alternate, so the header always names a blob that is wholly on the medium. (Version 2 kept a
-// 16 MiB area at the window's tail; the UI's pipeline caches outgrew it in int-148 and int-149.)
+// reader fetches on its own. Its two halves alternate, so the header always names a blob that is wholly on the medium. The last
+// CrashRegionBlocks of the region hold the newest CrashReporter .ips snapshot (SHCRASH01), so each pipeline-cache half leaves that
+// tail untouched. (Version 2 kept a 16 MiB area at the window's tail; the UI's pipeline caches outgrew it in int-148 and int-149.)
 // The header is written last in each round, so a reader never trusts a slot or an export the header does not count yet.
 #include <kern/thread.h>
 #include <kern/clock.h>
@@ -15,6 +16,7 @@
 #include <pexpert/pexpert.h>
 #include <kern/misc_protos.h>
 #include <IOKit/IOLib.h>
+#include "BootCrashExport.h"
 
 extern int native_ufs_log_open(uint64_t *, uint64_t *, const char **) __attribute__((weak_import));
 extern int native_ufs_log_write(uint64_t, uint32_t, const void *) __attribute__((weak_import));
@@ -99,7 +101,9 @@ struct boot_log_msgbuf {int msg_magic, msg_size, msg_bufx, msg_bufr; char *msg_b
 extern struct boot_log_msgbuf *msgbufp;
 
 enum {LogBlock = 4096, LogMsgFirst = 1, LogMsgBlocks = 32, LogSlotFirst = 33, LogSlotBlocks = 8, LogPeriodMs = 2000, LogMaxErrors = 3,
-      LogExportStage = 64};   // export bytes staged per write: 256 KiB
+      LogExportStage = 64, CrashRegionBlocks = 4096, CrashHeaderBlocks = 1, CrashMaxFileBytes = 4u * 1024u * 1024u,
+      CrashExportPeriodRounds = 5};
+static const char boot_log_crash_magic[] = "SHCRASH01";
 struct boot_log_header {
   char magic[8];                 // "SHLOG001"
   uint32_t version, header_bytes;
@@ -112,6 +116,14 @@ struct boot_log_header {
   // below block 0 of this window); export_bytes 0 = nothing exported yet
   uint32_t export_first, export_blocks, export_bytes, export_generation;
   uint32_t export_below;
+  // version 4: the newest CrashReporter .ips snapshot, stored in the last
+  // CrashRegionBlocks of the export region (block 0 = header, block 1 = data).
+  uint32_t crash_blocks, crash_bytes, crash_generation, crash_name_len;
+};
+struct boot_log_crash_header {
+  char magic[8];
+  uint32_t version, header_bytes;
+  uint32_t generation, name_len, file_bytes;
 };
 // Writer state for the board page: 0 off, 1 waiting for the window, 2 writing, 3 stopped after errors, 4 stopped (GPT changed).
 volatile uint32_t boot_log_state, boot_log_rounds, boot_log_errors;
@@ -126,13 +138,18 @@ static IOLock *export_lock;
 static uint8_t *export_stage;
 static uint32_t export_region;   // blocks of the export region, 0 = none
 static uint32_t export_total, export_filled, export_generation, export_target, export_ready, export_ready_bytes, export_ready_first;
+static uint32_t crash_generation;
+static char crash_name[256];
+static uint32_t crash_bytes;
 int boot_log_export_put(uint32_t generation, uint32_t total, uint32_t offset, const void *data, uint32_t size) {
   if (!export_lock || !generation || !total || !data || !size || offset > total || size > total - offset) return -1;
   IOLockLock(export_lock);
   int status = 0;
-  const uint32_t half = export_region / 2, stage = LogExportStage * LogBlock;
-  if (!half || !&native_ufs_export_write) status = -4;
-  else if (total > (uint64_t)half * LogBlock) status = -5;
+  const uint32_t half = export_region / 2;
+  const uint32_t usable = half > CrashRegionBlocks ? half - CrashRegionBlocks : 0;
+  const uint32_t stage = LogExportStage * LogBlock;
+  if (!usable || !&native_ufs_export_write) status = -4;
+  else if (total > (uint64_t)usable * LogBlock) status = -5;
   if (!status && !export_stage) export_stage = (uint8_t *)IOMallocAligned(stage, LogBlock);
   if (!status && !export_stage) status = -2;
   if (!status && offset == 0) {
@@ -158,6 +175,39 @@ int boot_log_export_put(uint32_t generation, uint32_t total, uint32_t offset, co
   IOLockUnlock(export_lock);
   return status;
 }
+
+// Copies the already-read, 4 MiB padded .ips into the tail of the export region. The caller's buffer must stay valid only for this call:
+// native_ufs_export_write consumes it synchronously, and the padded tail keeps the last partial block inside the allocation.
+int boot_log_crash_store(const char *name, const uint8_t *data, uint32_t bytes) {
+  if (!export_lock || !&native_ufs_export_write || !name || !data || !bytes || bytes > CrashMaxFileBytes) return -1;
+  const size_t name_len = strlen(name);
+  if (!name_len || name_len >= sizeof crash_name) return -1;
+  IOLockLock(export_lock);
+  if (export_region < CrashRegionBlocks) {IOLockUnlock(export_lock); return -1;}
+  uint8_t *header = (uint8_t *)IOMallocAligned(LogBlock, LogBlock);
+  if (!header) {IOLockUnlock(export_lock); return -1;}
+  struct boot_log_crash_header ch;
+  memset(&ch, 0, sizeof ch);
+  memcpy(ch.magic, boot_log_crash_magic, sizeof ch.magic);
+  ch.version = 1; ch.header_bytes = sizeof ch;
+  ch.generation = crash_generation + 1; ch.name_len = (uint32_t)name_len; ch.file_bytes = bytes;
+  memset(header, 0, LogBlock);
+  memcpy(header, &ch, sizeof ch);
+  const uint32_t base = export_region - CrashRegionBlocks;
+  const uint32_t data_blocks = (bytes + LogBlock - 1) / LogBlock;
+  int ok = native_ufs_export_write(base + 1, data_blocks, data);
+  if (ok) ok = native_ufs_export_write(base, 1, header);
+  IOFreeAligned(header, LogBlock);
+  if (!ok) {IOLockUnlock(export_lock); return -1;}
+  crash_generation = ch.generation;
+  strlcpy(crash_name, name, sizeof crash_name);
+  crash_bytes = bytes;
+  IOLockUnlock(export_lock);
+  return 0;
+}
+
+const char *boot_log_crash_current_name(void) { return crash_name; }
+uint32_t boot_log_crash_current_bytes(void) { return crash_bytes; }
 
 static uint64_t log_ticks(void) {uint64_t v; __asm__ volatile("isb\n\tmrs %0, cntpct_el0" : "=r"(v)); return v;}
 
@@ -531,7 +581,7 @@ static void writer(void *arg, wait_result_t result) {
   struct boot_log_header h;
   memset(&h, 0, sizeof h);
   memcpy(h.magic, "SHLOG001", 8);
-  h.version = 3; h.header_bytes = sizeof h;
+  h.version = 4; h.header_bytes = sizeof h;
   h.export_blocks = export_region; h.export_below = export_region; h.boot_id = log_ticks(); h.first_lba = first; h.window_blocks = (uint32_t)blocks;
   h.msg_first = LogMsgFirst; h.msg_blocks = LogMsgBlocks; h.slot_first = LogSlotFirst; h.slot_blocks = LogSlotBlocks; h.slot_count = slot_count;
   h.gpt_open = h.gpt_last = &native_ufs_store_gpt_check ? native_ufs_store_gpt_check() : 0xff;
@@ -560,10 +610,14 @@ static void writer(void *arg, wait_result_t result) {
     if (ok) ++h.slots_written;
     else ++h.write_errors;
     // The newest complete export is already on the medium; the header names it.
+    h.rounds = ++boot_log_rounds;
+    if (!(h.rounds % CrashExportPeriodRounds)) boot_log_crash_collect();
     IOLockLock(export_lock);
     h.export_generation = export_ready; h.export_bytes = export_ready_bytes; h.export_first = export_ready_first;
+    h.crash_blocks = CrashRegionBlocks; h.crash_bytes = crash_bytes; h.crash_generation = crash_generation;
+    h.crash_name_len = (uint32_t)strlen(crash_name);
     IOLockUnlock(export_lock);
-    h.uptime_s = now; h.rounds = ++boot_log_rounds; h.state = boot_log_state;
+    h.uptime_s = now; h.state = boot_log_state;
     // Every 30 rounds the GPT is read back; any change stops the writer for good.
     if (&native_ufs_store_gpt_check && !(h.rounds % 30)) h.gpt_last = native_ufs_store_gpt_check();
     memset(boot_log_buffer, 0, LogBlock);
