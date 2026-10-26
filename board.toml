@@ -186,6 +186,8 @@ kernel_args = [
   "armcpu-spi-ipi=1",
   "sheng-disable-watchdogd=1",
   "sheng-disable-jobs=com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.bluetoothd",
+  "sheng-lite=1",
+  "sheng-data-persist=2",
   "qcom-usb-debug=1",
   "-no_slto_panic",
   "ml-timeout-lock-panic-scale=40",
@@ -206,6 +208,7 @@ owned_memory_size = "0x130000000"
 root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
 cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x600,0x700"
 packed_data_ramdisk = true
+persistent_data = true
 ipad_identity = true
 unique_chip_id = "required"          # the platform seed is not stored in any repository
 
