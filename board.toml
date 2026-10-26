@@ -60,6 +60,7 @@ archives = [
   "build-boot-progress.py",
   "build-native-legacy-display.py",
   "build-boot-log.py",
+  "build-fuxi-usb-debug.py",
   "prepare-fuxi-gmu.py --dtb ../../../../uefi-fuxi/Resources/DTBs/fuxi.dtb",
   "prepare-fuxi-gmu-votes.py --dtb ../../../../uefi-fuxi/Resources/DTBs/fuxi.dtb",
   "prepare-fuxi-command-db-oracle.py",
@@ -185,6 +186,7 @@ kernel_args = [
   "armcpu-spi-ipi=1",
   "sheng-disable-watchdogd=1",
   "sheng-disable-jobs=com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.bluetoothd",
+  "qcom-usb-debug=1",
   "-no_slto_panic",
   "ml-timeout-lock-panic-scale=40",
 ]

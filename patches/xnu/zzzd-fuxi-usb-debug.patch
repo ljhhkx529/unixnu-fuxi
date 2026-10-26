@@ -1,0 +1,38 @@
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -1283,6 +1283,10 @@
+ 
+ 	bsd_init_kprintf("bsd_do_post - done");
+ 
++	{
++		extern void fuxi_usb_debug_start(void);
++		fuxi_usb_debug_start();
++	}
+ 	load_init_program(p);
+ 	lock_trace = 1;
+ }
+--- a/osfmk/console/serial_console.c
++++ b/osfmk/console/serial_console.c
+@@ -280,6 +280,9 @@
+ static inline void
+ _cnputs(char *c, int size, bool poll)
+ {
++	extern void fuxi_usb_append(const char *, int);
++	fuxi_usb_append(c, size);
++
+ 	if (disableConsoleOutput) {
+ 		return;
+ 	}
+--- a/pexpert/arm/pe_kprintf.c
++++ b/pexpert/arm/pe_kprintf.c
+@@ -158,7 +158,10 @@
+ static void
+ serial_putc_crlf(char c)
+ {
++	extern void fuxi_usb_append(const char *, int);
++	fuxi_usb_append(&c, 1);
++
+ 	if (c == '\n') {
+ 		uart_putc('\r');
+ 	}
+ 	uart_putc(c);
