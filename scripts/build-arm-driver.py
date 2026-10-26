@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Compile the generic platform expert against the actual source-kernel ABI."""
 import argparse
+import hashlib
 import json
+import re
 from pathlib import Path
 import struct
 import subprocess
@@ -18,8 +20,10 @@ if args.verified_root_bundle and not args.verified_root:
     parser.error('A policy bundle requires verified block mode')
 if args.verified_root_bundle and args.negative_verified_block:
     parser.error('Select either bundle policy qualification or the isolated DMA snapshot fault')
-if (args.verified_root or args.negative_verified_block) and args.component != 'NativeVirtioBlock':
-    parser.error('Verified block mode requires the concrete read-only block transport')
+if args.negative_verified_block and args.component != 'NativeVirtioBlock':
+    parser.error('The isolated DMA snapshot fault requires NativeVirtioBlock')
+if args.verified_root and args.component not in ('NativeVirtioBlock', 'NativeUfs'):
+    parser.error('Verified block mode requires NativeVirtioBlock or NativeUfs')
 if args.negative_verified_block and not args.verified_root:
     parser.error('The isolated input fault requires verified block mode')
 component = args.component
@@ -30,7 +34,7 @@ out = ROOT / 'build' / {'ArmVirtPlatform': 'armvirt-platform', 'ArmDTPlatform': 
                         'NativeVirtioBlock': 'native-virtio-block', 'NativeRamBlock': 'native-ram-block',
                         'NativeMobileDisplay': 'native-mobile-display', 'NativeVirtioConsole': 'native-virtio-console',
                         'NativeLegacyDisplay': 'native-legacy-display', 'NativeGOPPresenter': 'native-gop-presenter', 'NativeOfflineGPU':'native-offline-gpu','NativeOfflineAccelerator':'native-offline-accelerator','NativeIOGPUProviderProbe':'native-original-provider', 'NativeUfs':'native-ufs', 'NativeHidInput':'native-hid-input', 'NativeKeyStoreEvents':'native-keystore-events', 'NativeAdreno':'native-adreno'}[component]
-if args.verified_root:
+if args.verified_root and component == 'NativeVirtioBlock':
     out = ROOT / ('build/native-virtio-block-verified-fault' if args.negative_verified_block else 'build/native-virtio-block-verified')
     if args.verified_root_bundle:
         out = ROOT / 'build/native-virtio-block-verified-bundle'
@@ -70,14 +74,14 @@ command.extend(['-Wall', '-Wextra', '-Werror', '-Wno-unknown-warning-option',
 if component in ('NativeVirtioBlock', 'NativeRamBlock', 'NativeUfs'):
     command += ['-I', str(ROOT / 'build/storage-abi/include')]
     if args.verified_root:
-        command += ['-I', str(ROOT / 'kits/VerifiedRoot/include'), '-DNATIVE_VERIFIED_BLOCK=1']
+        command += ['-I', str(ROOT / 'kits/VerifiedRoot/include'), '-I', str(ROOT / 'drivers/NativeVirtioBlock'), '-DNATIVE_VERIFIED_BLOCK=1']
     if args.negative_verified_block:
         command += ['-DNATIVE_VERIFIED_BLOCK_INJECT_FAULT=1']
     if args.verified_root_bundle:
         command += ['-DNATIVE_VERIFIED_BLOCK_MULTI_POLICY=1']
 if component == 'NativeUfs':
-    # fuxi development transport publishes the SHNGROOT windows without a
-    # repository-carried verified-root policy; NativeVirtioBlock is not linked.
+    # The UFS transport publishes the SHNGROOT windows and, when NativeVirtioBlock
+    # is linked with its verified personality, provides native_ufs_block_authenticates.
     command += ['-mgeneral-regs-only']
 if component=='NativeOfflineGPU':
     command += ['-I',str(ROOT/'drivers/NativeVirtioConsole')]
@@ -108,15 +112,31 @@ if deployment != (2, 0x110000):
 archive = out / ('lib' + component + '.a')
 archive.unlink(missing_ok=True)
 archive_objects = [destination]
-if component == 'NativeUfs':
+if component in ('NativeUfs', 'NativeVirtioBlock', 'NativeRamBlock'):
     # fuxi has no repository-carried live storage capture. Link the pinned
     # original IOStorageFamily imports from the unchanged iPadOS 17.7.11
     # kernelcache instead of producing them from audit-storage-interface.py.
+    # Only NativeVirtioBlock carries the absolute-symbol object in its archive;
+    # NativeUfs and NativeRamBlock link those symbols from the force-loaded
+    # Virtio archive to avoid duplicate absolute symbols.
     bindings_source = ROOT / 'scripts/data/native-storage-original-bindings.S'
-    bindings_object = out / 'storage-original-bindings.o'
-    sdk = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip()
-    subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-isysroot', sdk,
-                    '-Werror', '-Wno-incompatible-sysroot', '-c', bindings_source, '-o', bindings_object], check=True)
-    archive_objects.append(bindings_object)
+    text = bindings_source.read_text()
+    bindings = {}
+    for line in text.splitlines():
+        match = re.match(r'\.set\s+(\S+),\s*(0x[0-9a-fA-F]+)', line)
+        if match:
+            bindings[match.group(1)] = match.group(2)
+    if not bindings:
+        raise SystemExit('Pinned original storage bindings are empty')
+    (out / 'bindings.json').write_text(json.dumps(dict(
+        compiled_object_sha256=hashlib.sha256(destination.read_bytes()).hexdigest(),
+        bindings=bindings, original_code_modified=False,
+        live_capture=False), indent=2) + '\n')
+    if component == 'NativeVirtioBlock':
+        bindings_object = out / 'storage-original-bindings.o'
+        sdk = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip()
+        subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-isysroot', sdk,
+                        '-Werror', '-Wno-incompatible-sysroot', '-c', bindings_source, '-o', bindings_object], check=True)
+        archive_objects.append(bindings_object)
 subprocess.run(['xcrun', 'ar', 'rcs', archive, *archive_objects], check=True)
 print(f'{component}: -Werror build and actual ARM64/iOS 17 object audit passed')

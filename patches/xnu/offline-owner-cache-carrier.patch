@@ -8,8 +8,8 @@
 +#if !DEVELOPMENT && !DEBUG
 +#error The independent owner cache carrier is a development instrument
 +#endif
-+extern int native_fuxi_ufs_root_authorized(dev_t);
-+extern int native_fuxi_ufs_volume_device(const char *, dev_t *, char *, size_t);
++extern int native_verified_block_root_authorized(dev_t);
++extern int native_verified_block_volume_device(const char *, dev_t *, char *, size_t);
 +unsigned long native_owner_cache_carrier_accepts = 0;
 +unsigned long native_owner_cache_carrier_rejects = 0;
 +volatile dev_t native_owner_cache_carrier_root_device = NODEV;
@@ -46,13 +46,13 @@
 +		vnode_put(device_vnode);
 +	}
 +	if (root_device == NODEV || cache_device == NODEV ||
-+	    !native_fuxi_ufs_volume_device(root_uuid, &expected, device_path, sizeof(device_path)) ||
++	    !native_verified_block_volume_device(root_uuid, &expected, device_path, sizeof(device_path)) ||
 +	    expected != root_device ||
-+	    !native_fuxi_ufs_volume_device(cache_uuid, &expected, device_path, sizeof(device_path)) ||
++	    !native_verified_block_volume_device(cache_uuid, &expected, device_path, sizeof(device_path)) ||
 +	    expected != cache_device) goto out;
 +	if (vnode_lookup(directory, 0, &expected_parent, vfs_context_current())) goto out;
 +	authorized = vnode_vtype(expected_parent) == VDIR && vnode_mount(expected_parent) == cache_mount &&
-+	    vnode_parent(file) == expected_parent && native_fuxi_ufs_root_authorized(root_device);
++	    vnode_parent(file) == expected_parent && native_verified_block_root_authorized(root_device);
 +out:
 +	if (expected_parent) vnode_put(expected_parent);
 +	native_owner_cache_carrier_root_device = root_device;

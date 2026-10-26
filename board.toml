@@ -38,8 +38,13 @@ windows = [
 
 [kernel]
 defconfig = "fuxi_full_defconfig"
-# Archive builders of the kernel step, in order. Each is a script of the build tree with its arguments. The VerifiedRoot
-# and VirtIO verified bundles are not built here; they need the volume policies of the target image.
+# Archive builders of the kernel step, in order. Each is a script of the build tree with its arguments.
+# NativeUfs publishes the UFS windows and its authentication callback. NativeVirtioBlock is compiled
+# with the verified multi-policy personality; both block transports use fuxi's pinned original
+# IOBlockStorageDevice bindings instead of the repository-external live storage capture.
+# VerifiedRootProbe supplies the signed OS/SystemOS policy bundle; run
+# scripts/build-fuxi-verified-root-policy.py once before this step so the
+# CONFIG_XNU_VERIFIED_ROOT_ARCHIVE output already exists (sheng supplies it the same way).
 archives = [
   "build-corecrypto-14.py",
   "build-corecrypto-14.py --namespace",
@@ -47,7 +52,8 @@ archives = [
   "build-arm-driver.py ArmCpu",
   "build-arm-driver.py NativeAES",
   "build-native-aes-bindings.py",
-  "build-arm-driver.py NativeUfs",
+  "build-arm-driver.py NativeUfs --verified-root --verified-root-bundle",
+  "build-arm-driver.py NativeVirtioBlock --verified-root --verified-root-bundle",
   "build-arm-driver.py NativeRamBlock",
   "build-libpthread-kernel.py",
   "build-legacy-stub.py",
@@ -157,13 +163,19 @@ kernel_args = [
   "-no_slto_panic",
   "ml-timeout-lock-panic-scale=40",
 ]
+text_fixups = [
+  "BTAudioHALPlugin,38bec,ffc300d1f44f01a9,000080d2c0035fd6",
+]
 
 [payload.adt]
 tool = "scripts/make-fuxi-adt.py"
 chip_id = "207"
-# No owned_memory_size: let DarwinBoot use its default 256 MiB window. The
-# fuxi UEFI memory map reserves a 320 MiB conventional run at 0xC4000000 so
-# AllocatePages(AllocateAddress) has room for the kernel base's 2 MiB offset.
+# fuxiPkg/MemoryMapLib exposes the 6 GiB conventional bank at 0x980000000;
+# DarwinBoot places the window at the run start plus the kernel's 0x7C000 base
+# offset, so a 4.75 GiB request (sheng's value) fits with headroom. This is the
+# RAM XNU sees: the previous 320 MiB low window booted into launchd but left
+# only ~32 MiB free and jetsam kept killing SpringBoard/powerd.
+owned_memory_size = "0x130000000"
 root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
 cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x600,0x700"
 packed_data_ramdisk = true

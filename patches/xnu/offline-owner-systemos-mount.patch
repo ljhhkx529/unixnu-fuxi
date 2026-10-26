@@ -9,7 +9,7 @@
  
  #include <mach/exclaves.h>
  
-@@ -7013,8 +7013,258 @@
+@@ -7013,8 +7013,256 @@
   *		word width of the kernel. Once the self-exec completes, the
   *		initproc might be different.
   */
@@ -17,7 +17,7 @@
 +#if !DEVELOPMENT && !DEBUG
 +#error The offline owner cache mount is a development instrument
 +#endif
-+extern int native_fuxi_ufs_volume_device(const char *, dev_t *, char *, size_t);
++extern int native_verified_block_volume_device(const char *, dev_t *, char *, size_t);
 +#if defined(XNU_OWNER_BOOT_MANIFEST) && XNU_OWNER_BOOT_MANIFEST
 +extern int native_owner_publish_boot_manifest(dev_t, const char *, dev_t, const char *);
 +#endif
@@ -25,7 +25,7 @@
 +extern void commpage_update_dyld_flags(uint64_t);
 +volatile uint64_t native_owner_cache_dyld_flags = 0;
 +#endif
-+extern int native_fuxi_ufs_root_authorized(dev_t);
++extern int native_verified_block_root_authorized(dev_t);
 +volatile int native_owner_cache_stage = 0;
 +volatile int native_owner_cache_status = -1;
 +volatile int native_owner_cache_mount_status = -1;
@@ -43,7 +43,7 @@
 +__attribute__((noinline)) void
 +native_owner_cache_checkpoint(int status, int authorized)
 +{
-+	__asm__ volatile("" : : "r"(status), "r"(authorized) : "memory");
++	printf("offline-owner-cache stage=%d status=%d mount_status=%d authorized=%d root_recheck=%d selected=%d actual=%d union=%d\n", native_owner_cache_stage, native_owner_cache_status, native_owner_cache_mount_status, authorized, native_owner_cache_root_recheck, (int)native_owner_cache_selected_device, (int)native_owner_cache_mounted_device, native_owner_cache_native_union); __asm__ volatile("" : : "r"(status), "r"(authorized) : "memory");
 +}
 +
  static int
@@ -63,7 +63,7 @@
 +	const char *mountpoint = "/private/preboot";
 +#endif
 +#if !defined(XNU_OWNER_UNION_SYSTEMOS) || !XNU_OWNER_UNION_SYSTEMOS
-+	const char *environment = "DYLD_SHARED_CACHE_DIR=/private/preboot/System/Library/Caches/com.apple.dyld/";
++	const char *environment = "DYLD_SHARED_CACHE_DIR=/private/preboot/System/Library/Caches/com.apple.dyld";
 +#endif
 +	vnode_t original_os_root = rootvnode;
 +	native_owner_cache_original_root = (uintptr_t)original_os_root;
@@ -96,10 +96,10 @@
 +#endif
 +	if (device_vnode) vnode_put(device_vnode);
 +	root_authorized = (vfs_flags(root_mount) & MNT_RDONLY) && root_device != NODEV &&
-+	    native_fuxi_ufs_root_authorized(root_device);
++	    native_verified_block_root_authorized(root_device);
 +	if (!root_authorized) goto done;
 +	native_owner_cache_stage = 1;
-+	if (!native_fuxi_ufs_volume_device(volume, &selected, device_path,
++	if (!native_verified_block_volume_device(volume, &selected, device_path,
 +	    sizeof(device_path))) goto done;
 +	strlcpy(native_owner_cache_device_path, device_path, sizeof(native_owner_cache_device_path));
 +	native_owner_cache_selected_device = selected;
@@ -134,7 +134,7 @@
 +	    vnode_mountedhere(original_os_root) == cache_mount && rootvnode == mounted_root;
 +	native_owner_cache_native_union = native_union;
 +	cache_authorized = readonly && actual == selected &&
-+	    !strcmp(vfs_statfs(cache_mount)->f_fstypename, "apfs") && native_fuxi_ufs_root_authorized(actual);
++	    !strcmp(vfs_statfs(cache_mount)->f_fstypename, "apfs") && native_verified_block_root_authorized(actual);
 +#if defined(XNU_OWNER_UNION_SYSTEMOS) && XNU_OWNER_UNION_SYSTEMOS
 +	cache_authorized = cache_authorized && native_union;
 +#endif
@@ -153,7 +153,7 @@
 +	native_owner_cache_stage = 6;
 +done:
 +	if (mounted_root) vnode_put(mounted_root);
-+	int root_recheck = root_authorized && native_fuxi_ufs_root_authorized(root_device);
++	int root_recheck = root_authorized && native_verified_block_root_authorized(root_device);
 +	native_owner_cache_root_recheck = root_recheck;
 +	if (!root_recheck) error = EAUTH;
 +#if defined(XNU_OWNER_BOOT_MANIFEST) && XNU_OWNER_BOOT_MANIFEST
@@ -179,9 +179,7 @@
 +
 +#if defined(XNU_OWNER_DATA_MOUNT) && XNU_OWNER_DATA_MOUNT
 +#if !defined(XNU_OWNER_BOOT_MANIFEST) || !XNU_OWNER_BOOT_MANIFEST
-+#if !defined(XNU_OWNER_CACHE_MOUNT) || !XNU_OWNER_CACHE_MOUNT || !defined(XNU_NATIVE_RAM_BLOCK) || !XNU_NATIVE_RAM_BLOCK
-+#error Scratch Data mounting requires the authenticated original OS startup path, or the development RAM-backed owner path
-+#endif
++#error Scratch Data mounting requires the authenticated original OS startup path
 +#endif
 +#if defined(XNU_NATIVE_RAM_BLOCK) && XNU_NATIVE_RAM_BLOCK
 +#ifndef XNU_OWNER_DATA_VOLUME_UUID
@@ -269,7 +267,7 @@
  {
  	int retval[2];
  	int error;
-@@ -7086,7 +7336,7 @@
+@@ -7086,7 +7329,7 @@
  	 */
  	init_exec_args.fname = argv0;
  	init_exec_args.argp = scratch_addr;
@@ -278,14 +276,14 @@
  
  	/*
  	 * So that init task is set with uid,gid 0 token
-@@ -7148,6 +7398,15 @@
+@@ -7148,6 +7391,15 @@
  	mach_vm_size_t map_page_size = vm_map_page_size(map);
  
  	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
 +	user_addr_t init_envp = USER_ADDR_NULL;
 +#if defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
 +	int cache_error = native_owner_cache_prepare(p, (user_addr_t)scratch_addr, &init_envp);
-+	if (cache_error) panic("offline owner SystemOS mount failed: %d", cache_error);
++	if (cache_error) panic("offline owner SystemOS mount failed: %d stage=%d mount=%d authorized=%d recheck=%d selected=%d actual=%d union=%d", cache_error, native_owner_cache_stage, native_owner_cache_mount_status, native_owner_cache_authorized, native_owner_cache_root_recheck, (int)native_owner_cache_selected_device, (int)native_owner_cache_mounted_device, native_owner_cache_native_union);
 +#endif
 +#if defined(XNU_OWNER_DATA_MOUNT) && XNU_OWNER_DATA_MOUNT
 +	int data_error = native_owner_data_prepare(p, (user_addr_t)scratch_addr);
@@ -294,7 +292,7 @@
  #if CONFIG_MEMORYSTATUS
  	(void) memorystatus_init_at_boot_snapshot();
  #endif /* CONFIG_MEMORYSTATUS */
-@@ -7162,7 +7421,7 @@
+@@ -7162,7 +7414,7 @@
  
  		if (is_release_suffix) {
  			printf("load_init_program: attempting to load /sbin/launchd\n");
@@ -303,7 +301,7 @@
  			if (!error) {
  				return;
  			}
-@@ -7173,7 +7432,7 @@
+@@ -7173,7 +7425,7 @@
  			strlcat(launchd_path, launchd_suffix, sizeof(launchd_path));
  
  			printf("load_init_program: attempting to load %s\n", launchd_path);
@@ -312,7 +310,7 @@
  			if (!error) {
  				return;
  			} else if (error != ENOENT) {
-@@ -7186,7 +7445,7 @@
+@@ -7186,7 +7438,7 @@
  	error = ENOENT;
  	for (i = 0; i < sizeof(init_programs) / sizeof(init_programs[0]); i++) {
  		printf("load_init_program: attempting to load %s\n", init_programs[i]);

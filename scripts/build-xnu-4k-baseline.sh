@@ -36,8 +36,7 @@ fi
 # The same holds for the boot-time GPU addon mount and the staged system apps copy (zzy), which edit the owner Data mount function
 # inside the systemos patch. Reverse newest first; the loop below re-applies them in name order.
 for LATE_PATCH in "$ROOT/patches/xnu/zzzc-boot-log.patch" "$ROOT/patches/xnu/zzz-boot-progress.patch" \
-    "$ROOT/patches/xnu/zzy-staged-system-apps.patch" "$ROOT/patches/xnu/zzy-native-gpu-addon-mount.patch" \
-    "$ROOT/patches/xnu/offline-owner-systemos-shared-region.patch"; do
+    "$ROOT/patches/xnu/zzy-staged-system-apps.patch" "$ROOT/patches/xnu/zzy-native-gpu-addon-mount.patch"; do
   if git -C .cache/xnu-work apply --reverse --check "$LATE_PATCH" >/dev/null 2>&1; then
     git -C .cache/xnu-work apply --reverse "$LATE_PATCH"
   fi
