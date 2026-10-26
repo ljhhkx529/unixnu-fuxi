@@ -38,7 +38,7 @@ for source in sources:
             command.append(value)
         i += 1
     command += ['-I', str(ROOT / 'kits/sheng'), '-I', str(ROOT / 'kits/AdrenoFirmware'),
-                '-I', str(ROOT / 'build/sheng-gmu'), '-I', str(ROOT / 'kits/AdrenoPM4'), '-I', str(ROOT / 'kits/ArmSmmu4K'), '-I', str(ROOT / '.cache/xnu-work/osfmk'),
+                '-I', str(ROOT / 'build/fuxi-gmu'), '-I', str(ROOT / 'kits/AdrenoPM4'), '-I', str(ROOT / 'kits/ArmSmmu4K'), '-I', str(ROOT / '.cache/xnu-work/osfmk'),
                 '-I', str(ROOT / 'drivers/NativeAdreno'), '-Wall', '-Wextra', '-Werror',
                 '-Wno-unused-parameter', '-Wno-incompatible-sysroot', '-Wno-c99-designator',
                 '-Wno-reorder-init-list', '-Wno-deprecated-enum-enum-conversion',
@@ -50,11 +50,14 @@ for source in sources:
 # GMU and SQE firmware as strong definitions over NativeAdrenoFirmwareDefaults.cpp's weak empty ones. The bytes come
 # from the ignored local copies and must match the pins in scripts/data/adreno-inputs.json; nothing here enters Git.
 import hashlib
-pins = json.loads((ROOT / 'scripts/data/adreno-inputs.json').read_text())['firmware']['files']
-local = ROOT / '.cache/firmware/sheng-gpu'
+from fuxi_adreno_common import ensure_fuxi_firmware
+fuxi_firmware = json.loads((ROOT / 'scripts/data/fuxi-adreno-inputs.json').read_text())['firmware']
+local = ROOT / '.cache/firmware/fuxi-gpu'
+ensure_fuxi_firmware(ROOT, local, fuxi_firmware['files'])
+pins = fuxi_firmware['files']
 embedded = [('_native_adreno_firmware_image', 'qcom/gmu_gen70200.bin'),
-            ('_native_adreno_sqe_firmware_image', 'qcom/a740_sqe.fw'),
-            ('_native_adreno_zap_image', 'qcom/sm8550/sheng/a740_zap.mbn')]
+            ('_native_adreno_sqe_firmware_image', 'qcom/sm8550/fuxi/a740_sqe.fw'),
+            ('_native_adreno_zap_image', 'qcom/sm8550/fuxi/a740_zap.mbn')]
 assembly = ['.section __DATA_CONST,__const']
 for label, key in embedded:
     path = local / key

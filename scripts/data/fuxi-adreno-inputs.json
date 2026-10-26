@@ -1,0 +1,34 @@
+{
+  "board": {
+    "dtb_sha256": "0590a46ca03be8de4cdf273f4ba4bc884e41555e771f55d2601ba9df121b5d5c",
+    "dtb_bytes": 815093,
+    "gpu_node": "/soc/qcom,kgsl-3d0@3d00000",
+    "gmu_node": "/soc/qcom,gmu@3d69000",
+    "command_db_node": "/reserved-memory/aop_cmd_db_region@81c60000",
+    "gpu_windows": ["gmu", "rscc", "gmu_pdc", "kgsl_3d0_reg_memory", "cx_misc"]
+  },
+  "firmware": {
+    "repository": "https://github.com/hanzi123-bilp/uefi-fuxi",
+    "branch": "fuxi",
+    "files": {
+      "qcom/gmu_gen70200.bin": {
+        "repository": "https://github.com/hanzi123-bilp/uefi-fuxi",
+        "git_blob_sha1": "b78e121bd9cdcf023b41aa34f32b2f9d44a16fba",
+        "bytes": 66844,
+        "sha256": "1a2a419c39046d3141fc5fed5aa7f971de2db40cc7a1d89693c3e26fad64dd98"
+      },
+      "qcom/sm8550/fuxi/a740_sqe.fw": {
+        "repository": "https://github.com/hanzi123-bilp/uefi-fuxi",
+        "git_blob_sha1": "692657ccd54e617ea5cba7cb348075c33fbbf7f9",
+        "bytes": 76724,
+        "sha256": "96fee336424b139100fc60b5b45a907360e4b3936d7e1d00406b9bd80ca48473"
+      },
+      "qcom/sm8550/fuxi/a740_zap.mbn": {
+        "repository": "https://github.com/hanzi123-bilp/uefi-fuxi",
+        "git_blob_sha1": "1c03da277d075c1b205998d6ebcec9ccbb376351",
+        "bytes": 9040,
+        "sha256": "e05d28dd078ebdf69bb8d2c3bd574859303029bf7e11322cb9db44711ade63fa"
+      }
+    }
+  }
+}

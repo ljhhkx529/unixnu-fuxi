@@ -60,6 +60,12 @@ archives = [
   "build-boot-progress.py",
   "build-native-legacy-display.py",
   "build-boot-log.py",
+  "prepare-fuxi-gmu.py --dtb ../../../../uefi-fuxi/Resources/DTBs/fuxi.dtb",
+  "prepare-fuxi-gmu-votes.py --dtb ../../../../uefi-fuxi/Resources/DTBs/fuxi.dtb",
+  "prepare-fuxi-command-db-oracle.py",
+  "build-arm-driver.py NativeAdreno",
+  "build-native-adreno-kits.py",
+  "build-native-adreno-accelerator.py",
 ]
 
 
