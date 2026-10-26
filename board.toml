@@ -56,7 +56,7 @@ archives = [
   "build-arm-driver.py NativeVirtioBlock --verified-root --verified-root-bundle",
   "build-arm-driver.py NativeRamBlock",
   "build-libpthread-kernel.py",
-  "build-legacy-stub.py",
+  "build-sheng-platform-power.py",
   "build-boot-progress.py",
   "build-native-legacy-display.py",
   "build-boot-log.py",
