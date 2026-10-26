@@ -1,9 +1,10 @@
 # fuxi full bring-up, Pong-style native storage chain.
 #
-# Build only the native UFS root windows and the RAM-backed Data seed. The
-# audited UFS/owner-root/Virtio path stays off because fuxi has no Virtio
-# block transport and no repository-carried live storage capture. Sheng
-# GPU/Adreno bring-up stays off; PMGR is required by native UFS root boot.
+# Full union SystemOS bring-up, Pong/sheng-style. NativeUfs supplies the
+# UFS windows and provides the UFS authentication callback; NativeVirtioBlock
+# is linked for its verified-block binding/Verifier symbols, and VerifiedRoot
+# supplies the signed OS/SystemOS policies. NativeAdreno and NativeLegacyDisplay
+# bring-up are enabled for the fuxi GPU/display path.
 
 CONFIG_XNU_BUILD_ARCHIVES=y
 CONFIG_XNU_BUILD_WERROR=n
@@ -21,27 +22,30 @@ CONFIG_XNU_NATIVE_PAN=y
 # Storage chain: UFS SHNGROOT windows for OS/SystemOS, RAM block for Data.
 CONFIG_XNU_NATIVE_UFS=y
 CONFIG_XNU_NATIVE_RAM_BLOCK=y
-CONFIG_XNU_NATIVE_VIRTIO_BLOCK=n
-CONFIG_XNU_VERIFIED_ROOT_PROBE=n
+CONFIG_XNU_NATIVE_VIRTIO_BLOCK=y
+CONFIG_XNU_VERIFIED_ROOT_PROBE=y
 
 # Owner SystemOS/Data mount path.
-CONFIG_XNU_OWNER_ROOT_AUDIT=n
-CONFIG_XNU_OWNER_ROOT_TRUST=n
+CONFIG_XNU_OWNER_ROOT_AUDIT=y
+CONFIG_XNU_OWNER_ROOT_TRUST=y
 CONFIG_XNU_OWNER_CACHE_MOUNT=y
 CONFIG_XNU_OWNER_CACHE_STARTUP=y
-CONFIG_XNU_OWNER_BOOT_MANIFEST=n
+CONFIG_XNU_OWNER_CACHE_CARRIER=n
+CONFIG_XNU_OWNER_BOOT_MANIFEST=y
 CONFIG_XNU_OWNER_DATA_MOUNT=y
 CONFIG_XNU_OWNER_DATA_VOLUME_UUID="3E81D4A6-8D16-496B-B890-E680C6E6997C"
 CONFIG_XNU_OWNER_CACHE_VOLUME_UUID="8846FE78-2910-4297-AF97-D59BB6F8FC16"
-CONFIG_XNU_OWNER_CRYPTEX_FILES=y
-CONFIG_XNU_OWNER_UNION_SYSTEMOS=n
+CONFIG_XNU_OWNER_CRYPTEX_FILES=n
+CONFIG_XNU_OWNER_UNION_SYSTEMOS=y
 
 CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
-CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/legacy-stub/libLegacyStub.a {tree}/build/boot-log/libBootLog.a"
+CONFIG_XNU_NATIVE_VIRTIO_BLOCK_ARCHIVE="{tree}/build/native-virtio-block-verified-bundle/libNativeVirtioBlock.a"
+CONFIG_XNU_VERIFIED_ROOT_ARCHIVE="{tree}/build/verified-root-os-xnu-bundle/libVerifiedRootProbe.a"
+CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/native-legacy-display/libNativeLegacyDisplay.late.a {tree}/build/boot-log/libBootLog.a {tree}/build/fuxi-usb-debug/libFuxiUsbDebug.a"
 CONFIG_XNU_NATIVE_MOBILE_DISPLAY=n
 CONFIG_XNU_ARMVIRT_PLATFORM=n
-CONFIG_XNU_BOOT_PROGRESS=n
-CONFIG_XNU_NATIVE_ADRENO=n
+CONFIG_XNU_BOOT_PROGRESS=y
+CONFIG_XNU_NATIVE_ADRENO=y
 CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y
 CONFIG_XNU_SHENG_PMGR=y
 CONFIG_XNU_SOURCE_MOCKFS=n
