@@ -64,9 +64,9 @@ archives = [
   "prepare-fuxi-gmu.py --dtb ../../../../uefi-fuxi/Resources/DTBs/fuxi.dtb",
   "prepare-fuxi-gmu-votes.py --dtb ../../../../uefi-fuxi/Resources/DTBs/fuxi.dtb",
   "prepare-fuxi-command-db-oracle.py",
-  "build-arm-driver.py NativeAdreno",
-  "build-native-adreno-kits.py",
-  "build-native-adreno-accelerator.py",
+  "build-arm-driver.py Adreno740",
+  "build-adreno740-kits.py",
+  "build-adreno740-accelerator.py",
 ]
 
 
@@ -179,8 +179,9 @@ kernel_args = [
   "sheng-log=1",
   "sheng-pmgr=2",
   "sheng-gpu-metal=1",
+  "sheng-gpu-addon=1",
+  "sheng-gpu-dcvs=1",
   "sheng-fb-gpu=1",
-  "sheng-backlight=1",
   "sheng-vsync=120",
   "armcpu-diagnostics=1",
   "armcpu-spi-ipi=1",

@@ -936,13 +936,13 @@ void userClientTest() {
     IOReturn err = 0;
     int errAt = -1, ok = 0, n = 0;
     const IOReturn attached = gSubmit.attach(vm, &gRing);
-    // input_bits 31: the 2 GiB TTBR0 aperture; output_bits 40 for the BO allocations
-    const IOReturn opened = attached ? attached : gClient.open(NativeAdrenoAbiVersion, vm, &gSubmit, &gRing, 31, 40);
+    // input_bits 32: the 4 GiB TTBR0 aperture; output_bits 40 for the BO allocations
+    const IOReturn opened = attached ? attached : gClient.open(NativeAdrenoAbiVersion, vm, &gSubmit, &gRing, 32, 40);
     u[0] = uint32_t(attached);
     u[1] = uint32_t(opened);
     if (opened) {snprintf(row, sizeof row, "U open a%x o%x", u[0], u[1]); setRow(6, row); return;}
     NativeAdrenoAbiParams params{};
-    if (!ucCall(NativeAdrenoMethodQuery, nullptr, &params)) ok += params.input_bits == 31 && params.output_bits == 40;
+    if (!ucCall(NativeAdrenoMethodQuery, nullptr, &params)) ok += params.input_bits == 32 && params.output_bits == 40;
     ++n;
     const uint32_t irq0 = gIrqCount;
     // Round 2 reuses the IB address with a new object (a stale TLB entry would run the old IB, which writes to the now
@@ -969,9 +969,9 @@ NativeAdrenoTimer gTimer;
 // Constant facts for the Vulkan driver, each from a pinned source: chip id and gmem from a6xx_catalog.c (a740, "C510v2"),
 // UBWC 4.0 / swizzle levels 2+3 / bank bit 16 / macrotile from ubwc_config.c sm8550_data, the GMEM window and trap base from the
 // values hw_init programs above. The VA window keeps clear of the kernel buffers (below 0x302000+) and the GMEM window
-// (0x1000000..0x12fffff) and ends at the 2 GiB aperture.
+// (0x1000000..0x12fffff) and ends at the 4 GiB aperture.
 const NativeAdrenoAbiDeviceInfo gDeviceInfo = {0x43050a01u, 3u << 20, 0x1000000ull, 0x1fffffffff000ull, 0x20000000ull,
-                                               0x60000000ull, 16, 6, 1, 4, NativeAdrenoDeviceClientIova, 0};
+                                               0xE0000000ull, 16, 6, 1, 4, NativeAdrenoDeviceClientIova, 0};
 int timerRead(void *, uint32_t reg, uint32_t *value) {*value = gpuRd(reg); return 0;}
 const NativeAdrenoTimeIo gTimerIo{nullptr, timerRead};
 IOReturn wcall(IOUserClient *uc, uint32_t method, const void *in, void *out) {
@@ -1184,7 +1184,7 @@ void publishAndWrapperTest(bool rounds) {
     coherenceProbe(vm);
     const IOReturn timer = gTimer.attach(&gTimerIo, NativeAdrenoTimeCp);
     {unsigned wc = 1; PE_parse_boot_argn("sheng-gpu-wc", &wc, sizeof wc); native_adreno_wc_enabled = wc ? 1 : 0;}
-    const IOReturn published = native_adreno_publish(vm, &gSubmit, &gRing, &clock, timer ? nullptr : &gTimer, &gDeviceInfo, 31, 40);
+    const IOReturn published = native_adreno_publish(vm, &gSubmit, &gRing, &clock, timer ? nullptr : &gTimer, &gDeviceInfo, 32, 40);
     IOService *svc = published ? nullptr : native_adreno_published_service();
     int ok = 0, n = 0, errAt = -1, v1 = -1, v2 = -1;
     IOReturn err = 0;
@@ -1239,7 +1239,7 @@ void publishMetal() {
     accelerator->setProperty("MetalPluginName", "NativeAdrenoMetal");
     // The one process (the render server) whose open of this accelerator and its client the kernel's open path grants in place of the sandbox verdict
     // (patches/xnu/zzw-native-adreno-sandbox-grant.patch): the original profiles name no class of this driver.
-    accelerator->setProperty("NativeSandboxGrantProcess", "backboardd");
+    accelerator->setProperty("NativeSandboxGrantProcess", "backboardd,iconservicesagent,WidgetRenderer_Default,PosterBoard");
     accelerator->setProperty("MetalPluginClassName", "NativeAdrenoMetalDevice");
     gMetalStage = 4;
     if (!accelerator->attach(IOService::getPlatform())) {accelerator->release(); gMetalStatus = kIOReturnNotAttached; return;}
@@ -1418,6 +1418,7 @@ void ipiSelfTest() {
     gicRow();
 }
 void startHeartbeatThread();
+void startGpuDcvs();
 void gpuStart() {
     char row[64];
     uint32_t *c = native_gpu_cp;
@@ -1510,7 +1511,7 @@ void gpuStart() {
     gpuWr64(A740_CP_SQE_INSTR_BASE, gGpuBuffers[0].iova);
     // 4. Ring 0 (MSM_GPU_RB_CNTL_DEFAULT: 32 KiB, block 32; hw_apriv uses the hardware rptr shadow at memptrs+0).
     c[0] = 4;
-    const NativeAdrenoRingIo rio{nullptr, ringWrite, ringRead, ringBarrier};
+    const NativeAdrenoRingIo rio{nullptr, ringWrite, ringRead, ringBarrier, nullptr, nullptr};
     const NativeAdrenoRingCache cache{nullptr, ringPublish, ringAcquire};
     native_adreno_fence_phys = gGpuBuffers[2].physical;   // the page the CP writes its timestamps to, for the UFS log
     const IOReturn attached = gRing.attach(&rio, &cache, const_cast<uint8_t *>(gGpuCpu[1]), gGpuBuffers[1].bytes,
@@ -1563,7 +1564,108 @@ void gpuStart() {
         setRow(5, "P start");
         publishAndWrapperTest(selftest);
         if (bootArg("sheng-gpu-metal", 0) == 1) publishMetal();
+        if (bootArg("sheng-gpu-dcvs", 0)) startGpuDcvs();
     }
+}
+// GPU frequency governor (`sheng-gpu-dcvs=1`, after the Metal service is published): the GMU's XO power counter 0 counts 19.2 MHz
+// ticks while the GPU is busy (a6xx_gpu.c hw_init: GPU_GMU_AO_GPU_CX_BUSY_MASK 0xff000000, countable 5 on counter 0, enable). Every
+// 16 ms it takes the frequency that would have kept that window 50 % busy (msm_gpu_devfreq's upthreshold 50) and goes up at once to
+// the lowest level at or above 1.1 x of it, to the top after a window over 85 % busy or 50 ms busy without a break; it goes down one
+// level after 4 windows in a row (5 right after a step up) that would have needed at most 0.8 x the next lower level, and back to the
+// floor after 80 ms without work. `sheng-gpu-dcvs-min` is the floor level (default 3, 348 MHz). Each change is the same HFI
+// GX_BW_PERF_VOTE as the boot vote, with that level's bandwidth. OPP MHz in sheng-gmu's table order.
+constexpr uint32_t kGpuMHz[9] = {0, 220, 295, 348, 401, 475, 550, 615, 680};
+constexpr unsigned kGpuTop = 8;
+extern "C" {
+// [0] 1 running, [1] level now, [2] changes, [3] failed votes, [4] busy % over the last 10 s, [5..12] % of those 10 s at levels 1..8
+volatile uint32_t native_gpu_dcvs[13];
+}
+uint64_t gpuBusyTicks() {
+    ShengGmuIo &io = gColdDevice.io;
+    uint32_t hi = 0, lo = 0, hi2 = 0;
+    io.read32(io.cookie, ShengGmuCore, kGmuReg(0x1f845), &hi);
+    io.read32(io.cookie, ShengGmuCore, kGmuReg(0x1f844), &lo);
+    io.read32(io.cookie, ShengGmuCore, kGmuReg(0x1f845), &hi2);
+    if (hi2 != hi) io.read32(io.cookie, ShengGmuCore, kGmuReg(0x1f844), &lo);
+    return (uint64_t)hi2 << 32 | lo;
+}
+bool gpuVote(unsigned level) {
+    unsigned bw = 1;
+    level = ShengGmuPerfVote ? ShengGmuPerfVote(level, &bw) : level;
+    const uint32_t vote[3] = {1, level, bw};
+    uint32_t out[16], error = 0;
+    size_t count = 0;
+    if (AdrenoHfiExchange(&gColdDevice.hfi, 30, vote, 3, 1000, hfiWait, out, 16, &count, &error) || error) return false;
+    native_gpu_perf_vote[0] = level; native_gpu_perf_vote[1] = bw;
+    return true;
+}
+unsigned gpuLevelFor(uint64_t mhz) {
+    unsigned l = 1;
+    while (l < kGpuTop && kGpuMHz[l] < mhz) ++l;
+    return l;
+}
+void gpuDcvsThread(void *, wait_result_t) {
+    ShengGmuIo &io = gColdDevice.io;
+    unsigned floor = bootArg("sheng-gpu-dcvs-min", 3);
+    if (floor < 1) floor = 1;
+    if (floor > kGpuTop) floor = kGpuTop;
+    io.write32(io.cookie, ShengGmuCore, kGmuReg(0x23b0e), 0xff000000u);
+    uint32_t sel = 0;
+    io.read32(io.cookie, ShengGmuCore, kGmuReg(0x1f841), &sel);
+    io.write32(io.cookie, ShengGmuCore, kGmuReg(0x1f841), (sel & ~0xffu) | 1u << 5);
+    io.write32(io.cookie, ShengGmuCore, kGmuReg(0x1f840), 1);
+    io.barrier(io.cookie);
+    unsigned cur = native_gpu_perf_vote[0] ? native_gpu_perf_vote[0] : kGpuTop;
+    native_gpu_dcvs[0] = 1; native_gpu_dcvs[1] = cur;
+    uint64_t lastBusy = gpuBusyTicks(), lastT = mach_absolute_time(), idleSince = lastT;
+    uint64_t runNs = 0, winBusy = 0, winNs = 0, atLevel[kGpuTop + 1] = {};
+    unsigned down = 0, hold = 0;
+    for (;;) {
+        IOSleep(16);
+        const uint64_t busy = gpuBusyTicks(), t = mach_absolute_time();
+        uint64_t ns = 0;
+        absolutetime_to_nanoseconds(t - lastT, &ns);
+        uint64_t busyNs = (busy - lastBusy) * 625 / 12;   // 52.083 ns per XO tick
+        if (busyNs > ns) busyNs = ns;
+        lastBusy = busy; lastT = t;
+        if (!ns) continue;
+        winBusy += busyNs; winNs += ns; atLevel[cur] += ns;
+        const bool active = busyNs > 0 || gpuRd(A740_CP_RB_RPTR) != gpuRd(A740_CP_RB_WPTR);
+        const uint64_t need = busyNs * kGpuMHz[cur] * 2 / ns;
+        runNs = busyNs * 100 >= ns * 95 ? runNs + ns : 0;
+        unsigned want = cur;
+        if (busyNs * 100 > ns * 85 || runNs >= 50000000ull) {
+            want = kGpuTop;
+        } else if (gpuLevelFor(need * 11 / 10) > cur) {
+            want = gpuLevelFor(need * 11 / 10);
+        } else if (active) {
+            if (cur > floor && need * 10 <= (uint64_t)kGpuMHz[cur - 1] * 8) {
+                if (++down >= 4 + hold) want = cur - 1;
+            } else {
+                down = 0;
+            }
+        } else {
+            uint64_t idle = 0;
+            absolutetime_to_nanoseconds(t - idleSince, &idle);
+            if (idle >= 80000000ull) want = floor;
+        }
+        if (active) idleSince = t;
+        if (want < floor) want = floor;
+        if (want != cur) {
+            if (gpuVote(want)) {hold = want > cur; cur = want; native_gpu_dcvs[1] = cur; native_gpu_dcvs[2] = native_gpu_dcvs[2] + 1;}
+            else native_gpu_dcvs[3] = native_gpu_dcvs[3] + 1;
+            down = 0;
+        }
+        if (winNs >= 10000000000ull) {
+            native_gpu_dcvs[4] = (uint32_t)(winBusy * 100 / winNs);
+            for (unsigned l = 1; l <= kGpuTop; ++l) {native_gpu_dcvs[4 + l] = (uint32_t)(atLevel[l] * 100 / winNs); atLevel[l] = 0;}
+            winBusy = winNs = 0;
+        }
+    }
+}
+void startGpuDcvs() {
+    thread_t thread = nullptr;
+    if (kernel_thread_start(gpuDcvsThread, nullptr, &thread) == KERN_SUCCESS) thread_deallocate(thread);
 }
 void heartbeat();
 volatile bool gHeartbeatThread;
