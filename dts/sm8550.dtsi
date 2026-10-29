@@ -6,6 +6,19 @@
     #size-cells = <2>;
     interrupt-parent = <&gic>;
 
+    clocks {
+        bi_tcxo_div2: bi-tcxo-div2-clk {
+            compatible = "fixed-clock";
+            #clock-cells = <0>;
+            clock-frequency = <9600000>;
+        };
+    };
+
+    rpmhpd: power-controller {
+        compatible = "qcom,sm8550-rpmhpd";
+        #power-domain-cells = <1>;
+    };
+
     cpus {
         #address-cells = <2>;
         #size-cells = <0>;
@@ -28,6 +41,33 @@
         #size-cells = <2>;
         ranges;
 
+        gcc: clock-controller@100000 {
+            compatible = "qcom,sm8550-gcc";
+            reg = <0 0x00100000 0 0x1f0000>;
+            #clock-cells = <1>;
+            #reset-cells = <1>;
+            #power-domain-cells = <1>;
+        };
+
+        aoss_qmp: power-management@c300000 {
+            compatible = "qcom,sm8550-aoss-qmp";
+            reg = <0 0x0c300000 0 0x100000>;
+            #clock-cells = <0>;
+            #mbox-cells = <1>;
+        };
+
+        gpucc: clock-controller@3d90000 {
+            compatible = "qcom,sm8550-gpucc";
+            reg = <0 0x03d90000 0 0xa000>;
+            clocks = <&bi_tcxo_div2>,
+                     <&gcc 30>,
+                     <&gcc 31>;
+            power-domains = <&rpmhpd 0>, <&rpmhpd 8>, <&rpmhpd 3>, <&rpmhpd 10>;
+            #clock-cells = <1>;
+            #reset-cells = <1>;
+            #power-domain-cells = <1>;
+        };
+
         gic: interrupt-controller@17100000 {
             compatible = "arm,gic-v3";
             unixnu,adt-name = "intc";
@@ -42,6 +82,7 @@
             compatible = "qcom,sm8550-ufshc";
             unixnu,adt-name = "ufshc";
             reg = <0 0x1d84000 0 0x3000>;
+            iommus = <&apps_smmu 0x60 0>;
             status = "disabled";
         };
 
@@ -58,7 +99,69 @@
             reg-names = "kgsl_3d0_reg_memory", "cx_mem", "cx_dbgc";
             interrupts = <0 300 4 0>;
             iommus = <&gpu_smmu 0 0>, <&gpu_smmu 1 0>;
+            operating-points-v2 = <&gpu_opp_table>;
+            qcom,gmu = <&gmu>;
+            #cooling-cells = <2>;
             status = "disabled";
+
+            gpu_opp_table: opp-table {
+                compatible = "operating-points-v2";
+
+                opp-719000000 {
+                    opp-hz = /bits/ 64 <719000000>;
+                    opp-level = <224>;
+                    opp-peak-kBps = <16500000>;
+                    qcom,opp-acd-level = <0x882e5ffd>;
+                };
+                opp-680000000 {
+                    opp-hz = /bits/ 64 <680000000>;
+                    opp-level = <192>;
+                    opp-peak-kBps = <12449218>;
+                    qcom,opp-acd-level = <0x882e5ffd>;
+                };
+                opp-615000000 {
+                    opp-hz = /bits/ 64 <615000000>;
+                    opp-level = <144>;
+                    opp-peak-kBps = <10687500>;
+                    qcom,opp-acd-level = <0xa82f5ffd>;
+                };
+                opp-550000000 {
+                    opp-hz = /bits/ 64 <550000000>;
+                    opp-level = <128>;
+                    opp-peak-kBps = <6074218>;
+                    qcom,opp-acd-level = <0xe0285ffd>;
+                };
+                opp-475000000 {
+                    opp-hz = /bits/ 64 <475000000>;
+                    opp-level = <80>;
+                    opp-peak-kBps = <6074218>;
+                    qcom,opp-acd-level = <0xe0285ffd>;
+                };
+                opp-401000000 {
+                    opp-hz = /bits/ 64 <401000000>;
+                    opp-level = <64>;
+                    opp-peak-kBps = <6074218>;
+                    qcom,opp-acd-level = <0xc02a5ffd>;
+                };
+                opp-348000000 {
+                    opp-hz = /bits/ 64 <348000000>;
+                    opp-level = <60>;
+                    opp-peak-kBps = <6074218>;
+                    qcom,opp-acd-level = <0xe02b5ffd>;
+                };
+                opp-295000000 {
+                    opp-hz = /bits/ 64 <295000000>;
+                    opp-level = <56>;
+                    opp-peak-kBps = <6074218>;
+                    qcom,opp-acd-level = <0xe02d5ffd>;
+                };
+                opp-220000000 {
+                    opp-hz = /bits/ 64 <220000000>;
+                    opp-level = <52>;
+                    opp-peak-kBps = <2136718>;
+                    qcom,opp-acd-level = <0xc02f5ffd>;
+                };
+            };
         };
 
         gmu: gmu@3d6a000 {
@@ -68,13 +171,52 @@
             interrupts = <0 304 4 0>, <0 305 4 0>;
             interrupt-names = "hfi", "gmu";
             iommus = <&gpu_smmu 5 0>;
+            clocks = <&gpucc 0>, <&gpucc 3>, <&gpucc 5>,
+                     <&gcc 13>, <&gcc 32>, <&gpucc 14>, <&gpucc 6>;
+            clock-names = "ahb", "gmu", "cxo", "axi", "memnoc", "hub", "demet";
+            power-domains = <&gpucc 0>, <&gpucc 1>;
+            power-domain-names = "cx", "gx";
+            qcom,qmp = <&aoss_qmp>;
+            operating-points-v2 = <&gmu_opp_table>;
             status = "disabled";
+
+            gmu_opp_table: opp-table {
+                compatible = "operating-points-v2";
+
+                opp-550000000 {
+                    opp-hz = /bits/ 64 <550000000>;
+                    opp-level = <128>;
+                };
+                opp-220000000 {
+                    opp-hz = /bits/ 64 <220000000>;
+                    opp-level = <64>;
+                };
+            };
         };
 
         gpu_smmu: iommu@3da0000 {
             compatible = "qcom,sm8550-smmu-500", "qcom,adreno-smmu", "qcom,smmu-500", "arm,mmu-500";
             reg = <0 0x3da0000 0 0x40000>;
             #iommu-cells = <2>;
+            #global-interrupts = <1>;
+            interrupts = <0 673 4 0>, <0 677 4 0>, <0 678 4 0>, <0 679 4 0>,
+                         <0 680 4 0>, <0 681 4 0>, <0 682 4 0>, <0 683 4 0>,
+                         <0 684 4 0>, <0 685 4 0>, <0 686 4 0>, <0 687 4 0>,
+                         <0 422 4 0>, <0 476 4 0>, <0 574 4 0>, <0 575 4 0>,
+                         <0 576 4 0>, <0 577 4 0>, <0 659 4 0>, <0 661 4 0>,
+                         <0 664 4 0>, <0 665 4 0>, <0 666 4 0>, <0 668 4 0>,
+                         <0 669 4 0>, <0 699 4 0>;
+            clocks = <&gpucc 11>, <&gcc 32>, <&gcc 33>, <&gpucc 0>;
+            clock-names = "hlos", "bus", "iface", "ahb";
+            power-domains = <&gpucc 0>;
+            status = "disabled";
+        };
+
+        apps_smmu: iommu@15000000 {
+            compatible = "qcom,sm8550-smmu-500", "qcom,smmu-500", "arm,mmu-500";
+            reg = <0 0x15000000 0 0x100000>;
+            #iommu-cells = <2>;
+            dma-coherent;
             status = "disabled";
         };
     };

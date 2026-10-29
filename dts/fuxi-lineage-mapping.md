@@ -34,6 +34,8 @@ camera 等 `qcom,` 自定义节点暂不迁移。
 | interrupt | SPI 300，level-high | `interrupts = <0 300 4 0>` | 一致 |
 | SMMU SIDs | vendor CB：`gfx3d_user=0`,`gfx3d_lpac=1`,`gfx3d_secure=2` | `iommus = <&gpu_smmu 0 0>,<&gpu_smmu 1 0>` | 一致 |
 | zap | `zap-shader { memory-region = <&gpu_micro_code_mem>; }` | 同 | 本次加入 |
+| OPP | vendor `qcom,gpu-pwrlevel-bins` 0 档，9 个 `qcom,gpu-freq`/`qcom,level`/`qcom,bus-freq`/`qcom,acd-level` | mainline `gpu_opp_table`，`opp-hz`/`opp-level`/`opp-peak-kBps`/`qcom,opp-acd-level` | 本次加入，数值取自 fuxi vendor DTB，不是 sheng |
+| GMU 绑定 | vendor 无显式 `qcom,gmu` | `qcom,gmu = <&gmu>`，`#cooling-cells = <2>` | 本次加入 |
 
 ## 3. GMU
 
@@ -46,6 +48,8 @@ camera 等 `qcom,` 自定义节点暂不迁移。
 | interrupt | SPI 304/305，level-high | `interrupts = <0 304 4 0>,<0 305 4 0>` | 一致 |
 | interrupt-names | `hfi`,`gmu` | 同 | 一致 |
 | SMMU SID | `iommus = <&kgsl_smmu 0x5 0>` | `iommus = <&gpu_smmu 5 0>` | 一致 |
+| clocks/power | vendor `gmu_clk/cxo_clk/axi_clk/memnoc_clk/ahb_clk/hub_clk` + `vddcx/vdd` | mainline `clocks` 7 路、`power-domains = <&gpucc 0>,<&gpucc 1>`、`qcom,qmp = <&aoss_qmp>` | 本次加入，clock/power id 来自 SoC 公共定义 |
+| OPP | vendor `qcom,gmu-freq-table = <220000000,64>,<550000000,128>` | `gmu_opp_table` 2 档 | 本次加入，数值为 fuxi 真机表 |
 
 ## 4. GPU SMMU
 
@@ -55,13 +59,14 @@ camera 等 `qcom,` 自定义节点暂不迁移。
 | reg | base `0x3da0000/0x40000`，tcu `0x3de6000/0x40` | base `0x3da0000/0x40000` | XNU 只用 base 窗口，不迁移 tcu |
 | compatible | `qcom,qsmmu-v500`,`qcom,adreno-smmu` | `qcom,sm8550-smmu-500`,`qcom,adreno-smmu`,`qcom,smmu-500`,`arm,mmu-500` | 保持 mainline |
 | 一致性 | vendor 无 `dma-coherent`，XNU probe 按 dma-coherent 语义跑 | `dma-coherent` | 本次加入 |
+| interrupt/clocks/power | vendor `kgsl_smmu` 有完整 interrupt 与 `gpu_cc_hlos1_vote_gpu_smmu` 等 clock | mainline `#global-interrupts/interrupts/clocks/power-domains` | 本次加入，clock id 为 SoC 公共值 |
 
 ## 5. UFS
 
 | 项目 | vendor 值 | mainline / XNU | 处理 |
 | --- | --- | --- | --- |
 | UFS HC | `0x1d84000/0x3000` | `sm8550.dtsi` 已声明 | 一致 |
-| apps SMMU SID | `iommus = <&apps_smmu 0x60>` | `NativeUfs` 硬编码 SID `0x60` | 暂不在 DTS 加 `iommus`，保持驱动现状 |
+| apps SMMU SID | `iommus = <&apps_smmu 0x60>` | `&ufs { iommus = <&apps_smmu 0x60 0>; }`，`apps_smmu` 节点启用 | 本次加入，DTS 与驱动硬编码一致 |
 
 ## 6. 明确不迁移
 

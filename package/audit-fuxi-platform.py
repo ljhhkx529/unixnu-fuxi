@@ -20,6 +20,12 @@ DTB = OUT / "sm8550-xiaomi-fuxi.dtb"
 GPU = "/soc/gpu@3d00000"
 GMU = "/soc/gmu@3d68000"
 SMMU = "/soc/iommu@3da0000"
+GPUCC = "/soc/clock-controller@3d90000"
+AOSS_QMP = "/soc/power-management@c300000"
+APPS_SMMU = "/soc/iommu@15000000"
+UFS = "/soc/ufshc@1d84000"
+GPU_OPP = GPU + "/opp-table"
+GMU_OPP = GMU + "/opp-table"
 ZAP = GPU + "/zap-shader"
 CMD_DB = "/reserved-memory/aop-cmd-db@81c60000"
 GPU_MICROCODE = "/reserved-memory/gpu-microcode@9b09a000"
@@ -81,11 +87,42 @@ def main():
             "fuxi GPU SMMU reg differs")
 
     smmu_phandle = cells(SMMU, "phandle")[0]
+    gpucc_phandle = cells(GPUCC, "phandle")[0]
+    aoss_qmp_phandle = cells(AOSS_QMP, "phandle")[0]
+    apps_smmu_phandle = cells(APPS_SMMU, "phandle")[0]
+    gmu_phandle = cells(GMU, "phandle")[0]
     require(cells(GPU, "iommus") == [smmu_phandle, 0, 0,
                                      smmu_phandle, 1, 0],
             "fuxi GPU streams must be SIDs 0 and 1")
     require(cells(GMU, "iommus") == [smmu_phandle, 5, 0],
             "fuxi GMU stream must be SID 5")
+    require(cells(UFS, "iommus") == [apps_smmu_phandle, 0x60, 0],
+            "fuxi UFS stream must be apps_smmu SID 0x60")
+
+    require(cells(GPU, "operating-points-v2") ==
+            cells(GPU_OPP, "phandle"),
+            "fuxi GPU OPP phandle binding differs")
+    require(cells(GPU, "qcom,gmu") == [gmu_phandle],
+            "fuxi GPU must bind its GMU")
+    require(cells(GMU, "operating-points-v2") ==
+            cells(GMU_OPP, "phandle"),
+            "fuxi GMU OPP phandle binding differs")
+    require(cells(GMU, "power-domains") ==
+            [gpucc_phandle, 0, gpucc_phandle, 1],
+            "fuxi GMU power-domains must be GPU_CC CX/GX")
+    require(cells(GMU, "qcom,qmp") == [aoss_qmp_phandle],
+            "fuxi GMU must bind aoss_qmp")
+    require(cells(SMMU, "power-domains") == [gpucc_phandle, 0],
+            "fuxi GPU SMMU power-domain must be GPU_CC CX")
+    require(cells(SMMU, "#global-interrupts") == [1],
+            "fuxi GPU SMMU global-interrupt count differs")
+
+    gpu_opps = run("fdtget", "-l", str(DTB), GPU_OPP).split()
+    require(len(gpu_opps) == 9,
+            "fuxi GPU OPP table must have 9 enabled entries")
+    gmu_opps = run("fdtget", "-l", str(DTB), GMU_OPP).split()
+    require(len(gmu_opps) == 2,
+            "fuxi GMU OPP table must have 2 enabled entries")
 
     require(prop_str(ZAP, "firmware-name") ==
             "qcom/sm8550/fuxi/a740_zap.mbn",
