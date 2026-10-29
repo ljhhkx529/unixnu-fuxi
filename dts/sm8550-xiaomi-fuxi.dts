@@ -20,6 +20,17 @@
             reg = <0 0xb8000000 0 0x2b00000>;
             no-map;
         };
+
+        gpu_micro_code_mem: gpu-microcode@9b09a000 {
+            reg = <0 0x9b09a000 0 0x2000>;
+            no-map;
+        };
+
+        aop_cmd_db_mem: aop-cmd-db@81c60000 {
+            compatible = "qcom,cmd-db";
+            reg = <0 0x81c60000 0 0x20000>;
+            no-map;
+        };
     };
 };
 
@@ -34,8 +45,19 @@
 
 &ufs { status = "okay"; };
 &ufsphy { status = "okay"; };
-&gpu { status = "okay"; };
-&gpu_smmu { status = "okay"; };
+&gpu {
+    status = "okay";
+
+    gpu_zap_shader: zap-shader {
+        memory-region = <&gpu_micro_code_mem>;
+        firmware-name = "qcom/sm8550/fuxi/a740_zap.mbn";
+    };
+};
+
+&gpu_smmu {
+    status = "okay";
+    dma-coherent;
+};
 
 &soc {
     /delete-node/ gmu@3d6a000;
