@@ -251,13 +251,13 @@ void gmuContext(const gpb_result &r) {
     native_gpu_power_stage = status ? 0x4f : 0x47;
 }
 
-// Mode 5 (read-only). Physical blocks from the pinned DT: gmu reg 0x3d6a000 size 0x35000, rscc 0x3d50000, cx_misc
+// Mode 5 (read-only). Physical blocks from the fuxi DT: gmu reg 0x3d68000 size 0x37000, rscc 0x3d50000, cx_misc
 // 0x3d9e000 (gpu reg-names "cx_mem"); register dword offsets from a6xx_gmu.xml / a6xx.xml. The gmu block starts at dword
-// 0x1a800 of the GPU register space (SHENG_GMU_CORE_GPU_DELTA 0x6a000 bytes), so CM3_SYSRESET 0x1f800 is byte 0x14000.
+// 0x1a000 of the GPU register space (SHENG_GMU_CORE_GPU_DELTA 0x68000 bytes), so CM3_SYSRESET 0x1f800 is byte 0x14000.
 constexpr uint64_t kCmdDbBase = 0x81c60000, kCmdDbBytes = 0x20000;
-constexpr uint64_t kGmuPhys[3] = {0x03d6a000, 0x03d50000, 0x03d9e000};
-constexpr uint64_t kGmuLen[3] = {0x35000, 0x10000, 0x1000};
-constexpr uint32_t kGmuSysReset = 0x1f800 * 4 - 0x6a000, kGmuHfiStatus = 0x1f980 * 4 - 0x6a000;
+constexpr uint64_t kGmuPhys[3] = {0x03d68000, 0x03d50000, 0x03d9e000};
+constexpr uint64_t kGmuLen[3] = {0x37000, 0x10000, 0x1000};
+constexpr uint32_t kGmuSysReset = 0x1f800 * 4 - 0x68000, kGmuHfiStatus = 0x1f980 * 4 - 0x68000;
 constexpr uint32_t kRsccSeqBusy = 0x101 * 4, kCxMiscTcmRet = 0x39 * 4;
 alignas(8) uint8_t gCmdDb[kCmdDbBytes];
 ShengGmuVoteInputs gVoteInputs;
@@ -279,9 +279,9 @@ volatile uint32_t *mapWords(uint64_t phys, uint64_t len, OSSharedPtr<IOMemoryMap
 }
 // Mode 7. Windows in ShengGmu order (core, rscc, pdc, gpu, cx_misc): the pinned DT gmu reg-names gmu/rscc/gmu_pdc, gpu
 // reg 0x3d00000 size 0x40000 and its cx_mem 0x3d9e000; ShengGmuBindMmio refuses any other address or size.
-constexpr uint64_t kColdPhys[5] = {0x03d6a000, 0x03d50000, 0x0b280000, 0x03d00000, 0x03d9e000};
-constexpr uint64_t kColdLen[5] = {0x35000, 0x10000, 0x10000, 0x40000, 0x1000};
-constexpr uint32_t kAoIrqClr = 0x23b04 * 4 - 0x6a000, kAoIrqMask = 0x23b06 * 4 - 0x6a000;   // a6xx_gmu.xml
+constexpr uint64_t kColdPhys[5] = {0x03d68000, 0x03d50000, 0x0b280000, 0x03d00000, 0x03d9e000};
+constexpr uint64_t kColdLen[5] = {0x37000, 0x10000, 0x10000, 0x40000, 0x1000};
+constexpr uint32_t kAoIrqClr = 0x23b04 * 4 - 0x68000, kAoIrqMask = 0x23b06 * 4 - 0x68000;   // a6xx_gmu.xml
 constexpr uint32_t kAoFatal = (1u << 0) | (1u << 3) | (1u << 5);   // A6XX_GMU_IRQ_MASK: WDOG_BITE, FENCE_ERR, AHB_BUS_ERROR
 OSSharedPtr<IOMemoryMap> gColdMaps[5], gPayloadMaps[5];
 ShengGmuMmio gColdMmio;
@@ -315,7 +315,7 @@ void readGmuState(uint32_t out[4]) {
     out[3] = *reinterpret_cast<volatile uint32_t *>(core + kGmuHfiStatus);
 }
 // Mode 8. GMU dword offsets from a6xx_gmu.xml; GPU dword offsets from a6xx.xml (A6XX-A7XX variants).
-constexpr uint32_t kGmuReg(uint32_t dword) {return dword * 4 - 0x6a000;}
+constexpr uint32_t kGmuReg(uint32_t dword) {return dword * 4 - 0x68000;}
 constexpr uint32_t kG2hClr = kGmuReg(0x1f991), kG2hInfo = kGmuReg(0x1f992), kG2hMask = kGmuReg(0x1f993);
 constexpr uint32_t kH2gSet = kGmuReg(0x1f994), kGxStatus = kGmuReg(0x1f8d0);   // GMU_SPTPRAC_PWR_CLK_STATUS (A7XX)
 constexpr uint32_t kRbbmStatus = 0x0210 * 4, kGbifHalt = 0x3c45 * 4;

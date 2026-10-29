@@ -1,3 +1,40 @@
+# 编译与打包硬规则（fuxi）
+
+以下规则优先于任何一次性的临时做法。产物不满足时不要交付。
+
+- `unixnu-fuxi` 固定使用 `old` 分支；不要迁移 schema v2。
+- 内核：
+  ```sh
+  cd UniXNU
+  ./unixnu build kernel
+  ```
+- payload 必须使用 `--owner-trust-cache`，不能只传 `--trust-cache` 就当作 trustcache 已打包；同时必须带 `--gpu-addon`。owner-trust-cache 必须用带 AdrenoMetal 插件 CDHash 的 `owner-trust.bundle`，不能用只有两个原始模块的 `original-static-system.bundle`：
+  ```sh
+  mkdir -p out/fuxi/tree/build/original-static-system-trust
+  cp out/fuxi/payload/original-static-system.bundle out/fuxi/tree/build/original-static-system-trust/original-static-system.bundle
+  (cd out/fuxi/tree && python3 scripts/make-owner-trust-bundle.py)
+
+  ./unixnu build payload --uefi ../uefi-fuxi \
+    --unique-chip-id 0xce854c9ae043320b \
+    --owner-trust-cache out/fuxi/tree/build/adreno-metal-plugin/owner-trust.bundle \
+    --data-ramdisk out/fuxi/build/owner-data-fixture/owner-data-16g.dbr \
+    --gpu-addon out/fuxi/build/fuxi-gpu-addon.ngpu \
+    --skip-setup
+  ```
+- boot image 只能由 `uefi-fuxi/scripts/bootimage.py` 生成，禁止 `./unixnu bootimg`：
+  ```sh
+  python3 uefi-fuxi/scripts/bootimage.py \
+    --ramdisk UniXNU/out/fuxi/payload/payload.img \
+    -o UniXNU/out/fuxi/boot/boot.img
+  ```
+- 交付前必须验证，四项缺一不算完成：
+  - `UniXNU/out/fuxi/payload/payload.json` 中 `trust_cache_sha256` 非空。
+  - `UniXNU/out/fuxi/payload/payload.json` 中 `gpu_addon_sha256` 非空。
+  - `MTOOLS_SKIP_CHECK=1 mdir -i UniXNU/out/fuxi/payload/payload.img ::/EFI/UNIXNU/PAYLOADS` 能看到 `kernel.macho.trustcache`。
+  - `UniXNU/out/fuxi/boot/bootimage.json` 中 `header_version` 为 `3`。
+- GPU 输入改动后必须重跑 `unixnu-fuxi` 的 fuxi-gmu prepare，并确认生成的 `ShengGmuVotesSource.h` 中 `SHENG_GPU_BANDWIDTHS` 第一个元素是 `0`。
+- `GpuPowerProbe.cpp` 的 GMU MMIO 窗口使用 fuxi 值：`0x3d68000 / 0x37000 / delta 0x68000`；不要沿用 sheng 的 `0x3d6a000 / 0x35000 / delta 0x6a000`。
+
 # Role
 
 你是用户最核心的 constitutional-based partner。

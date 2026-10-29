@@ -95,6 +95,7 @@ def main():
     parser.add_argument('--persistent-data', action='store_true',
                         help='The Data disk keeps its writes across boots (sheng-data-persist): no ephemeral-storage, so first-boot data migration runs')
     parser.add_argument('--trust-cache', action='store_true', help='Zeroed TrustCache sidecar handoff placeholder')
+    parser.add_argument('--gpu-addon', action='store_true', help='GpuAddon sidecar handoff placeholder')
     parser.add_argument('--system-volume-auth-blob', type=Path, default=None,
                         help='validated iOS 21H461 SystemVolume root-hash payload for /chosen')
     parser.add_argument('--text-fixup', action='append', default=[],
@@ -177,7 +178,8 @@ def main():
                           if system_volume_auth_blob is not None else []),
                         *empty_nvram_proxy()],
              [node('memory-map', ([("PackedRAMDisk" if args.packed_data_ramdisk else "RAMDisk", bytes(16))] if (args.data_ramdisk or args.packed_data_ramdisk) else []) +
-                                 ([('TrustCache', bytes(16))] if args.trust_cache else [])),
+                                 ([('TrustCache', bytes(16))] if args.trust_cache else []) +
+                                 ([('GpuAddon', bytes(16))] if args.gpu_addon else [])),
               # Read by the original AppleImage4 at start-up; present and empty here.
               node('manifest-properties')]),
         node('cpus', children=cpus),

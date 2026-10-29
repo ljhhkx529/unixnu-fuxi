@@ -105,7 +105,7 @@ def prepare():
                                  perfmode=1 << int(match[1]),
                                  perfmode_kbps=int(match[2])))
 
-    bandwidths = sorted({entry['kbps'] for entry in records})
+    bandwidths = sorted({entry['kbps'] for entry in gpu_records})
 
     db_node = '/reserved-memory/aop_cmd_db_region@81c60000'
     if fdt_prop(dtb, db_node, 'compatible', 's') != ['qcom,cmd-db']:
