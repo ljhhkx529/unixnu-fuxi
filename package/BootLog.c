@@ -82,6 +82,8 @@ extern volatile uint32_t native_adreno_ring_log[4][4 + 112] __attribute__((weak_
 extern volatile uint32_t native_adreno_ring_log_count __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ib_log[4][4 + 28] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ib_log_count __attribute__((weak_import));
+extern volatile uint32_t native_adreno_stall[24] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_stall_mem[59] __attribute__((weak_import));
 extern unsigned native_legacy_properties_now(char *, unsigned) __attribute__((weak_import));
 extern unsigned native_legacy_clients_dump(char *, unsigned) __attribute__((weak_import));
 extern unsigned native_legacy_swap_timeline(char *, unsigned) __attribute__((weak_import));
@@ -363,6 +365,34 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
     n = snprintf(row, sizeof row, "[fence page] cached:");
     for (unsigned w = 0; w < 8 && n > 0 && n < 110; ++w) {uint32_t v = 0xdead; native_adreno_cached_read32(native_adreno_fence_phys + 4 * w, &v); n += snprintf(row + n, sizeof row - n, " %x", v);}
     at = put(out, at, cap, row, sizeof row);
+  }
+  if (&native_adreno_stall && native_adreno_stall[0]) {
+    static const uint32_t regs[22] = {0x0210,0x0211,0x0212,0x0213,0x0201,0x0821,0x0825,0x0824,0x0806,0x0807,
+      0x0928,0x0929,0x092a,0x092b,0x092c,0x092d,0x0a66,0x0a6d,0x0a70,0x0a74,0x0a71,0x0a72};
+    const volatile uint32_t *s = native_adreno_stall;
+    char row[160];
+    snprintf(row, sizeof row, "[stall] fence=%u timeouts=%u", s[0], s[1]);
+    at = put(out, at, cap, row, sizeof row);
+    for (uint32_t base = 0; base < 22; base += 6) {
+      int n = snprintf(row, sizeof row, "[stall] CP");
+      for (uint32_t k = base; k < base + 6 && k < 22 && n > 0 && n < 110; ++k)
+        n += snprintf(row + n, sizeof row - n, " %04x=%08x", regs[k], s[2 + k]);
+      at = put(out, at, cap, row, sizeof row);
+    }
+    if (&native_adreno_stall_mem) {
+      const volatile uint32_t *m = native_adreno_stall_mem;
+      snprintf(row, sizeof row, "[stall vm] fault=%08x %08x %08x %08x next=%u br=%u bv=%u fetch=%u", m[0], m[1], m[2], m[3], m[55], m[56], m[57], m[58]);
+      at = put(out, at, cap, row, sizeof row);
+      for (unsigned g = 0; g < 3; ++g) {
+        const volatile uint32_t *p = m + 4 + 17 * g;
+        for (unsigned half = 0; half < 2; ++half) {
+          int n = snprintf(row, sizeof row, "[stall ib%u%s] at=%08x", g, half ? "+" : "", p[0]);
+          for (unsigned k = 1 + 8 * half; k < 1 + 8 * (half + 1) && k < 17 && n > 0 && n < 110; ++k)
+            n += snprintf(row + n, sizeof row - n, " %08x", p[k]);
+          at = put(out, at, cap, row, sizeof row);
+        }
+      }
+    }
   }
   // Kernel GPU methods by number: calls, failures, last status and total time (the calls of the last 2 s are the difference of two slots).
   if (&native_adreno_method_stats) {
