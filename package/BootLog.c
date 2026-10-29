@@ -367,15 +367,15 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
     at = put(out, at, cap, row, sizeof row);
   }
   if (&native_adreno_stall && native_adreno_stall[0]) {
-    static const uint32_t regs[22] = {0x0210,0x0211,0x0212,0x0213,0x0201,0x0821,0x0825,0x0824,0x0806,0x0807,
-      0x0928,0x0929,0x092a,0x092b,0x092c,0x092d,0x0a66,0x0a6d,0x0a70,0x0a74,0x0a71,0x0a72};
+    static const uint32_t regs[24] = {0x0210,0x0211,0x0212,0x0213,0x0201,0x0821,0x0825,0x0824,0x0806,0x0807,
+      0x0928,0x0929,0x092a,0x092b,0x092c,0x092d,0x0a66,0x0a6d,0x0a70,0x0a74,0x0a71,0x0a72,0x050e,0x050f};
     const volatile uint32_t *s = native_adreno_stall;
     char row[160];
     snprintf(row, sizeof row, "[stall] fence=%u timeouts=%u", s[0], s[1]);
     at = put(out, at, cap, row, sizeof row);
-    for (uint32_t base = 0; base < 22; base += 6) {
+    for (uint32_t base = 0; base < 24; base += 6) {
       int n = snprintf(row, sizeof row, "[stall] CP");
-      for (uint32_t k = base; k < base + 6 && k < 22 && n > 0 && n < 110; ++k)
+      for (uint32_t k = base; k < base + 6 && k < 24 && n > 0 && n < 110; ++k)
         n += snprintf(row + n, sizeof row - n, " %04x=%08x", regs[k], s[2 + k]);
       at = put(out, at, cap, row, sizeof row);
     }
