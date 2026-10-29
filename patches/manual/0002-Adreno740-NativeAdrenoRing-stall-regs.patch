@@ -1,0 +1,27 @@
+diff --git a/NativeAdrenoRing.cpp b/NativeAdrenoRing.cpp
+index b0ce05b..65891af 100644
+--- a/NativeAdrenoRing.cpp
++++ b/NativeAdrenoRing.cpp
+@@ -123,7 +123,8 @@ IOReturn NativeAdrenoRing::stallState(uint32_t *out)
+ {
+     static const uint32_t regs[NativeAdrenoRingStallWords]={
+         0x0210,0x0211,0x0212,0x0213,0x0201,0x0821,0x0825,0x0824,RingRptr,RingWptr,
+-        0x0928,0x0929,0x092a,0x092b,0x092c,0x092d,0x0a66,0x0a6d,0x0a70,0x0a74,0x0a71,0x0a72};
++        0x0928,0x0929,0x092a,0x092b,0x092c,0x092d,0x0a66,0x0a6d,0x0a70,0x0a74,0x0a71,0x0a72,
++        0x050e,0x050f};
+     if(!out)return kIOReturnBadArgument;
+     for(uint32_t i=0;i<NativeAdrenoRingStallWords;++i)
+         if(io_.read32(io_.cookie,regs[i],&out[i]))return poison();
+diff --git a/NativeAdrenoRing.h b/NativeAdrenoRing.h
+index 26d0ec1..a400331 100644
+--- a/NativeAdrenoRing.h
++++ b/NativeAdrenoRing.h
+@@ -47,7 +47,7 @@ enum NativeAdrenoRingFence {
+     NativeAdrenoRingFencePoisoned,
+     NativeAdrenoRingFenceArgument
+ };
+-enum : uint32_t {NativeAdrenoRingStallWords = 22};   /* NativeAdrenoRing::stallState */
++enum : uint32_t {NativeAdrenoRingStallWords = 24};   /* NativeAdrenoRing::stallState */
+ class NativeAdrenoRing final {
+     NativeAdrenoRingIo io_{};
+     NativeAdrenoRingCache cache_{};

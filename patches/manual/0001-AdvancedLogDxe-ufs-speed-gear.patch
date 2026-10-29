@@ -1,0 +1,25 @@
+diff --git a/package/UniXNUPkg/Driver/AdvancedLogDxe/AdvancedLogDxe.c b/package/UniXNUPkg/Driver/AdvancedLogDxe/AdvancedLogDxe.c
+index 55598f4..4f900b2 100644
+--- a/package/UniXNUPkg/Driver/AdvancedLogDxe/AdvancedLogDxe.c
++++ b/package/UniXNUPkg/Driver/AdvancedLogDxe/AdvancedLogDxe.c
+@@ -33,7 +33,7 @@
+ #define SPEED_BAR_MAX_HEIGHT   40
+ #define SPEED_BAR_SEGMENTS     5
+ #define SPEED_GEAR_COUNT       5
+-#define SPEED_GEAR_INITIAL     2
++#define SPEED_GEAR_INITIAL     4
+ 
+ STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL  mBackground = { 0x0F, 0x0C, 0x0B, 0 };
+ STATIC CONST EFI_GRAPHICS_OUTPUT_BLT_PIXEL  mSpeedColors[SPEED_BAR_SEGMENTS] = {
+@@ -46,9 +46,9 @@ STATIC CONST EFI_GRAPHICS_OUTPUT_BLT_PIXEL  mSpeedColors[SPEED_BAR_SEGMENTS] = {
+ STATIC CONST UINTN  mGearIntervals[SPEED_GEAR_COUNT] = {
+   5000,  // gear 0: slowest
+   2000,
+-  1000,  // gear 2: initial
++  1000,
+   500,
+-  250    // gear 4: fastest
++  65     // gear 4: initial + fastest
+ };
+ 
+ STATIC
