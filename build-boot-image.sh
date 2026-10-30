@@ -48,13 +48,14 @@ cd "$TREE"
 if [ ! -f build/original-static-system-trust/original-static-system.bundle ]; then
   python3 scripts/build-original-system-trust.py
 fi
+python3 "$ROOT/scripts/gen-prime-list.py" --output build/prime-list.txt
 python3 scripts/build-adreno-metal-plugin.py
 python3 scripts/make-owner-trust-bundle.py
 
 # The addon carries the same plugin files the owner module trusts; rebuild it
 # so the CDHash in the trust bundle and the bytes on disk can never drift.
 rm -f "$GPU_ADDON"
-python3 scripts/make-gpu-addon.py --publish --clients "$GPU_CLIENTS" "$GPU_ADDON"
+python3 scripts/make-gpu-addon.py --publish --clients "$GPU_CLIENTS" --prime-list build/prime-list.txt "$GPU_ADDON"
 cd "$ROOT"
 
 ./unixnu build payload \
