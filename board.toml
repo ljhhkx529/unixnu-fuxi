@@ -127,6 +127,7 @@ packages = [
   "{uefi}/Common/Mu_OEM_Sample",
   "{uefi}/Silicon/Qualcomm",
   "{uefi}/Silicon/Silicium",
+  "{uefi}/Silicon/Samsung",
   "{uefi}/Silicium-ACPI",
   "{uefi}/Silicium-ACPI/Platforms/Xiaomi",
   "{uefi}/Silicium-ACPI/Silicon/Qualcomm",
