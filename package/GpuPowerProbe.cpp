@@ -89,7 +89,6 @@ extern "C" IOReturn NativeAdrenoGmuContextPayloads(NativeAdrenoGmuPayload out[5]
 extern "C" IOReturn NativeAdrenoGpuContextBringup(volatile uint8_t *, size_t, unsigned, unsigned, unsigned, unsigned, unsigned,
     unsigned, void (*)(uint32_t), NativeAdrenoGmuContextReport *) __attribute__((weak));
 extern "C" IOReturn NativeAdrenoGpuContextBuffers(NativeAdrenoGpuBuffer out[5]) __attribute__((weak));
-extern "C" IOReturn NativeAdrenoGpuContextPagetable(uint64_t *ttbr0,unsigned *asid) __attribute__((weak));
 extern "C" NativeAdrenoVm *NativeAdrenoGpuContextVm() __attribute__((weak));
 extern "C" IOReturn native_adreno_publish(NativeAdrenoVm *, NativeAdrenoSubmit *, NativeAdrenoRing *, const NativeAdrenoRingClock *,
     const NativeAdrenoTimer *, const NativeAdrenoAbiDeviceInfo *, uint32_t, uint32_t) __attribute__((weak));
@@ -1437,12 +1436,6 @@ void gpuStart() {
              q.program_phase, q.program_enabled, q.route_phase, q.routes_verified, q.spans);
     setRow(6, row);
     if (ctx) return;
-    {
-        uint64_t ttbr0 = 0; unsigned asid = 0;
-        const IOReturn pt = NativeAdrenoGpuContextPagetable ? NativeAdrenoGpuContextPagetable(&ttbr0, &asid) : kIOReturnUnsupported;
-        if (pt) {snprintf(row, sizeof row, "C1 pagetable %x", unsigned(pt)); setRow(7, row); return;}
-        gRing.setPageTable(ttbr0, asid);
-    }
     gpuSetActlr();
     c[0] = 1;
     if (NativeAdrenoGpuContextBuffers(gGpuBuffers)) {setRow(7, "C1 buffers refused"); return;}
