@@ -124,18 +124,32 @@ def main():
                 print(result.stderr[-8000:])
 
     if not failed:
-        xnu = sorted((tree / OBJ).rglob('*.o'))
+        # XNU names its C and assembly objects .o and its C++ objects .cpo.
+        xnu = sorted(p for p in (tree / OBJ).rglob('*') if p.suffix in ('.o', '.cpo') and p.is_file())
         xnu_strong, xnu_weak, _, _ = symbols(xnu)
         own_strong, own_weak, undefined, weak_undefined = symbols(objects)
         known = own_strong | own_weak | xnu_strong | xnu_weak
         unresolved = sorted(undefined - known)
-        weak_missing = sorted(weak_undefined - known)
         duplicates = sorted(own_strong & xnu_strong)
-        report += ['', f'XNU objects: {len(xnu)}, their external definitions: {len(xnu_strong) + len(xnu_weak)}.',
+        # Weak imports come from component archives the board links into the kernel (armcpu_spi_attach: ArmCpu). The
+        # archives the kernel step built before it stopped are under build/.
+        archives = {}
+        for archive in sorted((tree / 'build').rglob('*.a')):
+            strong, weak, _, _ = symbols([archive])
+            archives[archive] = strong | weak
+        weak_found, weak_missing = [], []
+        for name in sorted(weak_undefined - known):
+            where = [a.relative_to(tree).as_posix() for a, names in archives.items() if name in names]
+            if where:
+                weak_found.append(f'`{name}` ({", ".join(where)})')
+            else:
+                weak_missing.append(f'`{name}`')
+        report += ['', f'XNU objects: {len(xnu)} (.o and .cpo), their external definitions: {len(xnu_strong) + len(xnu_weak)}; '
+                       f'component archives: {len(archives)}.',
                    f'fuxi objects import {len(undefined)} strong and {len(weak_undefined)} weak symbols.', '',
                    f'- unresolved strong imports: {", ".join(f"`{s}`" for s in unresolved) or "none"}',
-                   f'- weak imports the XNU objects do not define (bound at boot when another archive provides them): '
-                   f'{", ".join(f"`{s}`" for s in weak_missing) or "none"}',
+                   f'- weak imports defined by a component archive: {", ".join(weak_found) or "none"}',
+                   f'- weak imports found nowhere (the probe checks them at run time): {", ".join(weak_missing) or "none"}',
                    f'- definitions that an XNU object also has: {", ".join(f"`{s}`" for s in duplicates) or "none"}']
         failed += bool(unresolved) + bool(duplicates)
     report += ['', 'Result: ' + ('**failed**' if failed else 'passed')]
