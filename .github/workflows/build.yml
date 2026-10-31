@@ -1,0 +1,185 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      unixnu_ref:
+        description: UniXNU/UniXNU ref for the XNU pass
+        default: 67df14de69ae6f6ffc3480b30b70ce7667a3bd32
+      sheng_ref:
+        description: UniXNU/UniXNU-sheng ref (board, package, flags)
+        default: 08cde20edc3254ed6f7df8d0f5384fb887786e8f
+      xcode:
+        description: Xcode version of the macos-26 image (the newest Xcode 26 if it is not installed)
+        default: "26.6"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  UNIXNU_REF: ${{ inputs.unixnu_ref || '67df14de69ae6f6ffc3480b30b70ce7667a3bd32' }}
+  SHENG_REF: ${{ inputs.sheng_ref || '08cde20edc3254ed6f7df8d0f5384fb887786e8f' }}
+  XCODE: ${{ inputs.xcode || '26.6' }}
+
+jobs:
+  host-tests:
+    name: Host tests (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Protocol and touch core tests (gcc, clang; ASan, UBSan)
+        run: |
+          flags="-std=c11 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -g -fsanitize=address,undefined"
+          cd drivers/FuxiFtsTouch
+          for cc in gcc clang; do
+            for t in fts-protocol touch-core; do
+              $cc $flags -I. Test/$t.c FtsProtocol.c FtsTouchCore.c -o /tmp/$t-$cc
+              /tmp/$t-$cc
+            done
+          done
+      - name: Board constants test
+        run: |
+          gcc -std=c11 -Wall -Wextra -Werror -Iinclude -Idrivers/FuxiFtsTouch tests/board_test.c \
+            drivers/FuxiFtsTouch/FtsTouchCore.c -o /tmp/board_test
+          /tmp/board_test
+      - name: CI scripts
+        run: |
+          python3 -m py_compile ci/*.py
+          git clone --quiet --filter=blob:none https://github.com/UniXNU/UniXNU-sheng.git /tmp/sheng
+          git -C /tmp/sheng checkout --quiet "$SHENG_REF"
+          python3 -I ci/integrate-sheng.py "$GITHUB_WORKSPACE" /tmp/sheng
+
+  apple-clang:
+    name: Kernel-target compile (Xcode clang)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select Xcode
+        run: |
+          dir="/Applications/Xcode_${XCODE}.app"
+          if [ ! -d "$dir" ]; then
+            dir=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1)
+            echo "::warning::Xcode ${XCODE} is not on this image; using ${dir:-none}. Installed: $(ls -d /Applications/Xcode_*.app | xargs -n1 basename | tr '\n' ' ')"
+          fi
+          [ -n "$dir" ] && [ -d "$dir" ] || { echo "::error::no Xcode 26 on this image"; exit 1; }
+          echo "DEVELOPER_DIR=$dir/Contents/Developer" >> "$GITHUB_ENV"
+          DEVELOPER_DIR="$dir/Contents/Developer" xcodebuild -version
+      - name: Compile the C driver for arm64 iOS kernel code
+        run: |
+          sdk=$(xcrun --sdk iphoneos --show-sdk-path)
+          for f in drivers/FuxiFtsTouch/FtsProtocol.c drivers/FuxiFtsTouch/FtsTouchCore.c; do
+            xcrun --sdk iphoneos clang -target arm64-apple-ios17.0 -isysroot "$sdk" -mkernel -ffreestanding -std=c11 \
+              -mgeneral-regs-only -Wall -Wextra -Wconversion -Werror -O2 -c "$f" -o "/tmp/$(basename "$f" .c).o"
+          done
+          # Kernel code must not call into libc: only the driver's own functions and what XNU itself provides may be imported.
+          xcrun nm -u /tmp/FtsProtocol.o /tmp/FtsTouchCore.o
+          undefined=$(xcrun nm -u /tmp/FtsProtocol.o /tmp/FtsTouchCore.o | grep -v ':$' | grep -v '^$' \
+            | grep -vE '^_fts_|^_(memset|memcpy|memmove|bzero)$|^___bzero$|^___stack_chk_(guard|fail)$' || true)
+          if [ -n "$undefined" ]; then echo "::error::unexpected imports: $undefined"; exit 1; fi
+
+  xnu-compile:
+    name: Kernel compile check (XNU flags)
+    needs: host-tests
+    runs-on: macos-26
+    timeout-minutes: 180
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+      HOMEBREW_NO_ENV_HINTS: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: fuxi
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: UniXNU/UniXNU
+          ref: ${{ env.UNIXNU_REF }}
+          path: unixnu
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: UniXNU/UniXNU-sheng
+          ref: ${{ env.SHENG_REF }}
+          path: device
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Select Xcode
+        run: |
+          dir="/Applications/Xcode_${XCODE}.app"
+          if [ ! -d "$dir" ]; then
+            dir=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1)
+            echo "::warning::Xcode ${XCODE} is not on this image; using ${dir:-none}. Installed: $(ls -d /Applications/Xcode_*.app | xargs -n1 basename | tr '\n' ' ')"
+          fi
+          [ -n "$dir" ] && [ -d "$dir" ] || { echo "::error::no Xcode 26 on this image"; exit 1; }
+          echo "DEVELOPER_DIR=$dir/Contents/Developer" >> "$GITHUB_ENV"
+          DEVELOPER_DIR="$dir/Contents/Developer" xcodebuild -version
+      - name: Install host tools
+        run: |
+          # The set UniXNU's macos.yml installs.
+          brew install llvm lld mtools dtc
+          if ! command -v unifdef >/dev/null; then
+            brew install unifdef
+            echo "$(brew --prefix unifdef)/bin" >> "$GITHUB_PATH"
+          fi
+          xcrun --sdk iphoneos --show-sdk-version
+      - name: Select the device
+        working-directory: unixnu
+        run: ./unixnu defconfig sheng_defconfig --device "$GITHUB_WORKSPACE/device"
+      - name: XNU pass for the compile records
+        working-directory: unixnu
+        env:
+          # prepare-xnu-source.py lists Apple sources through the GitHub API (anonymous calls hit the shared rate limit).
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # The kernel step first runs an XNU pass that leaves the compile records, then the board's archive scripts. One of
+          # them, build-sheng-platform-power.py, needs a kernel prelinked from Apple's kernelcache that only an earlier local
+          # build leaves behind, so on a fresh runner the step stops there. This job needs only the records.
+          set +e
+          ./unixnu build kernel --device "$GITHUB_WORKSPACE/device" > "$RUNNER_TEMP/unixnu-kernel.log" 2>&1
+          status=$?
+          set -e
+          tail -n 60 "$RUNNER_TEMP/unixnu-kernel.log"
+          echo "unixnu build kernel: exit $status"
+          find out -path '*/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/osfmk/DEVELOPMENT/startup.o.json' | grep -q . \
+            || { echo "::error::the XNU pass left no compile records"; exit 1; }
+      - name: Compile and resolve the fuxi touch objects
+        run: python3 -I fuxi/ci/kernel-compile-check.py unixnu fuxi "$RUNNER_TEMP/compile-check"
+      - name: Collect the text logs
+        if: always()
+        run: |
+          # Only text logs leave the runner: kernels and kernelcaches derive from Apple software.
+          mkdir -p "$RUNNER_TEMP/logs"
+          find unixnu/out -path '*/logs/*.log' -size -20M -exec cp {} "$RUNNER_TEMP/logs/" \; 2>/dev/null || true
+          cp "$RUNNER_TEMP/unixnu-kernel.log" "$RUNNER_TEMP"/compile-check/*.log "$RUNNER_TEMP"/compile-check/*.md \
+            "$RUNNER_TEMP/logs/" 2>/dev/null || true
+          ls -l "$RUNNER_TEMP/logs"
+      - name: Upload the build logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: xnu-compile-logs-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/logs/*.log
+            ${{ runner.temp }}/logs/*.md
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Remove proprietary inputs
+        if: always()
+        run: rm -rf unixnu/out/ipsw unixnu/out/feeds device/.cache/firmware
