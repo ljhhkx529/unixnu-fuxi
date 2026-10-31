@@ -34,9 +34,17 @@ def compile_like(record, source, destination, extra):
             index += 1
         elif value == '-Xclang' and arguments[index + 1].startswith('-W'):
             index += 1
+        elif value == '-D' and arguments[index + 1].startswith('XNU_BOOT_PROGRESS='):
+            index += 1
+        elif value.startswith('-DXNU_BOOT_PROGRESS='):
+            pass
         elif not value.startswith('-W'):
             command.append(value)
         index += 1
+    # The driver builds the archive before the pass that force-loads it, so the records replayed
+    # here come from the bootstrap pass, which is pinned to XNU_BOOT_PROGRESS=0. Only the enabled
+    # pass links this archive, so the hooks must be compiled as the real implementations.
+    command += ['-DXNU_BOOT_PROGRESS=1']
     command += extra
     subprocess.run(command, cwd=record['directory'], check=True, timeout=90)
     return destination
