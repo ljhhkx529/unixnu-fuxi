@@ -186,3 +186,10 @@
 
 ### 7.4 CI
 见 README 的"CI"一节。macOS 上的检查先跑 sheng 配置的 XNU 构建拿到编译记录，再按 sheng 编译触控探针的参数（`-Wall -Wextra -Werror` 加几项例外）编译本项目的探针和驱动，最后检查符号解析。完整链接内核做不到：sheng 构建中途需要一个只在维护者本地才有的参考内核。
+
+2026-11-01 的结果（提交 `920093c`，Xcode 26.6，UniXNU `67df14d`，UniXNU-sheng `08cde20`）：
+- sheng 原版探针（对照）、`FuxiTouchProbe.cpp`、`FtsProtocol.c`、`FtsTouchCore.c`、`GeniSpi.c`、`QcomRpmh.c` 全部编译通过；
+- 本项目目标文件引用 39 个强符号，全部能在 1011 个 XNU 目标文件（`.o` 和 `.cpo`）里找到，没有与 XNU 重复定义的符号；
+- 唯一的弱引用 `armcpu_spi_attach` 在同一次构建出来的 `build/armcpu/libArmCpu.a` 里。
+
+这证明代码能在真实内核里编译、链接；它在真机上能不能工作，还要看 7.3 的各项。

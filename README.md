@@ -1,5 +1,7 @@
 # unixnu_fuxi：小米 13 触控与面板驱动
 
+[![Build](https://github.com/OddlyLabs/unixnu-fuxi/actions/workflows/build.yml/badge.svg)](https://github.com/OddlyLabs/unixnu-fuxi/actions/workflows/build.yml)
+
 面向 [UniXNU](https://github.com/UniXNU/UniXNU) 的小米 13（fuxi，SM8550）移植资料和触控驱动。
 
 主文档：[fuxi_touch_panel_porting.md](fuxi_touch_panel_porting.md)
