@@ -62,7 +62,7 @@ jobs:
           /tmp/board_test
       - name: Scripts
         run: |
-          python3 -m py_compile scripts/*.py
+          python3 -m py_compile scripts/*.py ci/*.py
           bash -n ci/decrypt-boot-image.sh
 
   apple-clang:

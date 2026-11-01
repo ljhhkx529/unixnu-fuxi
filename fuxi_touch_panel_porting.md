@@ -125,7 +125,7 @@
 - **待核实**：on-command 里的 PPS 写的 `pic_height = 0x09D8 = 2520`，与 timing 和 `2B` 页地址的 2400 不一致。要么面板忽略这个值，要么驱动另外发了一份 PPS。写原生驱动前需要对照 Qualcomm 显示驱动源码或实机确认。
 
 ## 4. 建议的验证顺序
-1. 先用社区 fuxi 的 UEFI 镜像，通过 `fastboot boot` 确认能进 UniXNU 菜单。只是临时启动，不写分区。
+1. 用 CI 构建的启动镜像（解密和核对见 README 的"上机"一节），通过 `fastboot boot` 临时启动，确认能进 UniXNU 菜单。只是临时启动，不写分区。
 2. 打通 GENI SPI，读芯片 ID `36 40`。读不到就先查电源（2.6 第 1 条）。
 3. 复位，等 `0x03`，然后 `A0 00 01`，接中断，验证事件解码。可以先在屏幕上打点，看坐标是否除以 10 后与屏幕对齐。
 4. 出图走 splash 帧缓冲。原生 DSI 驱动放到最后。
@@ -221,3 +221,7 @@
 
   这两项（加载偏移、负载放进内核镜像）做成了 fork 里 `unixnu bootimg` 的通用选项，在本地测试过；附加的设备树用固件仓库里的 FdtBlob，它带有 ABL 选择设备树时要匹配的 board-id。
 - **交付**：镜像里有苹果 kernelcache 的内容，CI 只上传加密后的版本（AES-256 加 RSA-OAEP），私钥只在机主电脑上（`X:\Xiaomi13\keys\`，不在任何仓库里）。payload 用的平台种子是固定的测试值，以后启动到系统时再换成手机自己的值。
+- **CI 结果**（2026-11-01，[run 41273003819](https://github.com/OddlyLabs/unixnu-fuxi/actions/runs/41273003819)，提交 `2bbd399`）：内核、payload、DEBUG 固件和启动镜像全部构建通过。
+  - 第一次固件构建失败：fuxiPkg 的 `RAW.inc` 把三个厂商配置文件（`SecParti.cfg`、`uefipil.cfg`、`QcomChargerCfg.cfg`）放在了 `FUXI_VENDOR_HW` 开关外面，只用 Mu 驱动构建时会去找不存在的厂商文件。uefi-fuxi `87554bf9` 把它们放到对应驱动的开关下。
+  - 启动镜像 11.1 MiB（v0）。本地解密后用 `ci/check-boot-image.py` 核对：shim 头里的加载偏移是 0；内核镜像大小 0x0C300200，与 Kerfand 实测能启动的值相同；固件卷就是 CI 构建的那份；payload 里有带触控探针的内核、ADT（chip-id 0x207）和启动参数 `fuxi-touch=3 fuxi-touch-panic=1`。
+  - 固件这一步也能在 Linux 上单独构建（Ubuntu 26.04，clang 21），只改固件时不必等 macOS 的 CI。

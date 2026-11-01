@@ -13,8 +13,9 @@ fork [OddlyLabs/UniXNU](https://github.com/OddlyLabs/UniXNU) (branch `fuxi`), wh
 
 | 子系统 | 状态 |
 |---|---|
-| 触控（ST FTM5） | 驱动和分阶段探针已写好，内核在 CI 里编译；还没有上机 |
-| 显示、存储、固件、CPU、GPU、网络、音频、电源 | 计划中；显示和电源的硬件资料已整理 |
+| 触控（ST FTM5） | 驱动和分阶段探针已写好，在 CI 里编进内核；还没有上机 |
+| 固件和启动镜像 | CI 构建 DEBUG 固件和 `fastboot boot` 用的启动镜像，只上传加密版本；镜像已在本地解密并逐项核对。还没有上机 |
+| 显示、存储、CPU、GPU、网络、音频、电源 | 计划中；显示和电源的硬件资料已整理 |
 
 ## 相关仓库
 
@@ -39,7 +40,7 @@ UniXNU 自己提供启动菜单（UniXNUPkg）和 XNU 加载器（DarwinBoot）�
 | `drivers/FuxiFtsTouch` | 子模块，指向 FuxiFtsTouch |
 | `porting.toml` | 移植记录（UniXNU 格式） |
 | `tests/board_test.c` | 板级常量测试 |
-| `ci/boot-image-recipient.pem`、`ci/decrypt-boot-image.sh` | 启动镜像加密用的公钥，以及本地解密脚本 |
+| `ci/boot-image-recipient.pem`、`ci/decrypt-boot-image.sh`、`ci/check-boot-image.py` | 启动镜像加密用的公钥、本地解密脚本，以及启动前核对镜像的脚本 |
 | `facts/` | 从官方设备树导出的触控、面板事实，以及 73 组面板 DSI 命令序列 |
 
 本地另有 `dtb/`、`firmware/`、`power/`、`ref_src/` 四个目录，不进 Git（见 `.gitignore`）：官方 DTB 和触控固件是厂商文件；dmesg 里有使用痕迹；`ref_src/` 是 GPL 参考源码，只供查阅。
@@ -96,9 +97,10 @@ git clone -b fuxi https://github.com/OddlyLabs/uefi-fuxi
 只用 `fastboot boot` 临时启动，不写任何分区。步骤：
 
 1. 下载 CI 的 `fuxi-boot-image-encrypted-*` 产物，用私钥解密：`bash ci/decrypt-boot-image.sh <私钥> <产物目录>`。
-2. 手机进入 fastboot，运行 `fastboot boot boot.img`。
-3. 默认启动参数是 `fuxi-touch=3 fuxi-touch-panic=1`：探针跑完第 3 阶段（上电、时钟、SPI、复位、读芯片 ID）后 panic，在 panic 屏上读 4 行 FTS 诊断，对照主文档第 7.2 节。
-4. 重启手机即回到原来的系统。
+2. 核对镜像：`python3 ci/check-boot-image.py <产物目录>/boot.img <产物目录>/boot.json ../uefi-fuxi`。它按 `board.toml` 和固件配置检查镜像头、加载偏移、固件卷、payload 里的文件、ADT 和启动参数，全部 `ok` 再继续。
+3. 手机进入 fastboot，运行 `fastboot boot boot.img`。
+4. 默认启动参数是 `fuxi-touch=3 fuxi-touch-panic=1`：探针跑完第 3 阶段（上电、时钟、SPI、复位、读芯片 ID）后 panic，在 panic 屏上读 4 行 FTS 诊断，对照主文档第 7.2 节。
+5. 重启手机即回到原来的系统。
 
 ## 维护
 
