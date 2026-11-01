@@ -4,7 +4,7 @@
 [![Device documentation](https://github.com/OddlyLabs/unixnu-fuxi/actions/workflows/porting-record.yml/badge.svg)](https://github.com/OddlyLabs/unixnu-fuxi/actions/workflows/porting-record.yml)
 
 Device repository for the Xiaomi 13 (fuxi, SM8550), created from UniXNU's `examples/device` template. It builds with the
-fork [OddlyLabs/UniXNU](https://github.com/OddlyLabs/UniXNU) (branch `fuxi-fts-touch`), whose component catalog has
+fork [OddlyLabs/UniXNU](https://github.com/OddlyLabs/UniXNU) (branch `fuxi`), whose component catalog has
 `FuxiFtsTouch`.
 
 主文档：[fuxi_touch_panel_porting.md](fuxi_touch_panel_porting.md)。各子系统的状态以 [porting.toml](porting.toml) 为准。
@@ -20,9 +20,12 @@ fork [OddlyLabs/UniXNU](https://github.com/OddlyLabs/UniXNU) (branch `fuxi-fts-t
 
 | 仓库 | 作用 |
 |---|---|
-| [OddlyLabs/UniXNU](https://github.com/OddlyLabs/UniXNU) | fork 自 UniXNU/UniXNU。分支 `fuxi-fts-touch` 在组件目录里加了 `FuxiFtsTouch` |
+| [OddlyLabs/UniXNU](https://github.com/OddlyLabs/UniXNU) | fork 自 UniXNU/UniXNU。分支 `fuxi`：组件目录加了 `FuxiFtsTouch`；`bootimg` 加了 fuxi 需要的两个选项（镜像头加载偏移、把负载放进内核镜像） |
+| [OddlyLabs/uefi-fuxi](https://github.com/OddlyLabs/uefi-fuxi) | fork 自官方固件 UniXNU/uefi-sheng。分支 `fuxi`：移植了 matejkoo217/uefi-fuxi 的 9 个 fuxi 提交（保留原作者），这些提交里的结论都在真机上测量过 |
 | [OddlyLabs/FuxiFtsTouch](https://github.com/OddlyLabs/FuxiFtsTouch) | 触控组件：FTM5 协议和触点跟踪，纯 C，带主机测试；本仓库用子模块引用它 |
 | 本仓库 | 板级文件、探针、启动钩子补丁、硬件资料 |
+
+UniXNU 自己提供启动菜单（UniXNUPkg）和 XNU 加载器（DarwinBoot），但它们是 UEFI 模块，要靠板级 UEFI 固件才能在手机上运行。fuxi 的固件选的是官方 uefi-sheng 加上经过真机验证的 fuxi 提交：官方部分可以直接合并上游更新，fuxi 部分来源清楚。
 
 ## 目录
 
@@ -36,23 +39,44 @@ fork [OddlyLabs/UniXNU](https://github.com/OddlyLabs/UniXNU) (branch `fuxi-fts-t
 | `drivers/FuxiFtsTouch` | 子模块，指向 FuxiFtsTouch |
 | `porting.toml` | 移植记录（UniXNU 格式） |
 | `tests/board_test.c` | 板级常量测试 |
+| `ci/boot-image-recipient.pem`、`ci/decrypt-boot-image.sh` | 启动镜像加密用的公钥，以及本地解密脚本 |
 | `facts/` | 从官方设备树导出的触控、面板事实，以及 73 组面板 DSI 命令序列 |
 
 本地另有 `dtb/`、`firmware/`、`power/`、`ref_src/` 四个目录，不进 Git（见 `.gitignore`）：官方 DTB 和触控固件是厂商文件；dmesg 里有使用痕迹；`ref_src/` 是 GPL 参考源码，只供查阅。
 
 ## 构建
 
-需要 macOS 和 Xcode 26（UniXNU 也支持 Linux 工具链，见其文档）。
+需要 macOS 和 Xcode 26（UniXNU 也支持 Linux 工具链，见其文档）。三个仓库放在同一个目录下：
 
 ```bash
 git clone --recurse-submodules https://github.com/OddlyLabs/unixnu-fuxi
 ```
 ```bash
-git clone -b fuxi-fts-touch https://github.com/OddlyLabs/UniXNU
+git clone -b fuxi https://github.com/OddlyLabs/UniXNU
 ```
 ```bash
-cd UniXNU && ./unixnu defconfig fuxi_defconfig -D ../unixnu-fuxi && ./unixnu build kernel
+git clone -b fuxi https://github.com/OddlyLabs/uefi-fuxi
 ```
+
+在 UniXNU 目录里依次运行：
+
+```bash
+./unixnu defconfig fuxi_defconfig -D ../unixnu-fuxi
+```
+```bash
+./unixnu build kernel
+```
+```bash
+./unixnu build payload --uefi ../uefi-fuxi --unique-chip-id 0x0123456789abcdef
+```
+```bash
+./unixnu build firmware --uefi ../uefi-fuxi --target DEBUG
+```
+```bash
+./unixnu bootimg --uefi ../uefi-fuxi --target DEBUG --dtb ../uefi-fuxi/Platforms/Xiaomi/fuxiPkg/FdtBlob/sm8550-xiaomi-fuxi.dtb
+```
+
+`--unique-chip-id` 这里用的是固定的测试值。现在的镜像只跑到触控探针的 panic 报告，还用不到用户数据；以后要启动到系统时，再换成手机自己的值。
 
 ## CI（GitHub Actions）
 
@@ -60,16 +84,25 @@ cd UniXNU && ./unixnu defconfig fuxi_defconfig -D ../unixnu-fuxi && ./unixnu bui
 |---|---|---|
 | Host tests | Ubuntu | FuxiFtsTouch 测试（gcc/clang，ASan/UBSan）、板级常量测试、脚本语法 |
 | Kernel-target compile | macOS 26 + Xcode | 驱动的 C 代码按 arm64 内核代码编译，确认不调用 libc |
-| fuxi kernel | macOS 26 + Xcode | 按 UniXNU 流程编译 fuxi 内核（XNU 构建、归档、链接、prelink），确认触控探针和驱动的符号在内核里 |
+| fuxi boot image | macOS 26 + Xcode | 编译内核（XNU 构建、归档、链接、prelink），确认触控探针在内核里、`bsd_init` 调用了它；然后构建 payload、固件和启动镜像，加密后上传 |
 | Porting record | Ubuntu | 用 fork 里的 UniXNU 检查器验证 `porting.toml` |
 
-CI 只上传文本日志。内核、kernelcache 和 IPSW 内容来自苹果软件，不上传。
+启动镜像里有苹果 kernelcache 的内容，所以只上传用 `ci/boot-image-recipient.pem` 加密过的版本，私钥只在机主自己的电脑上；其余产物只上传文本日志。
 
 ## 上机（还没做）
 
-- 只用 `fastboot boot` 临时启动，不写任何分区。
-- 还需要：这台手机的唯一芯片 ID（payload 的 `--unique-chip-id`）、选定一个 uefi-fuxi 固件版本，然后构建 payload 和启动镜像。
-- 默认启动参数是 `fuxi-touch=3 fuxi-touch-panic=1`：探针跑完第 3 阶段（上电、时钟、SPI、复位、读芯片 ID）后 panic，在 panic 屏上读 4 行 FTS 诊断，对照主文档第 7.2 节。
+只用 `fastboot boot` 临时启动，不写任何分区。步骤：
+
+1. 下载 CI 的 `fuxi-boot-image-encrypted-*` 产物，用私钥解密：`bash ci/decrypt-boot-image.sh <私钥> <产物目录>`。
+2. 手机进入 fastboot，运行 `fastboot boot boot.img`。
+3. 默认启动参数是 `fuxi-touch=3 fuxi-touch-panic=1`：探针跑完第 3 阶段（上电、时钟、SPI、复位、读芯片 ID）后 panic，在 panic 屏上读 4 行 FTS 诊断，对照主文档第 7.2 节。
+4. 重启手机即回到原来的系统。
+
+## 维护
+
+- 上游更新：把 UniXNU/UniXNU 的 `main` 合并进 OddlyLabs/UniXNU 的 `fuxi`；把 UniXNU/uefi-sheng 的 `sheng` 合并进 OddlyLabs/uefi-fuxi 的 `fuxi`。
+- 更新后改 `.github/workflows/build.yml` 里固定的两个提交（`UNIXNU_REF`、`UEFI_REF`），让 CI 重新跑一遍。
+- 改动了哪个子系统，就同步更新 `porting.toml` 里对应区域的发现或证据，并运行记录检查。
 
 ## 本地测试
 

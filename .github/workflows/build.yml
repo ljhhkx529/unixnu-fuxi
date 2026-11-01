@@ -6,8 +6,11 @@ on:
   workflow_dispatch:
     inputs:
       unixnu_ref:
-        description: OddlyLabs/UniXNU ref (the fork whose catalog has FuxiFtsTouch)
-        default: 1698acebb25f5be43db2c7048f63f4931b46f5f2
+        description: OddlyLabs/UniXNU ref (branch fuxi of the UniXNU fork)
+        default: 6ae4c252937ae1920ab68eaded10fc78447e0194
+      uefi_ref:
+        description: OddlyLabs/uefi-fuxi ref (branch fuxi of the uefi-sheng fork)
+        default: ec81df08bf2d860d39cca3631a0281edd04d1fcc
       xcode:
         description: Xcode version of the macos-26 image (the newest Xcode 26 if it is not installed)
         default: "26.6"
@@ -25,8 +28,13 @@ defaults:
 
 env:
   UNIXNU_REPO: OddlyLabs/UniXNU
-  UNIXNU_REF: ${{ inputs.unixnu_ref || '1698acebb25f5be43db2c7048f63f4931b46f5f2' }}
+  UNIXNU_REF: ${{ inputs.unixnu_ref || '6ae4c252937ae1920ab68eaded10fc78447e0194' }}
+  UEFI_REPO: OddlyLabs/uefi-fuxi
+  UEFI_REF: ${{ inputs.uefi_ref || 'ec81df08bf2d860d39cca3631a0281edd04d1fcc' }}
   XCODE: ${{ inputs.xcode || '26.6' }}
+  # Bring-up platform seed for the payload's device tree, not this phone's own value: the first images only reach the
+  # touch probe's panic report, before any user data exists. Replace it before booting to userland.
+  BRINGUP_SEED: "0x0123456789abcdef"
 
 jobs:
   host-tests:
@@ -53,7 +61,9 @@ jobs:
             drivers/FuxiFtsTouch/FtsTouchCore.c -o /tmp/board_test
           /tmp/board_test
       - name: Scripts
-        run: python3 -m py_compile scripts/*.py
+        run: |
+          python3 -m py_compile scripts/*.py
+          bash -n ci/decrypt-boot-image.sh
 
   apple-clang:
     name: Kernel-target compile (Xcode clang)
@@ -86,8 +96,8 @@ jobs:
             | grep -vE '^_fts_|^_(memset|memcpy|memmove|bzero)$|^___bzero$|^___stack_chk_(guard|fail)$' || true)
           if [ -n "$undefined" ]; then echo "::error::unexpected imports: $undefined"; exit 1; fi
 
-  kernel:
-    name: fuxi kernel (XNU build and prelink)
+  image:
+    name: fuxi boot image (kernel, payload, firmware)
     needs: host-tests
     runs-on: macos-26
     timeout-minutes: 240
@@ -106,6 +116,12 @@ jobs:
           repository: ${{ env.UNIXNU_REPO }}
           ref: ${{ env.UNIXNU_REF }}
           path: unixnu
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.UEFI_REPO }}
+          ref: ${{ env.UEFI_REF }}
+          path: uefi-fuxi
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -145,11 +161,11 @@ jobs:
           kernel=$(find unixnu/out -path '*/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf' | head -n 1)
           [ -n "$kernel" ] || { echo "::error::linked kernel not found"; exit 1; }
           ls -l "$kernel"
-          # Read the symbol table once: grep -q on a pipe would stop nm early (SIGPIPE) and pipefail would report a miss.
-          nm "$kernel" > "$RUNNER_TEMP/kernel-symbols.txt"
+          # Defined symbols only, read once. XNU keeps its code in __TEXT_EXEC, which nm reports as type S, not T.
+          nm -U "$kernel" > "$RUNNER_TEMP/kernel-symbols.txt"
           missing=0
           for s in _native_touch_probe _native_touch_set_sink _fts_reset _fts_touch_apply _geni_spi_transfer _qcom_rpmh_active_request; do
-            line=$(grep -E " [Tt] $s\$" "$RUNNER_TEMP/kernel-symbols.txt" || true)
+            line=$(grep -E " $s\$" "$RUNNER_TEMP/kernel-symbols.txt" || true)
             if [ -n "$line" ]; then echo "defined: $line"; else echo "::error::missing from the kernel: $s"; missing=1; fi
           done
           # bsd_init must call the probe (patches/xnu/fuxi-touch-probe.patch): look for the call in its disassembly.
@@ -162,10 +178,46 @@ jobs:
           prelinked=$(find unixnu/out -path '*/kernel/kernel.macho' | head -n 1)
           if [ -n "$prelinked" ]; then ls -l "$prelinked"; shasum -a 256 "$prelinked"; else echo "::error::no prelinked kernel"; missing=1; fi
           exit $missing
+      - name: Build payload
+        working-directory: unixnu
+        run: ./unixnu build payload --device "$GITHUB_WORKSPACE/fuxi" --uefi "$GITHUB_WORKSPACE/uefi-fuxi" --unique-chip-id "$BRINGUP_SEED"
+      - name: Build firmware
+        working-directory: unixnu
+        # DEBUG: the firmware prints its log on the panel, the only console before the touch report.
+        run: ./unixnu build firmware --device "$GITHUB_WORKSPACE/fuxi" --uefi "$GITHUB_WORKSPACE/uefi-fuxi" --target DEBUG
+      - name: Pack the boot image
+        working-directory: unixnu
+        run: |
+          mkdir -p "$RUNNER_TEMP/image"
+          ./unixnu bootimg --device "$GITHUB_WORKSPACE/fuxi" --uefi "$GITHUB_WORKSPACE/uefi-fuxi" --target DEBUG \
+            --dtb "$GITHUB_WORKSPACE/uefi-fuxi/Platforms/Xiaomi/fuxiPkg/FdtBlob/sm8550-xiaomi-fuxi.dtb" \
+            -o "$RUNNER_TEMP/image/boot.img"
+          cat "$RUNNER_TEMP/image/boot.json"
+      - name: Encrypt the boot image
+        run: |
+          # The image carries the prelinked Apple kernelcache, so it leaves the runner only encrypted to the owner's key.
+          openssl="$(brew --prefix openssl@3)/bin/openssl"
+          cd "$RUNNER_TEMP/image"
+          shasum -a 256 boot.img | sed 's#  .*#  boot.img#' > boot.img.sha256
+          "$openssl" rand -hex 32 > boot.key
+          "$openssl" enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -in boot.img -out boot.img.enc -pass file:boot.key
+          "$openssl" pkeyutl -encrypt -pubin -inkey "$GITHUB_WORKSPACE/fuxi/ci/boot-image-recipient.pem" \
+            -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 -in boot.key -out boot.key.enc
+          rm -f boot.key boot.img
+          mkdir -p "$RUNNER_TEMP/encrypted"
+          mv boot.img.enc boot.key.enc boot.img.sha256 boot.json "$RUNNER_TEMP/encrypted/"
+          ls -l "$RUNNER_TEMP/encrypted"
+      - name: Upload the encrypted boot image
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuxi-boot-image-encrypted-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/encrypted/*
+          if-no-files-found: error
+          retention-days: 7
       - name: Collect the text logs
         if: always()
         run: |
-          # Only text files leave the runner: the kernel, the kernelcache and IPSW members derive from Apple software.
+          # Only text files leave the runner in the clear: the kernel, the kernelcache and IPSW members derive from Apple software.
           mkdir -p "$RUNNER_TEMP/logs"
           find unixnu/out -path '*/logs/*.log' -size -20M -exec cp {} "$RUNNER_TEMP/logs/" \; 2>/dev/null || true
           cp "$RUNNER_TEMP/unixnu-status.json" "$RUNNER_TEMP/logs/" 2>/dev/null || true
@@ -175,7 +227,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: fuxi-kernel-logs-${{ github.run_attempt }}
+          name: fuxi-build-logs-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/logs/*.log
             ${{ runner.temp }}/logs/*.json
@@ -184,4 +236,4 @@ jobs:
           retention-days: 7
       - name: Remove proprietary inputs
         if: always()
-        run: rm -rf unixnu/out/ipsw unixnu/out/feeds fuxi/.cache/firmware
+        run: rm -rf unixnu/out/ipsw unixnu/out/feeds fuxi/.cache/firmware "$RUNNER_TEMP/image" unixnu/out/*/*/*/payload

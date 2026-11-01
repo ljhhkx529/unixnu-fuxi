@@ -3,8 +3,11 @@
 This repository owns the Xiaomi 13 (fuxi, SM8550) board: DTS, peripheral wiring, component selection, firmware inputs,
 the board probe and packaging. Shared SM8550 resources belong to `UniXNU-sm8550-common`; the build driver, the component
 catalog and the documentation belong to UniXNU. This board builds with the fork
-[OddlyLabs/UniXNU](https://github.com/OddlyLabs/UniXNU) (branch `fuxi-fts-touch`), whose catalog has the `FuxiFtsTouch`
-component; upstream UniXNU does not have it yet.
+[OddlyLabs/UniXNU](https://github.com/OddlyLabs/UniXNU) (branch `fuxi`), whose catalog has the `FuxiFtsTouch`
+component and whose `bootimg` takes the fuxi boot image options; upstream UniXNU has neither yet. The firmware is
+[OddlyLabs/uefi-fuxi](https://github.com/OddlyLabs/uefi-fuxi) (branch `fuxi`): UniXNU/uefi-sheng with the fuxi commits of
+matejkoo217/uefi-fuxi. Keep both forks as their upstream plus a small set of fuxi commits, merge upstream into them, and
+update the pinned revisions in `.github/workflows/build.yml` after each merge.
 
 ## Read first
 

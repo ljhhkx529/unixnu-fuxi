@@ -14,27 +14,30 @@ paths = ["board.toml", "feeds.toml", "configs/**", ".gitmodules", ".github/**", 
 inputs = ["UniXNU examples/device template (SM8550, iPadOS 17.7.11 profile).", "UniXNU-sm8550-common at 23b2049fcd9e30356161def84231334fb55ecca9."]
 configuration = ["board.toml: name fuxi, kit fuxi, soc_source sm8550, os_profile ipados-17.7.11-21H461, device_tree.source device:dts/fuxi.dts.", "configs/fuxi_defconfig: the template options, CONFIG_XNU_NATIVE_ADRENO off (the SoC fragment turns it on), and CONFIG_XNU_EXTRA_LD_ARCHIVES for the touch archive. The arch fragment sets CONFIG_XNU_BUILD_ARCHIVES, CONFIG_XNU_NATIVE_AES, CONFIG_XNU_NATIVE_ARCH_TIMER and CONFIG_XNU_NATIVE_PAN; the OS fragment sets CONFIG_XNU_SOURCE_MOCKFS.", "[kernel] archives in build order: corecrypto (plain and namespaced), ArmDTPlatform, ArmCpu, SoftwareAES and its bindings, libpthread, the mockfs fixture, build-fuxi-touch.py."]
 procedure = ["./unixnu defconfig fuxi_defconfig -D ../unixnu-fuxi", "./unixnu status --json", "./unixnu build kernel"]
-findings = ["The merged configuration is the arch, SoC and OS fragments followed by the defconfig; the archive list has to cover every archive the merged options require, not only those of the template defconfig.", "CONFIG_XNU_SOURCE_MOCKFS (OS fragment) makes vfs_conf.o reference mockfs, so the link needs build/mockfs-fixture/libmockfs_fixture.a: the first CI kernel build at 450f518 applied all 62 patches and built every listed archive, then stopped at that missing archive.", "ArmCpu needs the source corecrypto provider, so corecrypto is built before the components, as in UniXNU-sheng."]
+findings = ["CI (.github/workflows/build.yml) pins OddlyLabs/UniXNU and OddlyLabs/uefi-fuxi at full revisions; after merging upstream into either fork, update UNIXNU_REF or UEFI_REF and let the image job run again.", "The merged configuration is the arch, SoC and OS fragments followed by the defconfig; the archive list has to cover every archive the merged options require, not only those of the template defconfig.", "CONFIG_XNU_SOURCE_MOCKFS (OS fragment) makes vfs_conf.o reference mockfs, so the link needs build/mockfs-fixture/libmockfs_fixture.a: the first CI kernel build at 450f518 applied all 62 patches and built every listed archive, then stopped at that missing archive.", "ArmCpu needs the source corecrypto provider, so corecrypto is built before the components, as in UniXNU-sheng."]
 completion = ["All source pins resolve; every selected component has a record; status shows the intended overrides and patch order."]
 limits = ["unixnu.lock is not committed yet."]
 next_action = ["Run ./unixnu fetch and commit unixnu.lock."]
 evidence = [
   { kind = "source", reference = "board.toml", result = "Board selection and archive order" },
+  { kind = "host", command = "./unixnu defconfig fuxi_defconfig; ./unixnu build kernel", revision = "8b4c03f69fc15878d7ee92c0f157215fa235d78d", reference = "https://github.com/OddlyLabs/unixnu-fuxi/actions/runs/41261795785", result = "All sources resolved, 62 patches applied, nine archives built, kernel linked and prelinked" },
 ]
 
 [[area]]
 id = "firmware"
-status = "planned"
-components = []
+status = "implemented"
+components = ["DarwinBoot"]
 paths = ["proprietary-files.txt"]
-inputs = ["A fuxi UEFI port that starts DarwinBoot: hanzi123-bilp/uefi-fuxi, Sohytrs/uefi-fuxi (fuxi branch) or mouse233/uefi-fuxi.", "fastboot boot of the image (temporary, nothing is written to the device)."]
-configuration = ["board.toml [firmware]: config fuxi, dsc Platforms/Xiaomi/fuxiPkg/fuxi.dsc, as the community UEFI ports use; not built here yet."]
-procedure = ["Select and pin a uefi-fuxi revision, then ./unixnu build firmware --uefi ../uefi-fuxi."]
-findings = ["The stock device tree already has /reserved-memory/splash_region at 0xb8000000 (0x2b00000), so no bootimg dtb_node is added."]
+inputs = ["OddlyLabs/uefi-fuxi, branch fuxi: a fork of UniXNU/uefi-sheng (the official Mu-Silicium fork for UniXNU) with the nine fuxi bring-up commits of matejkoo217/uefi-fuxi cherry-picked (authors kept, cherry-pick -x); its fuxiPkg derives from Silicium's SM8550 nuwa (Xiaomi 13 Pro).", "fastboot boot of the image (temporary, nothing is written to the device)."]
+configuration = ["board.toml [firmware]: config fuxi, dsc Platforms/Xiaomi/fuxiPkg/fuxi.dsc, fd Build/fuxiPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd, and the submodules, edk2 patch and package path list of UniXNU-sheng's [firmware].", "fuxi.dsc: FUXI_VENDOR_HW = 0 (Mu drivers only; the previous stage keeps the panel scanning out), framebuffer 1080x2400x32, DDR base 0x80000000, the UniXNU menu, UniXNUDxe, DarwinBoot, DiskIo, Partition and FAT; FuxiBootMemoryDxe publishes the payload volume the shim hands over."]
+procedure = ["./unixnu build firmware --uefi ../uefi-fuxi --target DEBUG (CI: the image job of .github/workflows/build.yml)."]
+findings = ["UniXNU provides the boot menu (UniXNUPkg) and the XNU loader (DarwinBoot) as UEFI modules; the board firmware that runs them on the phone is a Mu-Silicium platform, and upstream Mu-Silicium has no fuxi platform.", "Measured on hardware in matejkoo217/uefi-fuxi: with text offset 0 in the shim's ARM64 header the ABL loads the image and the firmware's DEBUG console prints on the panel; with the firmware address there the ABL answers Load Error.", "The firmware's FdtBlob (sm8550-xiaomi-fuxi.dtb, model 8550 fuxi, msm-id 0x207, board-id 0x10008) carries the root properties the ABL selects an appended DTB by; the DTB merged from OS3.0.309 keeps the base DTB's board-id 0 and is not used for the boot image."]
 completion = ["Firmware image builds, enters UniXNU, publishes the framebuffer and preserves the documented memory reservations."]
-limits = ["No firmware revision is selected and no firmware build has run."]
-next_action = ["Pin one uefi-fuxi revision and build it."]
-evidence = []
+limits = ["No device evidence with this exact checkout: the hardware results above are matejkoo217's and Kerfand's (who reached XNU with the same commits through a fork)."]
+next_action = ["Boot the CI image with fastboot boot and confirm the UniXNU menu and the DarwinBoot handoff."]
+evidence = [
+  { kind = "source", reference = "https://github.com/OddlyLabs/uefi-fuxi/tree/fuxi", result = "Firmware fork with the fuxi platform" },
+]
 
 [[area]]
 id = "cpu"
@@ -170,17 +173,19 @@ evidence = []
 
 [[area]]
 id = "packaging"
-status = "planned"
-components = []
-paths = ["scripts/*payload*", "scripts/*image*", "scripts/*flash*", "patches/**"]
-inputs = ["The iPadOS 17.7.11 restore image of the OS profile, the unique chip id of the device, a firmware image."]
-configuration = ["patches/xnu/series applies fuxi-touch-probe.patch after the arch, SoC and OS series.", "[payload] kernel_args set the touch probe stage and its panic report; panic_screen = true."]
-procedure = ["./unixnu build kernel, then ./unixnu build payload --unique-chip-id <hex>, then ./unixnu bootimg --uefi ../uefi-fuxi."]
-findings = ["fuxi-touch-probe.patch keeps only original XNU lines as context, so changes to the shared series around it do not break it."]
+status = "implemented"
+components = ["XnuPrelink"]
+paths = ["scripts/*payload*", "scripts/*image*", "scripts/*flash*", "patches/**", "ci/*boot-image*"]
+inputs = ["The iPadOS 17.7.11 restore image of the OS profile (members fetched with range requests), a platform seed, the firmware volume, the firmware's FdtBlob."]
+configuration = ["patches/xnu/series applies fuxi-touch-probe.patch after the arch, SoC and OS series.", "[payload] kernel_args set the touch probe stage and its panic report; panic_screen = true; [payload.adt] owned_memory_size 0x130000000.", "[bootimg] payload = \"image\" and [bootimg.image]: header v0 (fuxi-legacy.toml's container), text_offset 0. The options are in OddlyLabs/UniXNU branch fuxi (scripts/unixnu/bootimg.py)."]
+procedure = ["./unixnu build kernel; ./unixnu build payload --uefi ../uefi-fuxi --unique-chip-id <seed>; ./unixnu build firmware --uefi ../uefi-fuxi --target DEBUG; ./unixnu bootimg --uefi ../uefi-fuxi --target DEBUG --dtb <FdtBlob>.", "CI encrypts boot.img to ci/boot-image-recipient.pem; ci/decrypt-boot-image.sh decrypts it with the owner's private key."]
+findings = ["fuxi-touch-probe.patch keeps only original XNU lines as context, so changes to the shared series around it do not break it.", "Measured on hardware in matejkoo217/uefi-fuxi: the ABL's fastboot boot refuses a header v4 image (Invalid Parameter), so the fastboot image uses the v0 container; and the ABL keeps the boot image ramdisk in vendor_boot, so the payload follows the firmware volume and the image size at header offset 0x10 covers it (Kerfand: 0x0C300200 for a 192 MiB payload).", "The first kernel build in CI at 8b4c03f linked and prelinked; bsd_init calls native_touch_probe in the linked kernel."]
 completion = ["Kernel and prelink succeed, payload contains all declared inputs, and the boot image matches the bootloader format and size limit."]
-limits = ["The payload needs the device's unique chip id; no payload or boot image has been built."]
-next_action = ["Build the kernel in CI, then the payload once the chip id and firmware are chosen."]
-evidence = []
+limits = ["The platform seed in CI is a fixed bring-up value, not the phone's own; replace it before booting to userland.", "No boot image has been started on the device."]
+next_action = ["Run the image job, decrypt the artifact and boot it with fastboot boot."]
+evidence = [
+  { kind = "host", command = "./unixnu build kernel --device fuxi", revision = "8b4c03f69fc15878d7ee92c0f157215fa235d78d", reference = "https://github.com/OddlyLabs/unixnu-fuxi/actions/runs/41261795785", result = "Kernel linked and prelinked; bsd_init calls _native_touch_probe" },
+]
 
 [[area]]
 id = "diagnostics"
@@ -190,7 +195,7 @@ paths = ["ci/**", "scripts/check-*", "scripts/probe-*", "package/*Probe*", "pack
 inputs = ["The panic screen of the payload (panic_screen = true) while no display driver runs."]
 configuration = ["fuxi-touch-panic=1 ends the boot with a panic whose message is the probe's four diagnostic rows; the rows are also printed to the kernel log at each stage."]
 procedure = ["Photograph the panic screen and compare the FTS rows with fuxi_touch_panel_porting.md section 7.2."]
-findings = ["The other fuxi ports read their results from panic screen photographs as well.", "The earlier ci/ scripts compiled the probe inside a UniXNU-sheng build; the fuxi kernel build replaces them."]
+findings = ["The other fuxi ports read their results from panic screen photographs as well.", "The DEBUG firmware prints its log on the panel before the handoff (matejkoo217/uefi-fuxi), the only console before the touch report.", "The earlier ci/ scripts compiled the probe inside a UniXNU-sheng build; the fuxi kernel build replaces them."]
 completion = ["Each claimed milestone has a reproducible command, a matching source/image revision and an accessible result."]
 limits = ["No device log has been captured."]
 next_action = ["Capture the first touch report from the device."]
