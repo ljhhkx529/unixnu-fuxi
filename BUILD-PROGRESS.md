@@ -452,3 +452,136 @@ fuxi 的 GMU 寄存器、clock/vote 和 command-db fixture 没有真实来源。
 - `make-fuxi-adt.py` 增加 `--persistent-data`，让 datamigrator 和系统 app staging
   在 persistent 路径运行；`board.toml` 打开 `sheng-lite=1`、`sheng-data-persist=2`
   和 `persistent_data=true`。
+
+## 十二、GPU fence 停摆诊断（2026-11-01）
+
+### 现象
+
+union SystemOS 起来后，SpringBoard / backboardd 渲染到第 17/18 帧停摆：
+
+- `[fence wait]` 显示 `submitted=18 completed=17`（最后一次超时快照），`timeouts` 持续累积。
+- `[scanout wait]` 每次 500ms 超时，显示没有新帧合成。
+- `[clocks] gpu perf` 从 7（615 MHz）落回 3（348 MHz）——GPU 空闲。
+
+早期日志没有 `[stall]` 行，无法直接看 CP 停在哪，诊断走了弯路。
+
+### 诊断手段（三个改动，均只加日志/对齐 sheng，不动执行逻辑）
+
+1. `unixnu-fuxi/package/BootLogStubs.c` 补 `native_adreno_stall[29]` /
+   `native_adreno_stall_mem[59]` 定义。此前 BootLog 用 `weak_import` 引用、符号缺失时
+   `&sym == NULL`，`[stall]` 整段被跳过；补上后 Adreno740 已有的 stall 快照能打出来。
+2. `UniXNU/drivers/Adreno740/NativeAdrenoSubmit.cpp` 加 fence 事件环形日志
+   `native_adreno_fence_events[32][4]`（type 1 submit / 2 wait-enter / 3 wait-complete /
+   4 wait-timeout），`BootLog.c` 打印最近 16 条。
+3. `GpuPowerProbe.cpp` 对齐 sheng 的两处移植遗漏（不是停摆根因，但补齐一致性）：
+   - DCVS wake boost（idle→active 50ms 内拉到 ≥578 MHz）+ touch boost（触屏后顶档
+     `sheng-gpu-dcvs-boost-ms`）。fuxi 之前只有基础 busy 升降频，GPU 长期停在 348 MHz 地板。
+   - `sheng-gpu-pause-us`（fence waiter 的睡眠时长，默认 1000us；fuxi 之前硬编码 100us）。
+
+### 关键结论：fence 全部完成，backboardd 之后停止提交
+
+fence 事件日志（`fuxi-20190100-000035 (4).log`）给出确定性证据：
+
+```text
+91  submit f=17 sub=17 cmp=16
+93  wait-timeout f=17        ← 第 1 次 poll 超时
+95  wait-timeout f=17        ← 第 2 次 poll 超时
+97  wait-complete f=17 cmp=17   ← fence 17 完成
+98  submit f=18 sub=18 cmp=17   ← 提交下一帧
+100/102/104 wait-timeout f=18   ← 3 次 poll 超时
+106 wait-complete f=18 cmp=18   ← fence 18 完成
+（之后无 fence 19，事件计数冻结在 106）
+```
+
+- fence 17、18 都正常完成（`wait-complete`，`cmp` 递增），不是 GPU hang。
+- 每个 fence 都是「poll 超时几次 → 最终 complete」的正常模式，WaitFence 返回成功。
+- 有 fence 18（说明 fence 17 完成后渲染循环还在跑），但没有 fence 19——backboardd
+  在 fence 18 完成后停止提交。
+
+符号化 backboardd 的等待通道 `0xfffffff00b8ba2ac`：
+
+```text
+_ipc_mqueue_receive_continue
+```
+
+backboardd 26 个线程全部阻塞在 `ipc_mqueue_receive`（Mach 消息接收），在等下一帧渲染消息；
+SpringBoard 一个线程忙等（`sw/s` 高）。
+
+### 排除的假设
+
+- SMMU 缺页/ACD 值错误：`[stall vm] fault=00000400` 无 fault 位；`enable_acd=0`（ACD 关闭）。
+- GPU 频率低：DCVS boost 补齐后 `gpu perf` 已能到 7/8，但停摆不变。
+- fence 超时预算固定 2ms：metal2vulkan 的 `WAIT_SLICE=100ms`，`longest=2040us` 是成功等待耗时，
+  不是超时预算。
+- 大 IB（256KB）异常：fence 17 的 256KB IB 是 SpringBoard 完整渲染帧，在 615 MHz 下 ~2ms 完成。
+
+### 根因定位
+
+GPU 驱动和 fence 同步路径正常。主链是 iOS 用户态停摆：
+
+```text
+fence 18 完成 → backboardd 进入 ipc_mqueue_receive 等 mach 消息
+→ 下一帧渲染消息没来 → backboardd 不再提交 → GPU 空闲
+→ scanout 500ms 超时 → SpringBoard 忙等
+```
+
+这是 CoreAnimation → backboardd 消息循环的问题，不是 UniXNU 内核/GPU 驱动的问题。
+
+### 用户态符号化（000823，停摆 150 秒）
+
+从 IPSW 21H461 的 SystemOS 提取 `dyld_shared_cache_arm64` + `.symbols`，对停摆栈顶
+`1e4174b58` 做符号化。slide 取日志 `cache+189f4000`：
+
+- `1e4174b58`（backboardd 与 SpringBoard 停摆后共同栈顶 pc）
+  = `libsystem_kernel.dylib` + `0x1b58`，是 `mach_msg` 接收等待循环内部；
+  内核侧 continuation = `ipc_mqueue_receive_continue`（即 PROC 行 `Cfffffff00b8ba2ac`）。
+- `_mach_msg_trap` / `_mach_msg2_trap` / `_mach_msg_overwrite_trap` 落在 `/usr/lib/dyld`
+  （dyld 的 trap stub），真正阻塞点在 `libsystem_kernel` 的接收路径。
+
+进程 peer（`lookup_peer` 用 `ipc_port_get_receiver_task_locked` 反查）：
+
+- SpringBoard 主线程停摆时 `peer=154`，日志 `chronod(154)` 确认是 `chronod`
+  （ChronoCore，小组件/时间线服务）。
+- backboardd 主线程停摆时 `peer=-1`（挂在 port set，无单一 receiver）。
+
+`lookup_peer` 的语义：阻塞在 mach_msg 的线程，其上下文里一个 send right 指向的
+receiver task。所以 `peer=154` 表示 SpringBoard 阻塞的这次 mach_msg 关联到一个
+由 chronod 接收的端口，不是 SpringBoard 在等 chronod 发消息。
+
+### 排除实验（受控单变量）
+
+按「每次只改一个变量」的顺序跑，`sheng-disable-jobs` 是现成机制，只改 board.toml：
+
+| 轮 | 变量 | 结果 |
+| --- | --- | --- |
+| 000027 (9) | 禁 chronod | 停摆依旧：swap 停 W3、fence 停 17，peer 变成别的 pid |
+| — | 禁 liveactivitiesd | 成功，渲染恢复 |
+
+- 禁 chronod 无效，且 SpringBoard 的 peer 从 chronod 变成别的 pid → 等 chronod 是
+  停摆后的连锁表现，不是原因。
+- 禁 liveactivitiesd 后渲染恢复。liveactivitiesd 在停摆前约 5 秒（56.3s vs swap 停 61.2s）
+  反复 sig5 崩溃。
+
+### liveactivitiesd 崩溃符号化
+
+`liveactivitiesd sig5 PC1cbdce4f8 slide a4d8000`：
+
+```text
+unslid = 0x1c18f64f8 = SessionSyncEngine + 0x1d4f8
+          = ___swift_memcpy17_8 (0x1c18f4f34) ~ _block_copy_helper (0x1c18f68e0) 之间
+```
+
+`sig5 = SIGTRAP`，落在 SessionSyncEngine（小组件时间线同步引擎）的 Swift 栈拷贝/析构
+路径里，不是野指针。
+
+### 根因
+
+liveactivitiesd（SessionCore）在停摆前约 5 秒崩溃，SessionSyncEngine 的 Swift 运行时
+trap 触发 SIGTRAP；它崩溃/重启循环卡住渲染服务（backboardd 停提交、scanout 500ms 超时）。
+禁用 liveactivitiesd 后渲染循环恢复。UniXNU 内核、Adreno740、GopFramebuffer、DPU、SMMU
+都不是根因。
+
+### 待办
+
+- [ ] 查 SessionSyncEngine + 0x1d4f8 的具体 trap 原因（Swift 越界/未实现路径），确认是
+      数据迁移（persistent Data seed）还是 SessionCore 依赖缺了某个 XPC 服务。

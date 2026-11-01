@@ -94,6 +94,7 @@ extern void sheng_cpufreq_poll(void) __attribute__((weak_import));
 extern char boot_process_rows[10][120] __attribute__((weak_import));
 extern unsigned boot_ui_trace_role_rows(unsigned,char [][120],unsigned,unsigned) __attribute__((weak_import));
 extern char native_touch_rows[4][120] __attribute__((weak_import));
+extern volatile int native_fuxi_touch_pad __attribute__((weak_import));
 extern char native_cpufreq_row[120] __attribute__((weak_import));
 extern volatile uint32_t native_hid_input_events[8] __attribute__((weak_import));
 extern volatile int native_hid_input_results[8] __attribute__((weak_import));
@@ -104,6 +105,9 @@ extern char *debug_buf_base __attribute__((weak_import));
 extern unsigned int kernel_debugger_entry_count __attribute__((weak_import));
 extern volatile uint32_t native_cpufreq_stage __attribute__((weak_import));
 extern volatile unsigned native_touch_stage_req __attribute__((weak_import));
+extern volatile uint32_t native_fuxi_touch_pins[6] __attribute__((weak_import));
+extern volatile int native_fuxi_touch_pins_n __attribute__((weak_import));
+extern volatile uint32_t native_fuxi_touch_dbg[24] __attribute__((weak_import));
 extern volatile unsigned boot_process_passes,boot_process_seen __attribute__((weak_import));
 extern volatile unsigned boot_process_attempts __attribute__((weak_import));
 extern volatile unsigned boot_process_busy __attribute__((weak_import));
@@ -947,6 +951,8 @@ static void crash_banner(unsigned now) {
     for(unsigned i=0;i<3 && i<c;++i)snprintf(rows[n++],120,"%s",native_wi_log[(c-1-i)%4]);
   }
   if(&native_cpufreq_row && native_cpufreq_row[0])snprintf(rows[n++],120,"CPU   %.110s",native_cpufreq_row);
+  // The AKS rows (slots 0-1: registration status, then selector answers) are the active question, so they also go live.
+  for(unsigned i=0;i<2 && n<48;++i)if(boot_progress_ext[i][0] && boot_progress_ext[i][0]!=' ')snprintf(rows[n++],120,"AKS%u  %.47s",i+1,boot_progress_ext[i]);
   // The extension slots are drawn only on the boot page (display bound); the GPU slots 2-7 also go to the live banner.
   // Slots 2 and 3 carry the IPI self-test and the exec observer from the GPU probe once it has run (before that they hold the early
   // zap/interrupt lines, which are worth seeing too), so the banner shows slots 2-7 as GPU1-GPU6.
@@ -983,7 +989,7 @@ static void crash_banner(unsigned now) {
     const char *r=rows[i];
     // Colour by row kind: failures red, exit records yellow, GPU results cyan, timing and load rows grey.
     uint32_t color=!strncmp(r,"CRASH",5)||!strncmp(r,"PANIC",5)?0xffff5a5a:!strncmp(r,"REASON",6)?0xffff9a70:
-      !strncmp(r,"EXIT",4)?0xffffe066:!strncmp(r,"GPU",3)?0xff66e0ff:r[0]==' '?0xffff8a8a:0xffb4bcc6;
+      !strncmp(r,"EXIT",4)?0xffffe066:(!strncmp(r,"GPU",3)||!strncmp(r,"AKS",3))?0xff66e0ff:r[0]==' '?0xffff8a8a:0xffb4bcc6;
     px_text(0,top+i*cell,r,cols,color,0xff0d1117);
   }
 }
@@ -1000,7 +1006,7 @@ static void touch_overlay(void) {
   if(__atomic_exchange_n(&render_busy,1,__ATOMIC_ACQUIRE))return;
   ext_overlay_locked();
   crash_banner(seconds());
-  if(&native_touch_stage_req && native_touch_stage_req)touch_overlay_locked();
+  if(&native_touch_stage_req && native_touch_stage_req && (!&native_fuxi_touch_pad || native_fuxi_touch_pad))touch_overlay_locked();
   __atomic_store_n(&render_busy,0,__ATOMIC_RELEASE);
 }
 static void touch_overlay_locked(void) {
@@ -1023,6 +1029,63 @@ static void touch_overlay_locked(void) {
   touch_fill(padX,padY+padH-31,padX+30,padY+padH-1,palette[2]);touch_fill(padX+padW-31,padY+padH-31,padX+padW-1,padY+padH-1,palette[3]);
   (void)frame_drawn;
   touch_fill(padX,padY-30,padX+19,padY-11,(decor_pass>>5)&1?0xff00ff00:0xffff00ff);   // heartbeat: the overlay thread is running
+  if(&native_fuxi_touch_pins_n && native_fuxi_touch_pins_n>0) {
+    // Read-only TLMM dump (fuxi-touch-pins=8): six pin CTL words as hex, above the pad.
+    static const unsigned gpio[6]={24,25,44,45,46,47};
+    unsigned n=(unsigned)native_fuxi_touch_pins_n;if(n>6)n=6;
+    unsigned rows=(n+1)/2;
+    int top=(int)padY-38-(int)(rows*14*display.scale);
+    if(top>14*(int)display.scale)
+      for(unsigned r=0;r<rows;++r) {
+        unsigned a=r*2,c=a+1;char b[48];
+        if(c<n)snprintf(b,sizeof b,"G%u %04X  G%u %04X",gpio[a],(unsigned)(native_fuxi_touch_pins[a]&0xffffu),gpio[c],(unsigned)(native_fuxi_touch_pins[c]&0xffffu));
+        else snprintf(b,sizeof b,"G%u %04X",gpio[a],(unsigned)(native_fuxi_touch_pins[a]&0xffffu));
+        px_text(padX,(unsigned)top+r*14*display.scale,b,24,0xff00ffcc,0xff0d1117);
+      }
+  }
+  static int show_dbg = -1;
+  if(show_dbg < 0) {unsigned m = 0; show_dbg = PE_parse_boot_argn("fuxi-touch-pins", &m, sizeof m) && (m & 16);}
+  if(show_dbg && display.frame && &native_fuxi_touch_dbg) {
+    unsigned cols = (display.width - padX) / (6 * display.scale); if (cols > 44) cols = 44;
+    int top = (int)padY - 38 - (int)(3 * 14 * display.scale) - 8 - (int)(6 * 14 * display.scale);
+    if (top > 14 * (int)display.scale && cols >= 24)
+      for (unsigned r = 0; r < 6; ++r) {
+        char b[64];
+        if (r == 0)
+          snprintf(b, sizeof b, "s%u st%u e%d chip%04x fw%04x",
+                   (unsigned)((native_fuxi_touch_dbg[14] >> 16) & 0xffff), (unsigned)((native_fuxi_touch_dbg[14] >> 8) & 0xff),
+                   (int)native_fuxi_touch_dbg[15], (unsigned)(native_fuxi_touch_dbg[1] & 0xffff),
+                   (unsigned)((native_fuxi_touch_dbg[1] >> 16) & 0xffff));
+        else if (r == 1)
+          snprintf(b, sizeof b, "rx%08x irq%04x rst%04x", (unsigned)native_fuxi_touch_dbg[0],
+                   (unsigned)(native_fuxi_touch_dbg[3] & 0xffff), (unsigned)(native_fuxi_touch_dbg[4] & 0xffff));
+        else if (r == 2)
+          snprintf(b, sizeof b, "rc%d/%d gs%08x tx%08x rx%08x", (int)native_fuxi_touch_dbg[5], (int)native_fuxi_touch_dbg[13],
+                   (unsigned)native_fuxi_touch_dbg[6], (unsigned)native_fuxi_touch_dbg[7], (unsigned)native_fuxi_touch_dbg[8]);
+        else if (r == 3)
+          snprintf(b, sizeof b, "scan%d rd%u ev%u er%u bad%u fifo%u", (int)native_fuxi_touch_dbg[2],
+                   (unsigned)native_fuxi_touch_dbg[9], (unsigned)native_fuxi_touch_dbg[10],
+                   (unsigned)((native_fuxi_touch_dbg[11] >> 16) & 0xffff), (unsigned)(native_fuxi_touch_dbg[11] & 0xffff),
+                   (unsigned)((native_fuxi_touch_dbg[12] >> 8) & 0xff));
+        else if (r == 4) {
+          int rc0 = (int)(native_fuxi_touch_dbg[16] & 0xffff), rc1 = (int)((native_fuxi_touch_dbg[16] >> 16) & 0xffff);
+          if (rc0 & 0x8000) rc0 -= 0x10000;
+          if (rc1 & 0x8000) rc1 -= 0x10000;
+          snprintf(b, sizeof b, "pwr rc%d/%d cd%x id%06x t%u", rc0, rc1,
+                   (unsigned)(native_fuxi_touch_dbg[17] & 0xff), (unsigned)(native_fuxi_touch_dbg[20] & 0xffffff),
+                   (unsigned)((native_fuxi_touch_dbg[17] >> 8) & 0xff));
+        } else {
+          int ld = (int)(int16_t)((native_fuxi_touch_dbg[19] >> 16) & 0xffff);
+          int rr = (int)(int16_t)(native_fuxi_touch_dbg[19] & 0xffff);
+          snprintf(b, sizeof b, "hid st%u ld%d drv%u run%u rep%u r%d",
+                   (unsigned)(native_fuxi_touch_dbg[18] & 0xff), ld,
+                   (unsigned)((native_fuxi_touch_dbg[18] >> 8) & 0xff),
+                   (unsigned)((native_fuxi_touch_dbg[18] >> 16) & 0xff),
+                   (unsigned)((native_fuxi_touch_dbg[18] >> 24) & 0xff), rr);
+        }
+        px_text(padX, (unsigned)top + r * 14 * display.scale, b, cols, 0xffffd060, 0xff101010);
+      }
+  }
   }
   uint32_t seq=__atomic_load_n(&native_touch_seq,__ATOMIC_ACQUIRE);
   if(seq&1)return;

@@ -63,6 +63,10 @@ cd "$ROOT"
   --gpu-addon "$GPU_ADDON" \
   --skip-setup
 
+# The firmware volume (SILICIUM_UEFI.fd) carries UniXNU's UEFI package and the
+# DarwinBoot loader; bootimage packs it with the payload, so rebuild it here.
+./unixnu build firmware
+
 python3 "$UEFI/scripts/bootimage.py" \
   --ramdisk "$OUT/payload/payload.img" \
   -o "$OUT/boot/boot.img"

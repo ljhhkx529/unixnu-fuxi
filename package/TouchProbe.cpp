@@ -328,24 +328,30 @@ void trackStrokes(unsigned count, const int *ids, const int *xs, const int *ys) 
 static void (*gTouchSink)(void *);
 static void *gTouchSinkContext;
 extern "C" void native_touch_set_sink(void (*sink)(void *), void *context) {gTouchSinkContext = context; __atomic_store_n(&gTouchSink, sink, __ATOMIC_RELEASE);}
-void publish(unsigned count, const nvt_contact *c) {
-    int ids[NVT_SLOTS], xs[NVT_SLOTS], ys[NVT_SLOTS];
-    for (unsigned i = 0; i < count && i < NVT_SLOTS; ++i) {
-        ids[i] = c[i].tracking_id; xs[i] = c[i].x; ys[i] = c[i].y < 0 ? c[i].y : (20319 - (c[i].y > 20319 ? 20319 : c[i].y));
-    }
-    trackStrokes(count < NVT_SLOTS ? count : NVT_SLOTS, ids, xs, ys);
+void publishRaw(unsigned count, const int *ids, const int *xs, const int *ys) {
+    if (count > NVT_SLOTS) count = NVT_SLOTS;
+    trackStrokes(count, ids, xs, ys);
     native_touch_seq = native_touch_seq + 1;
     __asm__ volatile("dmb ish" ::: "memory");
     native_touch_count = count;
-    for (unsigned i = 0; i < count && i < NVT_SLOTS; ++i) {
-        native_touch_xs[i] = c[i].x;
-        // Panel photograph (v94): X is correct and Y is mirrored, so publish Y from the other edge (axis maximum 20320).
-        native_touch_ys[i] = c[i].y < 0 ? c[i].y : (20319 - (c[i].y > 20319 ? 20319 : c[i].y));
-        native_touch_ids[i] = c[i].tracking_id;
+    for (unsigned i = 0; i < count; ++i) {
+        native_touch_xs[i] = xs[i];
+        native_touch_ys[i] = ys[i];
+        native_touch_ids[i] = ids[i];
     }
     __asm__ volatile("dmb ish" ::: "memory");
     native_touch_seq = native_touch_seq + 1;
     if (void (*sink)(void *) = __atomic_load_n(&gTouchSink, __ATOMIC_ACQUIRE)) sink(gTouchSinkContext);
+}
+void publish(unsigned count, const nvt_contact *c) {
+    int ids[NVT_SLOTS], xs[NVT_SLOTS], ys[NVT_SLOTS];
+    const unsigned n = count < NVT_SLOTS ? count : NVT_SLOTS;
+    for (unsigned i = 0; i < n; ++i) {
+        ids[i] = c[i].tracking_id; xs[i] = c[i].x;
+        // Panel photograph (v94): X is correct and Y is mirrored, so publish Y from the other edge (axis maximum 20320).
+        ys[i] = c[i].y < 0 ? c[i].y : (20319 - (c[i].y > 20319 ? 20319 : c[i].y));
+    }
+    publishRaw(n, ids, xs, ys);
 }
 
 bool snapshot(Session &s) {
@@ -483,6 +489,11 @@ bool configureClock(Session &s, unsigned hz) {
     return true;
 }
 }  // namespace
+
+// Producer entry for a second board driver (Ftm5Touch.cpp): same seqlock and sink as the Novatek path.
+extern "C" void native_touch_publish(const int *ids, const int *xs, const int *ys, unsigned count) {
+    publishRaw(count, ids, xs, ys);
+}
 
 // The touch interrupt (GPIO 25): registers per pin at TLMM + 0x1000 * pin, as pinctrl-msm.c / pinctrl-sm8550.c define them: +0x4 IN_OUT (bit 0 the
 // level), +0x8 INTR_CFG (bit 0 enable, bit 1 polarity, bits 3:2 detection 0 level / 1 rising / 2 falling / 3 both, bit 4 raw status enable, bits 7:5

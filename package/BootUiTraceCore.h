@@ -7,12 +7,46 @@
 #define BT_FRAMES 8
 #define BT_ROWS 14
 #define BT_HALF 60
+#define BT_MAX_THR 10
+struct bt_msg {unsigned bits,id,size,own;};
+// Per-thread wait forensics: the saved x16 trap number and registers of the system/mach trap the thread is
+// blocked in, plus the kernel link register where it sleeps and the raw kernel-context fields it was taken
+// from (a thread that blocks on a continuation has no saved kernel register state, so those read as zero).
+// cont names the kernel continuation the thread is parked on even then; frames is its user FP chain.
+struct bt_thr {uint64_t tid,pc,lr,trap,event,kstack,kpcb,kstackptr,kbase,ksp,kfp,cont,fp,frames[BT_FRAMES];unsigned index,state,hint,kzero;int pri;unsigned regs[8];};
+// A message still queued on a port reached through another port's destination. local is its reply port; the
+// reply port's receiver task is the process that sent the message, so no stack walk is needed to name it.
+struct bt_dmsg {uint64_t local;unsigned bits,id,size,l_flags;int l_pid;char l_kind,l_state,l_owner;};
 struct bt_entry {
  uint64_t pc,lr,fp,frames[BT_FRAMES],regs[8],trap;
  int peer;unsigned peer_code;
- unsigned index,count,error;
+ unsigned index,count,error,port_q,recv_q;
+ unsigned send_kind,send_kotype,send_qlimit,send_srights,send_mscount;
+ unsigned recv_pid,recv_qlimit,msg_n;
+ uint64_t recv_port,send_kobj,recv_sync_port;
+ unsigned recv_link;
+ char recv_sync_match;
+ struct bt_msg msgs[6];
+ int msg_pid[6];
+ unsigned send_flags,send_rname,send_spr,send_pdr,arg_bits,arg_id,arg_size;
+ unsigned send_klist,send_link,recv_flags,recv_srpid,dst_klist,dst_link,dst_checkin,dst_lflags,dst_lname;
+ unsigned dst_flags,dst_kind,dst_rname,dst_kt,dst_q,pdr_rname;
+ int dst_pid,pdr_pid;
+ uint64_t dst_port,pdr_port;
+ char send_state,dst_state,pdr_state,dst_owner,pdr_kind,pdr_owner,svc[20];
  char role;
 };
+// One receive port in the traced launchd's own space: its name, queue, knote and service-label state.
+// first_id is the id of the oldest queued header (w00t identifies launchd's stranded service port); stop
+// owner/count come from a semaphore kobject when the probed port is one.
+#define BT_SCAN 6
+#define BT_QP 20
+struct bt_sport {unsigned name,score,q,qlimit,flags,kl,link,checkin,lflags,lname,kt,first_id,srights,mscount,sorights,wait;int pid,sem_owner,sem_count;char state,kind,owner,svc[20];};
+struct bt_scan {struct bt_sport ports[BT_SCAN],wport,mport,qp[BT_QP];unsigned n,e,r,q,kl,wl,sr,sv,cv,wq,qn,wps,wpd,wpg,wpr;};
+// dyld_all_image_infos as dyld publishes it: version and count packed into the first word, the image array
+// second. img0 is the probe's image= field (infoArray[0]); img_match names the /sbin/launchd entry by path,
+// so a shared-cache image that precedes it cannot be mistaken for the process image.
+struct bt_deep {unsigned version,img_count,img_error,img_match,img_index,thr_type;uint64_t img_array,img_base,img0;char img_path[40],img0_path[40],thr_name[40];};
 struct bt_groups {struct bt_entry entries[BT_MAX_GROUPS];unsigned count,threads,read_failures;};
 typedef int (*bt_reader)(void *,uint64_t,void *,unsigned);
 static int bt_user(uint64_t address,unsigned size) {
@@ -60,9 +94,9 @@ static void bt_format(const struct bt_entry *e,unsigned half,char out[BT_HALF]) 
   snprintf(out,BT_HALF,"%c%02ux%u %s %s %s %s %s %s !%u",
    e->role,e->index,e->count,a[0],a[1],a[2],a[3],a[4],a[5],e->error);
  } else {
-  for(unsigned i=0;i<4;++i)bt_address(a[i],e->frames[i+4]);
-  snprintf(out,BT_HALF,"%c%02ux%u f5 %s %s %s %s p%d/e%u",
-   e->role,e->index,e->count,a[0],a[1],a[2],a[3],e->peer,e->peer_code);
+  for(unsigned i=0;i<3;++i)bt_address(a[i],e->frames[i+4]);
+  snprintf(out,BT_HALF,"%c%02ux%u f5 %s %s %s q%u/%u p%d/e%u",
+   e->role,e->index,e->count,a[0],a[1],a[2],e->port_q,e->recv_q,e->peer,e->peer_code);
  }
 }
 static void bt_rows(const struct bt_groups *g,unsigned page,char rows[BT_ROWS][120]) {
