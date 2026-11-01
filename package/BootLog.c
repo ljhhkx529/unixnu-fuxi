@@ -82,8 +82,14 @@ extern volatile uint32_t native_adreno_ring_log[4][4 + 112] __attribute__((weak_
 extern volatile uint32_t native_adreno_ring_log_count __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ib_log[4][4 + 28] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ib_log_count __attribute__((weak_import));
-extern volatile uint32_t native_adreno_stall[24] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_stall[29] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_stall_mem[59] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_fence_events[32][4] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_fence_events_count __attribute__((weak_import));
+extern volatile uint32_t native_process_wait_port[10] __attribute__((weak_import));
+extern volatile uint32_t native_dpu_stats[20] __attribute__((weak_import));
+extern volatile uint32_t native_dpu_pipes[54] __attribute__((weak_import));
+extern volatile uint32_t native_dpu_more[40] __attribute__((weak_import));
 extern unsigned native_legacy_properties_now(char *, unsigned) __attribute__((weak_import));
 extern unsigned native_legacy_clients_dump(char *, unsigned) __attribute__((weak_import));
 extern unsigned native_legacy_swap_timeline(char *, unsigned) __attribute__((weak_import));
@@ -371,7 +377,8 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
       0x0928,0x0929,0x092a,0x092b,0x092c,0x092d,0x0a66,0x0a6d,0x0a70,0x0a74,0x0a71,0x0a72};
     const volatile uint32_t *s = native_adreno_stall;
     char row[160];
-    snprintf(row, sizeof row, "[stall] fence=%u timeouts=%u", s[0], s[1]);
+    snprintf(row, sizeof row, "[stall] fence=%u timeouts=%u pending=%uus fencepage=%08x %08x %08x %08x",
+             s[0], s[1], s[24], s[25], s[26], s[27], s[28]);
     at = put(out, at, cap, row, sizeof row);
     for (uint32_t base = 0; base < 22; base += 6) {
       int n = snprintf(row, sizeof row, "[stall] CP");
@@ -392,6 +399,57 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
           at = put(out, at, cap, row, sizeof row);
         }
       }
+    }
+  }
+  // The last 16 fence events (submit, wait enter/complete/timeout), oldest first: fence, type, then the ring's submitted and completed counts.
+  if (&native_adreno_fence_events_count && native_adreno_fence_events_count) {
+    static const char *const names[5] = {"?", "submit", "wait-enter", "wait-complete", "wait-timeout"};
+    char row[160];
+    const uint32_t n = native_adreno_fence_events_count;
+    const uint32_t first = n > 16 ? n - 16 : 0;
+    for (uint32_t i = first; i < n; ++i) {
+      const volatile uint32_t *e = native_adreno_fence_events[i & 31];
+      const uint32_t type = e[1] < 5 ? e[1] : 0;
+      snprintf(row, sizeof row, "[fence] %u %s f=%u sub=%u cmp=%u", i, names[type], e[0], e[2], e[3]);
+      at = put(out, at, cap, row, sizeof row);
+    }
+  }
+  // The mach port each traced process's sampled thread is blocked receiving on (slot order: launchd, backboardd,
+  // SpringBoard, PreBoard, runningboardd, lsd, keybagd, cfprefsd, containermanagerd, kernel_task).
+  if (&native_process_wait_port) {
+    char row[160];
+    snprintf(row, sizeof row, "[wait port] lb=%x bb=%x sb=%x pb=%x rb=%x", native_process_wait_port[0],
+             native_process_wait_port[1], native_process_wait_port[2], native_process_wait_port[3], native_process_wait_port[4]);
+    at = put(out, at, cap, row, sizeof row);
+  }
+  // Display controller state (DisplayTimingProbe.cpp sheng-dpu): per interface timing enable, config, counter enable,
+  // frame count then one second later, line count, vsync period, status; then every pipe's size/address/stride/format and the CTLs.
+  if (&native_dpu_stats && &native_dpu_pipes && native_dpu_stats[0]) {
+    char row[200];
+    const volatile uint32_t *d = native_dpu_stats, *p = native_dpu_pipes;
+    snprintf(row, sizeof row, "[dpu] st=%d hw=%x us=%u i1 en=%x cfg=%x cnt=%x f=%u..%u ln=%u vp=%u s=%x i2 en=%x cfg=%x cnt=%x f=%u..%u ln=%u vp=%u s=%x",
+             (int)d[0], d[1], d[18], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9], d[10], d[11], d[12], d[13], d[14], d[15], d[16], d[17]);
+    at = put(out, at, cap, row, sizeof row);
+    for (int half = 0; half < 2; ++half) {
+      int n = snprintf(row, sizeof row, "[dpu pipes%d]", half);
+      for (int i = half * 5; i < half * 5 + 5 && n < (int)sizeof row; ++i)
+        n += snprintf(row + n, sizeof row - n, " %x/%x/%x/%x", p[4 * i], p[4 * i + 1], p[4 * i + 2], p[4 * i + 3]);
+      at = put(out, at, cap, row, sizeof row);
+    }
+    snprintf(row, sizeof row, "[dpu ctl] fb=%x%08x %x/%x/%x %x/%x/%x %x/%x/%x %x/%x/%x", p[41], p[40], p[42], p[43], p[44], p[45], p[46], p[47],
+             p[48], p[49], p[50], p[51], p[52], p[53]);
+    at = put(out, at, cap, row, sizeof row);
+    if (&native_dpu_more && (native_dpu_more[0] | native_dpu_more[20] | native_dpu_more[31])) {
+      const volatile uint32_t *m = native_dpu_more;
+      for (int k = 0; k < 2; ++k) {
+        snprintf(row, sizeof row, "[dpu vig%d] xy=%x out=%x/%x src1=%x unpack=%x op=%x ubwc=%x fetch=%x sw=%x", k, m[10 * k], m[10 * k + 1],
+                 m[10 * k + 2], m[10 * k + 3], m[10 * k + 4], m[10 * k + 5], m[10 * k + 6], m[10 * k + 7], m[10 * k + 8]);
+        at = put(out, at, cap, row, sizeof row);
+      }
+      snprintf(row, sizeof row, "[dpu ctl0] top=%x start=%x fetch=%x intf flush=%x pipes=%x layers=%x master=%x | tear i1 %x/%x i2 %x/%x"
+               " | flush test %x->%x %dus end %x frames %u..%u", m[20], m[21], m[22], m[23], m[24], m[25], m[26], m[27], m[28], m[29], m[30],
+               m[31], m[32], (int)m[33], m[34], m[35], m[36]);
+      at = put(out, at, cap, row, sizeof row);
     }
   }
   // Kernel GPU methods by number: calls, failures, last status and total time (the calls of the last 2 s are the difference of two slots).

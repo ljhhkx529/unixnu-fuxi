@@ -26,6 +26,8 @@ char boot_progress_panic_text[256];
 
 volatile uint64_t native_gop_wait_stats[7];
 volatile uint32_t native_adreno_fence_wait[8] __attribute__((weak));
+volatile uint32_t native_adreno_stall[29] __attribute__((weak));
+volatile uint32_t native_adreno_stall_mem[59] __attribute__((weak));
 volatile uint64_t native_adreno_wait_outer[4] __attribute__((weak));
 volatile uint32_t native_adreno_export_stats[4] __attribute__((weak));
 volatile int32_t native_touch_strokes[16][7];
@@ -44,6 +46,7 @@ struct native_adreno_asker_record native_adreno_metal_askers[12] __attribute__((
 char native_gpu_coherence_row[120];
 volatile uint64_t native_gpu_idle_sleeps;
 volatile uint64_t native_gpu_idle_spins;
+volatile uint64_t native_gpu_idle_timeouts;
 volatile uint32_t native_adreno_coherent_skips[4] __attribute__((weak));
 volatile uint32_t native_adreno_io_coherent __attribute__((weak));
 char native_cpufreq_row[120];
@@ -57,12 +60,17 @@ volatile uint32_t native_adreno_ring_log[4][4 + 112] __attribute__((weak));
 volatile uint32_t native_adreno_ring_log_count __attribute__((weak));
 volatile uint32_t native_adreno_ib_log[4][4 + 28] __attribute__((weak));
 volatile uint32_t native_adreno_ib_log_count __attribute__((weak));
+volatile uint32_t native_adreno_fence_events[32][4] __attribute__((weak));
+volatile uint32_t native_adreno_fence_events_count __attribute__((weak));
 char native_adreno_metal_rows[48][96] __attribute__((weak));
 volatile uint32_t native_adreno_view_diag[6] __attribute__((weak));
 volatile uint64_t native_adreno_import_diag[10] __attribute__((weak));
 volatile uint32_t native_adreno_import_stage __attribute__((weak));
 volatile uint64_t native_adreno_import_fail_pa __attribute__((weak));
 volatile uint64_t native_adreno_import_fail_offset __attribute__((weak));
+volatile uint32_t native_dpu_stats[20] __attribute__((weak));
+volatile uint32_t native_dpu_pipes[54] __attribute__((weak));
+volatile uint32_t native_dpu_more[40] __attribute__((weak));
 
 const char *boot_progress_tag(void) { return ""; }
 size_t boot_progress_profile_rows(char *out, size_t cap) { (void)out; (void)cap; return 0; }

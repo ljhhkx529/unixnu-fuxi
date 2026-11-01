@@ -7,6 +7,8 @@
 #include <kern/simple_lock.h>
 #include <machine/machine_routines.h>
 #include <arm/thread.h>
+#include <ipc/ipc_object.h>
+#include <ipc/ipc_port.h>
 #include <string.h>
 #include <pexpert/pexpert.h>
 #include <kern/misc_protos.h>
@@ -28,6 +30,9 @@ extern int boot_ui_trace_role_peer(unsigned) __attribute__((weak_import));
 
 volatile unsigned boot_process_passes,boot_process_seen;
 volatile unsigned boot_process_attempts,boot_process_busy;
+/* The mach port each traced process's sampled thread is blocked receiving on (0 = not a single port
+ * receive), by slot index. Written under the task lock from the thread's receive continuation state. */
+volatile uint32_t native_process_wait_port[10];
 static char capture_rows[10][120],published_rows[10][120];
 static unsigned capture_seen,capture_passes,published_passes,published_seen,publish_lock;
 static unsigned chrono_focus_initialized;
@@ -80,6 +85,9 @@ static int capture(proc_t p,void *arg) {
    sampled=1;state=flags;priority=thread->sched_pri;wait=thread->wait_event;
    continuation=(uint64_t)thread->continuation;
    if(thread->machine.upcb)userPC=(uint64_t)get_saved_state_pc(thread->machine.upcb);
+   {ipc_object_t obj=thread->ith_object;unsigned rcv=0;
+    if(obj && io_otype(obj)==IOT_PORT)rcv=ip_object_to_port(obj)->ip_receiver_name;
+    native_process_wait_port[index]=rcv;}
   }
   thread_unlock(thread);ml_set_interrupts_enabled(irq);
  }
