@@ -78,6 +78,8 @@ git clone -b fuxi https://github.com/OddlyLabs/uefi-fuxi
 
 `--unique-chip-id` 这里用的是固定的测试值。现在的镜像只跑到触控探针的 panic 报告，还用不到用户数据；以后要启动到系统时，再换成手机自己的值。
 
+固件这一步不涉及苹果的文件，也可以在 Linux 上单独跑，适合只改固件时快速验证：除了 clang、lld 和 llvm 工具，BaseTools 还要 `uuid-dev`。2026-11-01 在 Ubuntu 26.04（WSL，clang 21.1.8）上用上面的 `defconfig` 和 `build firmware` 两条命令构建通过，固件卷 0x300000 字节。
+
 ## CI（GitHub Actions）
 
 | 任务 | 运行环境 | 检查内容 |

@@ -10,7 +10,7 @@ on:
         default: 6ae4c252937ae1920ab68eaded10fc78447e0194
       uefi_ref:
         description: OddlyLabs/uefi-fuxi ref (branch fuxi of the uefi-sheng fork)
-        default: ec81df08bf2d860d39cca3631a0281edd04d1fcc
+        default: 87554bf90a6f5707ceeb3720b3dc507de914db94
       xcode:
         description: Xcode version of the macos-26 image (the newest Xcode 26 if it is not installed)
         default: "26.6"
@@ -30,7 +30,7 @@ env:
   UNIXNU_REPO: OddlyLabs/UniXNU
   UNIXNU_REF: ${{ inputs.unixnu_ref || '6ae4c252937ae1920ab68eaded10fc78447e0194' }}
   UEFI_REPO: OddlyLabs/uefi-fuxi
-  UEFI_REF: ${{ inputs.uefi_ref || 'ec81df08bf2d860d39cca3631a0281edd04d1fcc' }}
+  UEFI_REF: ${{ inputs.uefi_ref || '87554bf90a6f5707ceeb3720b3dc507de914db94' }}
   XCODE: ${{ inputs.xcode || '26.6' }}
   # Bring-up platform seed for the payload's device tree, not this phone's own value: the first images only reach the
   # touch probe's panic report, before any user data exists. Replace it before booting to userland.
@@ -138,8 +138,8 @@ jobs:
           DEVELOPER_DIR="$dir/Contents/Developer" xcodebuild -version
       - name: Install host tools
         run: |
-          # The set UniXNU's macos.yml installs.
-          brew install llvm lld mtools dtc
+          # The set UniXNU's macos.yml installs, and OpenSSL 3 for the encryption step (the system openssl is LibreSSL).
+          brew install llvm lld mtools dtc openssl@3
           if ! command -v unifdef >/dev/null; then
             brew install unifdef
             echo "$(brew --prefix unifdef)/bin" >> "$GITHUB_PATH"
