@@ -7,3 +7,9 @@ ref_src/
 *.o
 /build/
 __pycache__/
+
+# UniXNU device repository
+/local.toml
+/out/
+*.pyc
+.DS_Store

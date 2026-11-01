@@ -1,0 +1,199 @@
+schema_version = 1
+
+[device]
+name = "fuxi"
+soc = "SM8550"
+os_profile = "ipados-17.7.11-21H461"
+summary = "Xiaomi 13 (fuxi). Board files from the UniXNU device template, the FTM5 touch driver and its staged kernel probe. No device boot evidence yet."
+
+[[area]]
+id = "configuration"
+status = "implemented"
+components = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot"]
+paths = ["board.toml", "feeds.toml", "configs/**", ".gitmodules", ".github/**", ".gitignore", ".gitattributes", "local.toml.example", "LICENSE"]
+inputs = ["UniXNU examples/device template (SM8550, iPadOS 17.7.11 profile).", "UniXNU-sm8550-common at 23b2049fcd9e30356161def84231334fb55ecca9."]
+configuration = ["board.toml: name fuxi, kit fuxi, soc_source sm8550, os_profile ipados-17.7.11-21H461, device_tree.source device:dts/fuxi.dts.", "configs/fuxi_defconfig: the template options plus CONFIG_XNU_BUILD_ARCHIVES=y and CONFIG_XNU_EXTRA_LD_ARCHIVES for the touch archive.", "[kernel] archives in build order: corecrypto (plain and namespaced), ArmDTPlatform, ArmCpu, SoftwareAES, libpthread, build-fuxi-touch.py."]
+procedure = ["./unixnu defconfig fuxi_defconfig -D ../unixnu-fuxi", "./unixnu status --json", "./unixnu build kernel"]
+findings = ["The template defconfig does not set CONFIG_XNU_BUILD_ARCHIVES, so the archive step would not run and the link would miss the corecrypto archive that CONFIG_XNU_SOURCE_CORECRYPTO14 requires; fuxi_defconfig sets it.", "ArmCpu needs the source corecrypto provider, so corecrypto is built before the components, as in UniXNU-sheng."]
+completion = ["All source pins resolve; every selected component has a record; status shows the intended overrides and patch order."]
+limits = ["unixnu.lock is not committed yet."]
+next_action = ["Run ./unixnu fetch and commit unixnu.lock."]
+evidence = [
+  { kind = "source", reference = "board.toml", result = "Board selection and archive order" },
+]
+
+[[area]]
+id = "firmware"
+status = "planned"
+components = []
+paths = ["proprietary-files.txt"]
+inputs = ["A fuxi UEFI port that starts DarwinBoot: hanzi123-bilp/uefi-fuxi, Sohytrs/uefi-fuxi (fuxi branch) or mouse233/uefi-fuxi.", "fastboot boot of the image (temporary, nothing is written to the device)."]
+configuration = ["board.toml [firmware]: config fuxi, dsc Platforms/Xiaomi/fuxiPkg/fuxi.dsc, as the community UEFI ports use; not built here yet."]
+procedure = ["Select and pin a uefi-fuxi revision, then ./unixnu build firmware --uefi ../uefi-fuxi."]
+findings = ["The stock device tree already has /reserved-memory/splash_region at 0xb8000000 (0x2b00000), so no bootimg dtb_node is added."]
+completion = ["Firmware image builds, enters UniXNU, publishes the framebuffer and preserves the documented memory reservations."]
+limits = ["No firmware revision is selected and no firmware build has run."]
+next_action = ["Pin one uefi-fuxi revision and build it."]
+evidence = []
+
+[[area]]
+id = "cpu"
+status = "planned"
+components = []
+paths = ["package/CpuFreq*", "scripts/*armcpu*"]
+inputs = ["CPU layout and GIC ranges of SM8550 v2 (soc_id 519) from the stock device tree."]
+configuration = ["The template ArmCpu and ArmDTPlatform selection."]
+procedure = ["Boot to the XNU entry checkpoint and record the enabled CPUs."]
+findings = ["No fuxi CPU observation yet."]
+completion = ["Every enabled CPU reaches its entry checkpoint and timer/IPI handling works on each enabled CPU."]
+limits = ["Hardware inputs are not recorded in dts/fuxi.dts beyond the SoC DTSI."]
+next_action = ["Record the CPU and GIC nodes from the stock device tree."]
+evidence = []
+
+[[area]]
+id = "memory"
+status = "planned"
+components = []
+paths = ["dts/**", "package/*Smmu*", "package/*Memory*", "scripts/*smmu*", "scripts/*memory*"]
+inputs = ["DRAM and reserved-memory nodes of the stock device tree; the apps SMMU at 0x15000000."]
+configuration = ["dts/fuxi.dts includes sm8550.dtsi and sets model and compatible; package/SmmuBypass.h is the UniXNU-sheng pass-through stream helper the touch probe uses for stream 0xa3."]
+procedure = ["Fill the memory map from the stock device tree and the firmware's memory map."]
+findings = ["fuxi and sheng share the touch engine's SMMU stream (0xa3)."]
+completion = ["All handoff regions are accounted for and each enabled DMA engine accesses its allocated range with the documented cache policy."]
+limits = ["The DTS memory map is the SoC default."]
+next_action = ["Record the DRAM size and reservations of the device."]
+evidence = []
+
+[[area]]
+id = "storage"
+status = "planned"
+components = []
+paths = ["scripts/*ufs*", "scripts/*storage*", "scripts/*userdata*", "scripts/*root*"]
+inputs = ["UFS host of SM8550; the GPT of LUN 0 (userdata) on the device."]
+configuration = ["CONFIG_XNU_NATIVE_UFS is not set."]
+procedure = ["Select a UFS component after the firmware boots."]
+findings = ["Other fuxi ports report the UFS controller hand-off from the firmware as usable; not reproduced here."]
+completion = ["Host: register, clock, link and SMMU facts match the board inventory."]
+limits = ["No storage driver is selected."]
+next_action = ["Choose the root path (RAM root or UFS) once the firmware boots."]
+evidence = []
+
+[[area]]
+id = "display"
+status = "planned"
+components = []
+paths = ["include/FuxiPanel*", "package/*Display*", "package/*Framebuffer*", "package/*Backlight*", "package/*Panel*", "scripts/*display*", "scripts/*gop*", "scripts/*framebuffer*", "facts/panel_*"]
+inputs = ["Panel xiaomi m3 38 0c 0a (Samsung DDIC by its command set), 1080x2400, DSI0 command mode with DSC 8 bpp, slices 540x40, 1.1 GHz.", "Splash framebuffer 0xb8000000 (0x2b00000), 32 bpp, stride 1080 pixels, the same region as sheng."]
+configuration = ["package/FuxiPanelBoard.h holds the panel and controller constants with their sources; no display component is selected."]
+procedure = ["First stage: keep the firmware framebuffer (GopFramebuffer route), as sheng does."]
+findings = ["73 DSI command sequences of the panel are decoded in facts/panel_cmds_*.txt.", "The PPS in the on-command gives pic_height 2520 while the timing and page address give 2400; unresolved."]
+completion = ["A known frame appears with correct geometry and colors, then userland presentation and backlight controls work."]
+limits = ["No device evidence for display."]
+next_action = ["Read the framebuffer the firmware publishes on fuxi (address, stride, format)."]
+evidence = [
+  { kind = "source", reference = "fuxi_touch_panel_porting.md", result = "Panel facts with sources (section 3)" },
+]
+
+[[area]]
+id = "input"
+status = "implemented"
+components = ["QcomGeniSpi", "FuxiFtsTouch"]
+paths = ["drivers/FuxiFtsTouch", "drivers/FuxiFtsTouch/**", "include/FuxiTouch*", "package/*Touch*", "scripts/*touch*", "facts/touch_*", "tests/**"]
+inputs = ["Stock device tree (OS3.0.309 vendor_boot DTB[2] with dtbo[4], merged with fdtoverlay): /soc/qcom,qupv3_1_geni_se@ac0000/spi@a90000/fts@0, compatible st,spi, 12 MHz, SPI mode 0.", "Controller ST FingerTip FTM5, chip id 36 40, firmware 53.42 kept in its own flash (/proc/tp_fw_version on Android), tp-vendor 0x38.", "Bus QUP1 SE4 at 0xa90000, wrapper 0xac0000, SMMU stream 0xa3; pins 44-47 (qup1_se4); interrupt GPIO 25 (active low, TLMM summary SPI 208); reset GPIO 24.", "Rails vdd ldob12 1.8 V (RPMh 0x40900) and avdd ldom6 3.2 V (RPMh 0x41b00), measured with root on Android; their only consumer is spi0.0."]
+configuration = ["board.toml [components] selects QcomGeniSpi and FuxiFtsTouch; [kernel] archives runs scripts/build-fuxi-touch.py.", "configs/fuxi_defconfig links build/fuxi-touch/libFuxiTouch.a through CONFIG_XNU_EXTRA_LD_ARCHIVES; patches/xnu/fuxi-touch-probe.patch calls native_touch_probe() from bsd_init after IOKitInitializeTime().", "Boot arguments: fuxi-touch=1..4, fuxi-touch-panic=1 or 2, fuxi-touch-hz, fuxi-touch-power, fuxi-touch-tcs, fuxi-touch-poll, fuxi-touch-map. board.toml sets fuxi-touch=3 fuxi-touch-panic=1."]
+procedure = ["Stage 1: snapshot of the QUP clocks, the pins and the two rails in the command database.", "Stage 2: RPMh votes vdd then avdd in active TCS 2 of apps RSC DRV2 (tcs-offset 0xd00), wait 3 ms, vote the QUP clocks, configure the pins.", "Stage 3: GENI SPI at 12 MHz; reset low 10 ms; wait for event 03 (2 ms polls, 100 ms, three tries, then the ICR 4-wire fallback and the chip id); read the chip id.", "Stage 4: A0 00 00, 50 ms, A0 00 01; falling-edge interrupt; drain the FIFO; publish contacts in the ShengHidInput ABI.", "Host: run the FuxiFtsTouch tests and tests/board_test.c (README)."]
+findings = ["The fts_spi driver dispatches events on the high nibble of byte 0, whose bits 2-3 carry the top of the major axis, so 0x13 to 0x1F are all enter events.", "Coordinates are ten times the panel pixels (fts,support-super-resolution): 0..10800 x 0..24000; the probe maps them to the 30480 x 20320 range that ShengHidInput scales from.", "Both touch rails stay on while Android runs, also with the screen off, and carry no boot-on property, so the probe votes them before it touches the controller."]
+completion = ["Touches map to the display, simultaneous contacts keep stable IDs, release events arrive, and buttons produce expected HID reports."]
+limits = ["No device evidence. Unverified: whether the RPMh done bit sets without the TCS interrupt enabled, the axis directions, and the HID orientation on a portrait panel.", "GENI has no setting for the 10 us chip-select hold the vendor driver uses (SPI_DELAY_CS)."]
+next_action = ["Boot an image with fuxi-touch=3 fuxi-touch-panic=1 and read the FTS rows on the panic screen: reset result 0 and chip id 36 40."]
+evidence = [
+  { kind = "source", reference = "https://github.com/OddlyLabs/FuxiFtsTouch", result = "FTM5 protocol and contact tracking with host tests" },
+  { kind = "source", reference = "package/FuxiTouchProbe.cpp", result = "Staged board probe" },
+  { kind = "source", reference = "fuxi_touch_panel_porting.md", result = "Touch facts with sources and the Android measurements (sections 2 and 6)" },
+]
+
+[[area]]
+id = "gpu"
+status = "planned"
+components = []
+paths = ["package/*Gpu*", "package/*Gmu*", "package/*Adreno*", "scripts/*adreno*", "scripts/*gpu*", "scripts/*metal*"]
+inputs = ["Adreno 740 of SM8550, the same GPU as sheng."]
+configuration = ["CONFIG_XNU_NATIVE_ADRENO is not set."]
+procedure = ["Reuse the sheng GPU components after display and storage work."]
+findings = ["No fuxi GPU observation yet."]
+completion = ["GPU submissions complete, mapping/fence handling is correct, a known image renders, and the selected Metal client presents it."]
+limits = ["Not started."]
+next_action = ["None before the first boot."]
+evidence = []
+
+[[area]]
+id = "network"
+status = "planned"
+components = []
+paths = ["package/*Wifi*", "package/MhiBoot*", "scripts/*wifi*", "scripts/*mhi*"]
+inputs = ["The Wi-Fi chip of the board, from the stock device tree."]
+configuration = ["No network component is selected."]
+procedure = ["Identify the Wi-Fi chip and its bus."]
+findings = ["No fuxi network observation yet."]
+completion = ["Scanning, association, address configuration and sustained receive/transmit traffic pass with the selected firmware."]
+limits = ["Not started."]
+next_action = ["None before the first boot."]
+evidence = []
+
+[[area]]
+id = "audio"
+status = "planned"
+components = []
+paths = ["package/*Adsp*", "package/*Audio*", "package/*Gpr*", "scripts/*adsp*", "scripts/*audio*", "scripts/*gpr*"]
+inputs = ["The audio DSP and codec of the board."]
+configuration = ["No audio component is selected."]
+procedure = ["Identify the codec and amplifiers from the stock device tree."]
+findings = ["No fuxi audio observation yet."]
+completion = ["Each declared route carries the selected audio format through playback or capture and handles start/stop correctly."]
+limits = ["Not started."]
+next_action = ["None before the first boot."]
+evidence = []
+
+[[area]]
+id = "power"
+status = "planned"
+components = []
+paths = ["package/*Battery*", "package/*Power*", "package/QcomRpmh*", "scripts/*power*", "scripts/*battery*", "scripts/*pmgr*"]
+inputs = ["RPMh command database (/sys/kernel/debug/cmd-db on Android) and the regulator summary with the screen on and off."]
+configuration = ["package/QcomRpmh.c and QcomRpmh.h are the UniXNU-sheng RPMh helpers; the touch probe uses them for its two rails."]
+procedure = ["Record each rail a driver needs from the command database and the regulator summary."]
+findings = ["Panel rails vci 3.0 V, vddio 1.8 V and vddd 1.5 V are off while the screen is off; the touch rails stay on."]
+completion = ["Declared power controls and battery readings match observations; each claimed sleep/resume transition restores its dependent peripherals."]
+limits = ["Only the touch rails are used."]
+next_action = ["None before the first boot."]
+evidence = []
+
+[[area]]
+id = "packaging"
+status = "planned"
+components = []
+paths = ["scripts/*payload*", "scripts/*image*", "scripts/*flash*", "patches/**"]
+inputs = ["The iPadOS 17.7.11 restore image of the OS profile, the unique chip id of the device, a firmware image."]
+configuration = ["patches/xnu/series applies fuxi-touch-probe.patch after the arch, SoC and OS series.", "[payload] kernel_args set the touch probe stage and its panic report; panic_screen = true."]
+procedure = ["./unixnu build kernel, then ./unixnu build payload --unique-chip-id <hex>, then ./unixnu bootimg --uefi ../uefi-fuxi."]
+findings = ["fuxi-touch-probe.patch keeps only original XNU lines as context, so changes to the shared series around it do not break it."]
+completion = ["Kernel and prelink succeed, payload contains all declared inputs, and the boot image matches the bootloader format and size limit."]
+limits = ["The payload needs the device's unique chip id; no payload or boot image has been built."]
+next_action = ["Build the kernel in CI, then the payload once the chip id and firmware are chosen."]
+evidence = []
+
+[[area]]
+id = "diagnostics"
+status = "implemented"
+components = []
+paths = ["ci/**", "scripts/check-*", "scripts/probe-*", "package/*Probe*", "package/*Diagnostic*", "package/*Tests*", "unixnu.lock"]
+inputs = ["The panic screen of the payload (panic_screen = true) while no display driver runs."]
+configuration = ["fuxi-touch-panic=1 ends the boot with a panic whose message is the probe's four diagnostic rows; the rows are also printed to the kernel log at each stage."]
+procedure = ["Photograph the panic screen and compare the FTS rows with fuxi_touch_panel_porting.md section 7.2."]
+findings = ["The other fuxi ports read their results from panic screen photographs as well.", "The earlier ci/ scripts compiled the probe inside a UniXNU-sheng build; the fuxi kernel build replaces them."]
+completion = ["Each claimed milestone has a reproducible command, a matching source/image revision and an accessible result."]
+limits = ["No device log has been captured."]
+next_action = ["Capture the first touch report from the device."]
+evidence = [
+  { kind = "source", reference = "package/FuxiTouchProbe.cpp", result = "Panic report and kernel log rows" },
+]

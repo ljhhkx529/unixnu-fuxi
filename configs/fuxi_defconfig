@@ -1,0 +1,13 @@
+# Kernel configuration: CONFIG_XNU_<NAME> becomes XNU_<NAME> for the kernel build script.
+# y and n are 1 and 0, a quoted string or a number is passed through, {tree} is the build tree.
+# The template configuration (examples/device), with the archive step on and the touch archive linked.
+CONFIG_XNU_BUILD_ARCHIVES=y
+CONFIG_XNU_SOURCE_CORECRYPTO14=y
+CONFIG_XNU_SOURCE_PTHREAD=y
+CONFIG_XNU_ARM_DT_PLATFORM=y
+CONFIG_XNU_ARMCPU=y
+CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
+# CONFIG_XNU_NATIVE_UFS is not set
+# CONFIG_XNU_NATIVE_ADRENO is not set
+# bsd_init calls native_touch_probe() (patches/xnu/fuxi-touch-probe.patch); scripts/build-fuxi-touch.py builds it.
+CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/fuxi-touch/libFuxiTouch.a"

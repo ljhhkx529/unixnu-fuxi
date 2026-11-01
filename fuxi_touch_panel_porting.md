@@ -1,7 +1,7 @@
 # 小米 13（fuxi）触控与面板驱动资料（面向 UniXNU 移植）
 
 > 整理时间：2026-10-31。所有数据都来自官方固件、设备树、真机实测或开源驱动，每一项都注明出处。只是没有经过 UniXNU 上机验证。
-> 配套文件：`drivers/FuxiFtsTouch/`（触控驱动，第 7 节）、`package/FuxiTouchProbe.cpp`（内核探针）、`include/*.h`（板级常量，已通过主机测试）、`facts/`（机器可读事实与 73 组面板命令序列）、`dtb/`（合并后的完整设备树）、`firmware/`（触控固件）、`dts/fuxi.dts`（UniXNU 设备树草稿）。
+> 配套文件：`drivers/FuxiFtsTouch/`（触控驱动，第 7 节）、`package/FuxiTouchProbe.cpp`（内核探针）、`package/Fuxi*Board.h`（板级常量，已通过主机测试）、`facts/`（机器可读事实与 73 组面板命令序列）、`dtb/`（合并后的完整设备树）、`firmware/`（触控固件）、`dts/fuxi.dts`（UniXNU 设备树草稿）。
 
 ## 0. 结论
 
@@ -27,7 +27,7 @@
 
 ## 2. 触控（ST FTS，`/soc/qcom,qupv3_1_geni_se@ac0000/spi@a90000/fts@0`）
 
-### 2.1 硬件连接（详见 `include/FuxiTouchBoard.h`）
+### 2.1 硬件连接（详见 `package/FuxiTouchBoard.h`）
 | 项 | 值 | 与 sheng |
 |---|---|---|
 | 总线 | QUP1 SE4 SPI，SE 0xa90000（0x4000），wrapper 0xac0000，SE 中断 GIC SPI 357，SMMU SID 0xa3，时钟 `gcc_qupv3_wrap1_s4_clk` | 相同 |
@@ -93,7 +93,7 @@
 3. DT 里有 21 个小米私有调参属性（边缘抑制、点击灵敏度、跟手性等），LineageOS 驱动没有解析，基础触控不需要。
 4. 备选料 GT9916（I2C 0x5d）的节点在这份 DT 里是 `disabled`，这台机器用的是 FTS（`tp-vendor = 0x38`）。如果遇到 GT9916 的机器，需要另做适配。
 
-## 3. 面板（三星 DDIC，`qcom,mdss_dsi_m3_38_0c_0a_dsc_cmd`；详见 `include/FuxiPanelBoard.h`）
+## 3. 面板（三星 DDIC，`qcom,mdss_dsi_m3_38_0c_0a_dsc_cmd`；详见 `package/FuxiPanelBoard.h`）
 
 ### 3.1 基本参数
 | 项 | 值 |
@@ -160,6 +160,8 @@
 | `drivers/FuxiFtsTouch/FtsTouchCore.c` | 事件到触点：每个触点 ID（0–9）占一个槽位。手指、手套、手掌、触控笔算按下；悬停算抬起；坐标截断到 x/y 最大值。看门狗、ESD 错误，以及没有请求过的就绪事件，都会置 `reset_needed`。另有板级坐标映射（交换、镜像、缩放） |
 | `package/FuxiTouchProbe.cpp` | 内核探针。时钟、引脚、DMA、SMMU 的代码沿用 sheng 的 `TouchProbe.cpp`（总线相同），芯片相关部分换成 FTS：RPMh 上电、复位脚、低电平中断加 FIFO。导出的 `native_touch_*` 符号与 sheng 版一致，sheng 的 HID 层（`ShengHidInput`）可以直接读 |
 
+`drivers/FuxiFtsTouch` 是子模块，指向独立的组件仓库 [OddlyLabs/FuxiFtsTouch](https://github.com/OddlyLabs/FuxiFtsTouch)。
+
 ### 7.2 探针的启动参数
 | 参数 | 默认 | 说明 |
 |---|---|---|
@@ -169,6 +171,9 @@
 | `fuxi-touch-hz` | 12000000 | SPI 速率（不超过 DT 的 12 MHz） |
 | `fuxi-touch-poll=1` | 0 | 不用中断，每 8 ms 读一次 FIFO |
 | `fuxi-touch-map` | 0 | 发布前的坐标变换：1 交换 x/y，2 镜像 x，4 镜像 y（坐标轴方向要上机确认，见 2.6） |
+| `fuxi-touch-panic` | 0 | 1：请求的阶段结束或失败时 panic，panic 信息就是 4 行诊断，可以在 panic 屏上读结果（现在还没有显示驱动）；2：在阶段 4 里，第一次完整的按下、抬起之后也 panic |
+
+- **启动入口**：`bsd_init` 在 `IOKitInitializeTime()` 之后、`vfsinit()` 之前调用 `native_touch_probe()`（`patches/xnu/fuxi-touch-probe.patch`）。探针在自己的内核线程里运行；没有 `fuxi-touch` 参数时立即返回。每个阶段的 4 行结果也会打印到内核日志。
 
 - **中断**：TLMM 检测下降沿，经汇总中断 SPI 208 唤醒线程。线程一直读 FIFO，直到中断线变回高电平，所以读的过程中来的新事件不会丢。另外每 100 ms 检查一次线电平，防止漏掉边沿。
 - **坐标**：`ShengHidInput` 把 x 按 0..30480、y 按 0..20320 换算到 HID 的逻辑范围，所以探针把 fuxi 的 0..10800 × 0..24000 线性映射到这两个范围再发布。最终 HID 坐标和屏幕成正比。
@@ -182,14 +187,29 @@
 1. RPMh：TCS 的完成位不开中断时会不会置位不确定，所以等不到时只记录 `w-1`，不算失败。TCS 2 在 fuxi 的 UEFI 下是否空闲也没确认，`fuxi-touch-tcs` 可以换成别的 TCS。
 2. GENI 不提供"拉高 CS 前等 10 µs"的设置（驱动的 `SPI_DELAY_CS`）。12 MHz 下应该问题不大，但没有实测。
 3. 坐标轴方向、`ShengHidInput` 在 fuxi 竖屏下的方向处理。
-4. sheng 的 `LegacyDisplayProbe` 无条件调用 `native_touch_probe()`；接进 fuxi 设备仓库时，要用这个探针替换 sheng 版，并把驱动源码加进构建脚本（参照 `ci/integrate-sheng.py`）。
+4. 启动时机：探针在 `bsd_init` 里启动，这时 IOKit 已经可用。在真机上能否在 panic 屏出现前跑完、panic 屏能否显示出来，都还没验证。
 
 ### 7.4 CI
-见 README 的"CI"一节。macOS 上的检查先跑 sheng 配置的 XNU 构建拿到编译记录，再按 sheng 编译触控探针的参数（`-Wall -Wextra -Werror` 加几项例外）编译本项目的探针和驱动，最后检查符号解析。完整链接内核做不到：sheng 构建中途需要一个只在维护者本地才有的参考内核。
+见 README 的"CI"一节。
 
-2026-11-01 的结果（提交 `920093c`，Xcode 26.6，UniXNU `67df14d`，UniXNU-sheng `08cde20`）：
+**第一阶段**（提交 `920093c`，2026-11-01）：借用 sheng 的构建。先跑 sheng 配置的 XNU 构建拿到编译记录，再按 sheng 编译触控探针的参数（`-Wall -Wextra -Werror` 加几项例外）编译本项目的探针和驱动，最后检查符号解析。结果：
 - sheng 原版探针（对照）、`FuxiTouchProbe.cpp`、`FtsProtocol.c`、`FtsTouchCore.c`、`GeniSpi.c`、`QcomRpmh.c` 全部编译通过；
 - 本项目目标文件引用 39 个强符号，全部能在 1011 个 XNU 目标文件（`.o` 和 `.cpo`）里找到，没有与 XNU 重复定义的符号；
 - 唯一的弱引用 `armcpu_spi_attach` 在同一次构建出来的 `build/armcpu/libArmCpu.a` 里。
 
-这证明代码能在真实内核里编译、链接；它在真机上能不能工作，还要看 7.3 的各项。
+**第二阶段**（2026-11-01 起）：本仓库改成 UniXNU 官方模板（`examples/device`）结构的 fuxi 设备仓库，CI 直接编译 fuxi 自己的内核。见第 8 节。
+
+## 8. 设备仓库结构（2026-11-01）
+
+按 UniXNU 的"Port a device"流程，以官方根项目为基础，社区的 fuxi 移植只作参考：
+
+| 仓库 | 作用 |
+|---|---|
+| [OddlyLabs/UniXNU](https://github.com/OddlyLabs/UniXNU)（fork 自 UniXNU/UniXNU，分支 `fuxi-fts-touch`） | 构建工具和组件目录。`components.toml` 加了组件 `FuxiFtsTouch`（依赖 `QcomGeniSpi`），并有中英文文档页 |
+| [OddlyLabs/FuxiFtsTouch](https://github.com/OddlyLabs/FuxiFtsTouch) | 组件仓库：FTM5 协议和触点跟踪，带主机测试 |
+| 本仓库 | fuxi 设备仓库：`board.toml`、`feeds.toml`、`configs/fuxi_defconfig`、`dts/fuxi.dts`、`patches/xnu/`、`package/`、`scripts/build-fuxi-touch.py`、`porting.toml` |
+
+- **内核配置**：模板的默认配置，加上 `CONFIG_XNU_BUILD_ARCHIVES=y`（模板没开，归档步骤不会运行，链接会缺 corecrypto）和触控归档。归档按顺序构建：corecrypto（普通版和命名空间版）、ArmDTPlatform、ArmCpu、SoftwareAES、libpthread、`build-fuxi-touch.py`。
+- **启动钩子补丁**：上下文只用 XNU 原有的行，所以上游改动它前后的共享补丁时，这个补丁不会失效。已确认它能在 arch、SoC、OS 三组补丁之后干净应用。
+- **porting.toml**：UniXNU 的 `scripts/porting-record.py check` 通过（13 个区域）。Input 区域是 `implemented`，其余多数是 `planned`。上游的检查器还不认识 `FuxiFtsTouch` 组件，所以本仓库的记录检查用 fork 里的检查器。
+- **镜像**：payload 需要这台手机的唯一芯片 ID（`--unique-chip-id`）和 iPadOS 17.7.11 恢复镜像；固件要从社区的 uefi-fuxi 里选一个版本。这几项都还没做。

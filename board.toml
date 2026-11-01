@@ -1,0 +1,66 @@
+schema_version = 2
+
+# Board description of the Xiaomi 13 (fuxi, SM8550), read by the unixnu build driver. Created from UniXNU
+# examples/device; the hardware values come from the stock device tree and Android measurements (fuxi_touch_panel_porting.md,
+# facts/). Other fuxi ports (mouse233, Kerfand, hanzi123-bilp) are references only.
+
+[board]
+name = "fuxi"
+soc = "SM8550"
+soc_source = "sm8550"
+os_profile = "ipados-17.7.11-21H461"
+description = "Xiaomi 13"
+kit = "fuxi"
+
+[components]
+# The template set, plus the GENI SPI engine and the FTM5 protocol of the touch controller.
+include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot", "QcomGeniSpi", "FuxiFtsTouch"]
+
+[kernel]
+defconfig = "fuxi_defconfig"
+config_fragments = ["arch:configs/common.config", "soc:configs/sm8550.config", "os:configs/ipados.config"]
+patch_series = ["arch:patches/xnu/series", "soc:patches/xnu/series", "os:patches/xnu/series", "device:patches/xnu/series"]
+# The archives fuxi_defconfig links, in build order: corecrypto from source (namespaced), the ARM platform and CPU
+# drivers, libpthread, and the touch archive that bsd_init calls into (patches/xnu/fuxi-touch-probe.patch).
+archives = [
+  "build-corecrypto-14.py",
+  "build-corecrypto-14.py --namespace",
+  "component:ArmDTPlatform",
+  "component:ArmCpu",
+  "component:SoftwareAES",
+  "build-libpthread-kernel.py",
+  "build-fuxi-touch.py",
+]
+
+[device_tree]
+source = "device:dts/fuxi.dts"
+include_dirs = ["soc:dts"]
+
+[firmware]
+# Not built yet. The fuxi firmware platform of the community UEFI ports (hanzi123-bilp, Sohytrs and mouse233 uefi-fuxi)
+# uses this package and DSC; select one, pin its revision and verify these paths before ./unixnu build firmware.
+config = "fuxi"
+dsc = "Platforms/Xiaomi/fuxiPkg/fuxi.dsc"
+fd = "Build/fuxiPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
+packages = ["{uefi}", "{tree}/package", "{tree}/drivers/DarwinBoot", "{edk2}"]
+
+[firmware.defines]
+DEVICE_MODEL = "fuxi"
+
+# No [[bootimg.dtb_node]]: the fuxi device tree already carries /reserved-memory/splash_region
+# (reg = <0x0 0xb8000000 0x0 0x2b00000>), unlike sheng's.
+
+[payload]
+volume = "FUXIESP"
+size_mib = 192
+loader = "firmware"
+title = "UniXNU"
+panic_screen = true
+# fuxi-touch=3: touch rails, QUP clocks, pins, GENI SPI, controller reset and chip id. fuxi-touch-panic=1 then panics with
+# the probe's four diagnostic rows as the message, so the result can be read from the panic screen.
+kernel_args = ["-v", "serial=3", "fuxi-touch=3", "fuxi-touch-panic=1"]
+
+[payload.adt]
+# Supply the board's identity seed through --unique-chip-id.
+chip_id = "207"
+unique_chip_id = "required"

@@ -13,13 +13,18 @@
 //
 // Other boot arguments: fuxi-touch-hz (SPI rate, default 12 MHz from the DT), fuxi-touch-power=0 (skip the rail votes),
 // fuxi-touch-tcs (active TCS of the apps RSC used for the votes, default 2), fuxi-touch-poll=1 (no interrupt),
-// fuxi-touch-map (FTS_MAP_* bits applied before publishing: 1 swap, 2 mirror x, 4 mirror y).
+// fuxi-touch-map (FTS_MAP_* bits applied before publishing: 1 swap, 2 mirror x, 4 mirror y),
+// fuxi-touch-panic (1: when the requested stage ends or fails, panic with the four diagnostic rows as the message, so the
+// result can be read from the panic screen while no display driver runs; 2: in stage 4, also after the first lift).
+// The probe starts from bsd_init (patches/xnu/fuxi-touch-probe.patch); every stage result is also printed to the kernel log.
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <string.h>
+#include <libkern/libkern.h>
 #include <libkern/c++/OSSharedPtr.h>
+#include <kern/debug.h>
 #include <kern/thread.h>
 #include <kern/clock.h>
 #include <pexpert/pexpert.h>
@@ -409,6 +414,13 @@ static bool armTouchIrq(Session &s) {
 }
 static bool lineLow(const Session &s) {return (rd32(s.tlmmIrq.va, 4) & 1) == 0;}
 
+// Refreshes the diagnostic rows and prints them to the kernel log.
+static void report(const Session &s) {
+    rows(s);
+    printf("fuxi-touch stage %u/%u\n%s\n%s\n%s\n%s\n", native_touch_stage_done, native_touch_stage_req, native_touch_rows[0],
+           native_touch_rows[1], native_touch_rows[2], native_touch_rows[3]);
+}
+
 // Reads every queued event, applies it and publishes the contact set when it changed. Returns false on a bus error.
 static bool drain(Session &s) {
     for (unsigned round = 0; round < 8; ++round) {
@@ -446,23 +458,24 @@ static void touchThread(void *, wait_result_t) {
     if (!s) {fail(0, -12); return;}
     bzero(static_cast<void *>(s), sizeof *s);   // IOMallocType runs no constructor: every field starts at zero
     s->idRc = s->resetRc = s->senseRc = 99;
-    unsigned stage = native_touch_stage_req, hz = FTB_SPI_HZ, power = 1, tcs = 2, mapFlags = 0;
+    unsigned stage = native_touch_stage_req, hz = FTB_SPI_HZ, power = 1, tcs = 2, mapFlags = 0, panicReport = 0;
     PE_parse_boot_argn("fuxi-touch-hz", &hz, sizeof hz);
     if (hz < 100000 || hz > FTB_SPI_HZ) hz = FTB_SPI_HZ;
     PE_parse_boot_argn("fuxi-touch-power", &power, sizeof power);
     PE_parse_boot_argn("fuxi-touch-tcs", &tcs, sizeof tcs);
     s->tcs = tcs < kActiveTcs ? tcs : 2;
     PE_parse_boot_argn("fuxi-touch-map", &mapFlags, sizeof mapFlags);
+    PE_parse_boot_argn("fuxi-touch-panic", &panicReport, sizeof panicReport);
     s->map = (struct fts_map){FTB_X_MAX, FTB_Y_MAX, kHidXMax, kHidYMax, mapFlags & 7u};
     fts_touch_init(&s->core, 1, FTB_X_MAX, FTB_Y_MAX);
     do {
         if (!snapshot(*s)) break;
         native_touch_stage_done = 1;
-        rows(*s);
+        report(*s);
         if (stage < 2) break;
         if (!enable(*s, power != 0)) break;
         native_touch_stage_done = 2;
-        rows(*s);
+        report(*s);
         if (stage < 3) break;
         if (!openBus(*s, hz)) break;
         s->tx = static_cast<uint8_t *>(IOMalloc(FTS_XFER_MAX));
@@ -481,12 +494,13 @@ static void touchThread(void *, wait_result_t) {
         if (s->resetRc) {fail(7, s->resetRc); break;}
         if (s->idRc) {fail(8, s->idRc); break;}
         native_touch_stage_done = 3;
-        rows(*s);
+        report(*s);
         if (stage < 4) break;
         mark(*s, 9);
         s->senseRc = fts_start_sensing(&s->chip);
         if (s->senseRc) {fail(9, s->senseRc); break;}
         native_touch_stage_done = 4;
+        report(*s);
         mark(*s, 10);
         unsigned pollOnly = 0;
         PE_parse_boot_argn("fuxi-touch-poll", &pollOnly, sizeof pollOnly);
@@ -507,9 +521,14 @@ static void touchThread(void *, wait_result_t) {
             }
             if (!drain(*s)) break;
             if ((++tick & 15) == 0) rows(*s);
+            if (panicReport == 2 && s->core.leaves) break;   // one complete touch seen: report it
         }
     } while (0);
-    rows(*s);
+    report(*s);
+    if (panicReport) {
+        panic("fuxi-touch report (stage %u of %u)\n%s\n%s\n%s\n%s", native_touch_stage_done, native_touch_stage_req,
+              native_touch_rows[0], native_touch_rows[1], native_touch_rows[2], native_touch_rows[3]);
+    }
 }
 
 extern "C" void native_touch_probe(void) {

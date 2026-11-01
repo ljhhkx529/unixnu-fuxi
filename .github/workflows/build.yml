@@ -6,11 +6,8 @@ on:
   workflow_dispatch:
     inputs:
       unixnu_ref:
-        description: UniXNU/UniXNU ref for the XNU pass
-        default: 67df14de69ae6f6ffc3480b30b70ce7667a3bd32
-      sheng_ref:
-        description: UniXNU/UniXNU-sheng ref (board, package, flags)
-        default: 08cde20edc3254ed6f7df8d0f5384fb887786e8f
+        description: OddlyLabs/UniXNU ref (the fork whose catalog has FuxiFtsTouch)
+        default: 1698acebb25f5be43db2c7048f63f4931b46f5f2
       xcode:
         description: Xcode version of the macos-26 image (the newest Xcode 26 if it is not installed)
         default: "26.6"
@@ -27,8 +24,8 @@ defaults:
     shell: bash
 
 env:
-  UNIXNU_REF: ${{ inputs.unixnu_ref || '67df14de69ae6f6ffc3480b30b70ce7667a3bd32' }}
-  SHENG_REF: ${{ inputs.sheng_ref || '08cde20edc3254ed6f7df8d0f5384fb887786e8f' }}
+  UNIXNU_REPO: OddlyLabs/UniXNU
+  UNIXNU_REF: ${{ inputs.unixnu_ref || '1698acebb25f5be43db2c7048f63f4931b46f5f2' }}
   XCODE: ${{ inputs.xcode || '26.6' }}
 
 jobs:
@@ -38,8 +35,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: true
           persist-credentials: false
-      - name: Protocol and touch core tests (gcc, clang; ASan, UBSan)
+      - name: FuxiFtsTouch tests (gcc, clang; ASan, UBSan)
         run: |
           flags="-std=c11 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -g -fsanitize=address,undefined"
           cd drivers/FuxiFtsTouch
@@ -51,15 +49,11 @@ jobs:
           done
       - name: Board constants test
         run: |
-          gcc -std=c11 -Wall -Wextra -Werror -Iinclude -Idrivers/FuxiFtsTouch tests/board_test.c \
+          gcc -std=c11 -Wall -Wextra -Werror -Ipackage -Idrivers/FuxiFtsTouch tests/board_test.c \
             drivers/FuxiFtsTouch/FtsTouchCore.c -o /tmp/board_test
           /tmp/board_test
-      - name: CI scripts
-        run: |
-          python3 -m py_compile ci/*.py
-          git clone --quiet --filter=blob:none https://github.com/UniXNU/UniXNU-sheng.git /tmp/sheng
-          git -C /tmp/sheng checkout --quiet "$SHENG_REF"
-          python3 -I ci/integrate-sheng.py "$GITHUB_WORKSPACE" /tmp/sheng
+      - name: Scripts
+        run: python3 -m py_compile scripts/*.py
 
   apple-clang:
     name: Kernel-target compile (Xcode clang)
@@ -67,6 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: true
           persist-credentials: false
       - name: Select Xcode
         run: |
@@ -78,24 +73,24 @@ jobs:
           [ -n "$dir" ] && [ -d "$dir" ] || { echo "::error::no Xcode 26 on this image"; exit 1; }
           echo "DEVELOPER_DIR=$dir/Contents/Developer" >> "$GITHUB_ENV"
           DEVELOPER_DIR="$dir/Contents/Developer" xcodebuild -version
-      - name: Compile the C driver for arm64 iOS kernel code
+      - name: Compile the C sources for arm64 iOS kernel code
         run: |
           sdk=$(xcrun --sdk iphoneos --show-sdk-path)
-          for f in drivers/FuxiFtsTouch/FtsProtocol.c drivers/FuxiFtsTouch/FtsTouchCore.c; do
+          for f in drivers/FuxiFtsTouch/FtsProtocol.c drivers/FuxiFtsTouch/FtsTouchCore.c package/QcomRpmh.c; do
             xcrun --sdk iphoneos clang -target arm64-apple-ios17.0 -isysroot "$sdk" -mkernel -ffreestanding -std=c11 \
               -mgeneral-regs-only -Wall -Wextra -Wconversion -Werror -O2 -c "$f" -o "/tmp/$(basename "$f" .c).o"
           done
-          # Kernel code must not call into libc: only the driver's own functions and what XNU itself provides may be imported.
+          # Kernel code must not call into libc: only the sources' own functions and what XNU itself provides.
           xcrun nm -u /tmp/FtsProtocol.o /tmp/FtsTouchCore.o
           undefined=$(xcrun nm -u /tmp/FtsProtocol.o /tmp/FtsTouchCore.o | grep -v ':$' | grep -v '^$' \
             | grep -vE '^_fts_|^_(memset|memcpy|memmove|bzero)$|^___bzero$|^___stack_chk_(guard|fail)$' || true)
           if [ -n "$undefined" ]; then echo "::error::unexpected imports: $undefined"; exit 1; fi
 
-  xnu-compile:
-    name: Kernel compile check (XNU flags)
+  kernel:
+    name: fuxi kernel (XNU build and prelink)
     needs: host-tests
     runs-on: macos-26
-    timeout-minutes: 180
+    timeout-minutes: 240
     env:
       HOMEBREW_NO_AUTO_UPDATE: 1
       HOMEBREW_NO_INSTALL_CLEANUP: 1
@@ -104,18 +99,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: fuxi
+          submodules: recursive
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: UniXNU/UniXNU
+          repository: ${{ env.UNIXNU_REPO }}
           ref: ${{ env.UNIXNU_REF }}
           path: unixnu
-          persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: UniXNU/UniXNU-sheng
-          ref: ${{ env.SHENG_REF }}
-          path: device
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -141,45 +131,45 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-version
       - name: Select the device
         working-directory: unixnu
-        run: ./unixnu defconfig sheng_defconfig --device "$GITHUB_WORKSPACE/device"
-      - name: XNU pass for the compile records
+        run: |
+          ./unixnu defconfig fuxi_defconfig --device "$GITHUB_WORKSPACE/fuxi"
+          ./unixnu status --device "$GITHUB_WORKSPACE/fuxi" --json > "$RUNNER_TEMP/unixnu-status.json" || true
+      - name: Build kernel
         working-directory: unixnu
         env:
           # prepare-xnu-source.py lists Apple sources through the GitHub API (anonymous calls hit the shared rate limit).
           GITHUB_TOKEN: ${{ github.token }}
+        run: ./unixnu build kernel --device "$GITHUB_WORKSPACE/fuxi"
+      - name: Check the touch probe in the kernel
         run: |
-          # The kernel step first runs an XNU pass that leaves the compile records, then the board's archive scripts. One of
-          # them, build-sheng-platform-power.py, needs a kernel prelinked from Apple's kernelcache that only an earlier local
-          # build leaves behind, so on a fresh runner the step stops there. This job needs only the records.
-          set +e
-          ./unixnu build kernel --device "$GITHUB_WORKSPACE/device" > "$RUNNER_TEMP/unixnu-kernel.log" 2>&1
-          status=$?
-          set -e
-          tail -n 60 "$RUNNER_TEMP/unixnu-kernel.log"
-          echo "unixnu build kernel: exit $status"
-          find out -path '*/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/osfmk/DEVELOPMENT/startup.o.json' | grep -q . \
-            || { echo "::error::the XNU pass left no compile records"; exit 1; }
-      - name: Compile and resolve the fuxi touch objects
-        run: python3 -I fuxi/ci/kernel-compile-check.py unixnu fuxi "$RUNNER_TEMP/compile-check"
+          kernel=$(find unixnu/out -path '*/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf' | head -n 1)
+          [ -n "$kernel" ] || { echo "::error::linked kernel not found"; exit 1; }
+          ls -l "$kernel"
+          missing=0
+          for s in _native_touch_probe _native_touch_set_sink _fts_reset _fts_touch_apply _geni_spi_transfer _qcom_rpmh_active_request; do
+            if nm "$kernel" | grep -q " [Tt] $s\$"; then echo "defined: $s"; else echo "::error::missing from the kernel: $s"; missing=1; fi
+          done
+          exit $missing
       - name: Collect the text logs
         if: always()
         run: |
-          # Only text logs leave the runner: kernels and kernelcaches derive from Apple software.
+          # Only text files leave the runner: the kernel, the kernelcache and IPSW members derive from Apple software.
           mkdir -p "$RUNNER_TEMP/logs"
           find unixnu/out -path '*/logs/*.log' -size -20M -exec cp {} "$RUNNER_TEMP/logs/" \; 2>/dev/null || true
-          cp "$RUNNER_TEMP/unixnu-kernel.log" "$RUNNER_TEMP"/compile-check/*.log "$RUNNER_TEMP"/compile-check/*.md \
-            "$RUNNER_TEMP/logs/" 2>/dev/null || true
+          cp "$RUNNER_TEMP/unixnu-status.json" "$RUNNER_TEMP/logs/" 2>/dev/null || true
+          [ -f fuxi/unixnu.lock ] && cp fuxi/unixnu.lock "$RUNNER_TEMP/logs/unixnu.lock" || true
           ls -l "$RUNNER_TEMP/logs"
       - name: Upload the build logs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: xnu-compile-logs-${{ github.run_attempt }}
+          name: fuxi-kernel-logs-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/logs/*.log
-            ${{ runner.temp }}/logs/*.md
+            ${{ runner.temp }}/logs/*.json
+            ${{ runner.temp }}/logs/unixnu.lock
           if-no-files-found: warn
           retention-days: 7
       - name: Remove proprietary inputs
         if: always()
-        run: rm -rf unixnu/out/ipsw unixnu/out/feeds device/.cache/firmware
+        run: rm -rf unixnu/out/ipsw unixnu/out/feeds fuxi/.cache/firmware
