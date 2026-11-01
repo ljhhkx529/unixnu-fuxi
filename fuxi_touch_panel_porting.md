@@ -209,7 +209,7 @@
 | [OddlyLabs/FuxiFtsTouch](https://github.com/OddlyLabs/FuxiFtsTouch) | 组件仓库：FTM5 协议和触点跟踪，带主机测试 |
 | 本仓库 | fuxi 设备仓库：`board.toml`、`feeds.toml`、`configs/fuxi_defconfig`、`dts/fuxi.dts`、`patches/xnu/`、`package/`、`scripts/build-fuxi-touch.py`、`porting.toml` |
 
-- **内核配置**：模板的默认配置，加上 `CONFIG_XNU_BUILD_ARCHIVES=y`（模板没开，归档步骤不会运行，链接会缺 corecrypto）和触控归档。归档按顺序构建：corecrypto（普通版和命名空间版）、ArmDTPlatform、ArmCpu、SoftwareAES、libpthread、`build-fuxi-touch.py`。
+- **内核配置**：实际生效的配置是 arch、SoC、OS 三个配置片段再加上设备的 defconfig。设备 defconfig 在模板基础上关掉了 Adreno（SoC 片段默认打开），并加上触控归档。归档按顺序构建：corecrypto（普通版和命名空间版）、ArmDTPlatform、ArmCpu、SoftwareAES 及其绑定、libpthread、mockfs 测试用文件系统（OS 片段打开了 `CONFIG_XNU_SOURCE_MOCKFS`）、`build-fuxi-touch.py`。
 - **启动钩子补丁**：上下文只用 XNU 原有的行，所以上游改动它前后的共享补丁时，这个补丁不会失效。已确认它能在 arch、SoC、OS 三组补丁之后干净应用。
 - **porting.toml**：UniXNU 的 `scripts/porting-record.py check` 通过（13 个区域）。Input 区域是 `implemented`，其余多数是 `planned`。上游的检查器还不认识 `FuxiFtsTouch` 组件，所以本仓库的记录检查用 fork 里的检查器。
 - **镜像**：payload 需要这台手机的唯一芯片 ID（`--unique-chip-id`）和 iPadOS 17.7.11 恢复镜像；固件要从社区的 uefi-fuxi 里选一个版本。这几项都还没做。
