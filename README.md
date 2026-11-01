@@ -14,7 +14,7 @@ fork [OddlyLabs/UniXNU](https://github.com/OddlyLabs/UniXNU) (branch `fuxi`), wh
 | 子系统 | 状态 |
 |---|---|
 | 触控（ST FTM5） | 驱动和分阶段探针已写好，在 CI 里编进内核；还没有上机 |
-| 固件和启动镜像 | CI 构建 DEBUG 固件和 `fastboot boot` 用的启动镜像，只上传加密版本；镜像已在本地解密并逐项核对。还没有上机 |
+| 固件和启动镜像 | CI 构建 DEBUG 固件和 `fastboot boot` 用的启动镜像，只上传加密版本。2026-11-02 第一次上机：bootloader 接受镜像，固件、UniXNU 菜单和 DarwinBoot 都正常；XNU 在打开 MMU 前后停住，正在用入口探针定位（见 `porting.toml` 的 cpu 区域） |
 | 显示、存储、CPU、GPU、网络、音频、电源 | 计划中；显示和电源的硬件资料已整理 |
 
 ## 相关仓库
@@ -92,7 +92,7 @@ git clone -b fuxi https://github.com/OddlyLabs/uefi-fuxi
 
 启动镜像里有苹果 kernelcache 的内容，所以只上传用 `ci/boot-image-recipient.pem` 加密过的版本，私钥只在机主自己的电脑上；其余产物只上传文本日志。
 
-## 上机（还没做）
+## 上机
 
 只用 `fastboot boot` 临时启动，不写任何分区。步骤：
 
@@ -101,6 +101,27 @@ git clone -b fuxi https://github.com/OddlyLabs/uefi-fuxi
 3. 手机进入 fastboot，运行 `fastboot boot boot.img`。
 4. 默认启动参数是 `fuxi-touch=3 fuxi-touch-panic=1`：探针跑完第 3 阶段（上电、时钟、SPI、复位、读芯片 ID）后 panic，在 panic 屏上读 4 行 FTS 诊断，对照主文档第 7.2 节。
 5. 重启手机即回到原来的系统。
+
+### 探针镜像：定位 XNU 早期卡在哪
+
+XNU 自己的控制台出来之前，能看到的只有屏幕顶部的色条：绿色是 DarwinBoot 交出控制权，蓝色是进入内核，品红是即将打开 MMU。再往后，就用会自动重启的“入口探针”来判断：探针放在某个位置，内核走到那里就等几秒然后重启手机。所以手机重启了，说明走到了那里；一直停在色条上，说明在那之前就卡住了。
+
+做法遵循 UniXNU 调试指南（Entry probe reset 一节）。内核由 CI 编译，payload 和启动镜像在本地生成，不需要 Mac：
+
+1. 解密产物：除了 `boot.img`，还会在旁边得到没有打过补丁的 `kernel.macho`。
+2. 导出这次测过的固件卷，保证探针镜像里的固件和测过的完全相同：`python3 ci/check-boot-image.py boot.img boot.json ../uefi-fuxi --fd-out fd.bin`。
+3. 在设备仓库的一份临时副本里，给 `board.toml` 的 `[payload]` 加上探针设置（不要提交），例如 `entry_probe_reset_delay = 6`（打开 MMU 之后重启），或者再加 `entry_probe_reset_after = "_arm_vm_init"`（`arm_init` 调用完它之后重启）。
+4. 在 UniXNU 目录里依次运行（`-D` 指向那份临时副本）：
+
+   ```bash
+   ./unixnu build payload -D <临时副本> --uefi ../uefi-fuxi --kernel <kernel.macho> --unique-chip-id 0x0123456789abcdef
+   ```
+   ```bash
+   ./unixnu bootimg -D <临时副本> --uefi ../uefi-fuxi --fd <fd.bin> --dtb ../uefi-fuxi/Platforms/Xiaomi/fuxiPkg/FdtBlob/sm8550-xiaomi-fuxi.dtb -o probe.img
+   ```
+
+   Linux 上需要 clang、lld、llvm 工具、`dtc` 和 `mtools`。
+5. `fastboot boot probe.img`。设了延时的探针镜像不需要拍照：手机自己重启回系统，就说明走到了探针的位置。
 
 ## 维护
 

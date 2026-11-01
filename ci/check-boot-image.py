@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Check a decrypted boot image of the Build workflow before it is started with fastboot boot. Read-only.
+"""Check a decrypted boot image of the Build workflow before it is started with fastboot boot.
 
-usage: python3 ci/check-boot-image.py <boot.img> <boot.json> <uefi-fuxi checkout>
+usage: python3 ci/check-boot-image.py <boot.img> <boot.json> <uefi-fuxi checkout> [--fd-out FILE]
 
 The expected values come from this repository's board.toml ([bootimg], [payload]) and the firmware checkout's device
 config: the container header and load addresses, the shim's ARM64 header (text offset, an image size that covers the
 payload), the firmware volume and the payload after it, the appended FdtBlob and the placeholder ramdisk. It then lists
 the payload's FAT32 files, checks that the kernel carries the touch probe, prints the ADT root and /chosen values and
-compares the boot menu's arguments with [payload] kernel_args. Exits non-zero on any mismatch.
+compares the boot menu's arguments with [payload] kernel_args. Exits non-zero on any mismatch. Nothing is written,
+except with --fd-out: then the image's firmware volume goes to FILE once every check passed, so payload variants
+(entry probes) can be packed with exactly the tested firmware (./unixnu bootimg --fd FILE).
 """
+import argparse
 import hashlib
 import json
 import struct
@@ -17,7 +20,13 @@ import tomllib
 import zlib
 from pathlib import Path
 
-image_path, report_path, uefi = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+parser.add_argument('image', type=Path)
+parser.add_argument('report', type=Path)
+parser.add_argument('uefi', type=Path)
+parser.add_argument('--fd-out', type=Path, help='write the firmware volume here when every check passed')
+options = parser.parse_args()
+image_path, report_path, uefi = options.image, options.report, options.uefi
 board = tomllib.loads((Path(__file__).resolve().parents[1] / 'board.toml').read_text())
 spec = board['bootimg']['image']
 config = tomllib.loads((uefi / 'Resources/Configs' / f'{board["firmware"]["config"]}.toml').read_text())
@@ -150,4 +159,7 @@ args = next((entry.get('args') for entry in entries if entry.get('id') == 'xnu')
 check(args == ' '.join(board['payload']['kernel_args']), f'boot menu entry xnu: {args}')
 
 print('boot image check:', 'all passed' if not failures else f'{failures} failed')
+if options.fd_out and not failures:
+    options.fd_out.write_bytes(fd)
+    print(f'firmware volume written to {options.fd_out} (sha256 {sha(fd)})')
 sys.exit(failures != 0)

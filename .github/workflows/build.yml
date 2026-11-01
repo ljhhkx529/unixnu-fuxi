@@ -195,17 +195,26 @@ jobs:
           cat "$RUNNER_TEMP/image/boot.json"
       - name: Encrypt the boot image
         run: |
-          # The image carries the prelinked Apple kernelcache, so it leaves the runner only encrypted to the owner's key.
+          # The image and the kernel carry the prelinked Apple kernelcache, so they leave the runner only encrypted to the
+          # owner's key. The unpatched prelinked kernel lets the owner build payload variants (entry probes) without macOS.
           openssl="$(brew --prefix openssl@3)/bin/openssl"
+          kernel=$(find "$GITHUB_WORKSPACE/unixnu/out" -path '*/kernel/kernel.macho' | head -n 1)
+          report=$(find "$GITHUB_WORKSPACE/unixnu/out" -path '*/payload/payload.json' | head -n 1)
+          [ -n "$kernel" ] && [ -n "$report" ] || { echo "::error::prelinked kernel or payload.json not found"; exit 1; }
           cd "$RUNNER_TEMP/image"
-          shasum -a 256 boot.img | sed 's#  .*#  boot.img#' > boot.img.sha256
+          gzip -9 -n -c "$kernel" > kernel.macho.gz
+          cp "$report" payload.json
+          for f in boot.img kernel.macho.gz; do shasum -a 256 "$f" | sed "s#  .*#  $f#" > "$f.sha256"; done
           "$openssl" rand -hex 32 > boot.key
-          "$openssl" enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -in boot.img -out boot.img.enc -pass file:boot.key
+          for f in boot.img kernel.macho.gz; do
+            "$openssl" enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -in "$f" -out "$f.enc" -pass file:boot.key
+          done
           "$openssl" pkeyutl -encrypt -pubin -inkey "$GITHUB_WORKSPACE/fuxi/ci/boot-image-recipient.pem" \
             -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 -in boot.key -out boot.key.enc
-          rm -f boot.key boot.img
+          rm -f boot.key boot.img kernel.macho.gz
           mkdir -p "$RUNNER_TEMP/encrypted"
-          mv boot.img.enc boot.key.enc boot.img.sha256 boot.json "$RUNNER_TEMP/encrypted/"
+          mv boot.img.enc kernel.macho.gz.enc boot.key.enc boot.img.sha256 kernel.macho.gz.sha256 boot.json payload.json \
+            "$RUNNER_TEMP/encrypted/"
           ls -l "$RUNNER_TEMP/encrypted"
       - name: Upload the encrypted boot image
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

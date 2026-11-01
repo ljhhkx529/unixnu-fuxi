@@ -225,3 +225,8 @@
   - 第一次固件构建失败：fuxiPkg 的 `RAW.inc` 把三个厂商配置文件（`SecParti.cfg`、`uefipil.cfg`、`QcomChargerCfg.cfg`）放在了 `FUXI_VENDOR_HW` 开关外面，只用 Mu 驱动构建时会去找不存在的厂商文件。uefi-fuxi `87554bf9` 把它们放到对应驱动的开关下。
   - 启动镜像 11.1 MiB（v0）。本地解密后用 `ci/check-boot-image.py` 核对：shim 头里的加载偏移是 0；内核镜像大小 0x0C300200，与 Kerfand 实测能启动的值相同；固件卷就是 CI 构建的那份；payload 里有带触控探针的内核、ADT（chip-id 0x207）和启动参数 `fuxi-touch=3 fuxi-touch-panic=1`。
   - 固件这一步也能在 Linux 上单独构建（Ubuntu 26.04，clang 21），只改固件时不必等 macOS 的 CI。
+- **第一次上机**（2026-11-02，用 `fastboot boot` 临时启动上面那个镜像）：
+  - bootloader 接受了 v0 镜像（`Booting OKAY`）。屏幕上先是固件的 DEBUG 日志；UniXNU 菜单启动 DarwinBoot，DarwinBoot 画出绿色色条；入口探针接着画出蓝色（进入内核，MMU 还关着）和品红（即将打开 MMU）两条。
+  - 之后既没有 XNU 的文字，也没有 panic 屏，手机一直没有出现在 USB 上。
+  - 结论：固件、菜单、DarwinBoot 和镜像格式都没问题；内核停在打开 MMU 到 `PE_init_printf`（第一个能往屏幕上写字的位置）之间。
+  - 下一步用会自动重启的入口探针定位（README 的“探针镜像”一节）。两个社区移植（mouse233、Kerfand）的内核在同一颗 SoC 上能越过这一段，内存窗口大小也和本仓库相同；它们都用 sheng 的 kit，本仓库用模板组件 ArmDTPlatform、ArmCpu，这是首先要排查的差异。
