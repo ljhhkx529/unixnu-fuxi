@@ -18,7 +18,27 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]   # the assembled build tree: scripts are copied into it
 OUT = ROOT / 'build/sheng-ufs'
 OBJ = ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837'
-SOURCE = ROOT / 'drivers/NativeUfs/NativeUfs.cpp'
+
+
+def resolve_native_ufs():
+    """NativeUfs is built by this device script, not a component, so the assembled
+    tree does not link drivers/NativeUfs. Resolve the device checkout through the
+    already-linked drivers/FuxiFtsTouch symlink and link drivers/NativeUfs into the
+    tree when it is missing."""
+    native = ROOT / 'drivers/NativeUfs'
+    if (native / 'NativeUfs.cpp').is_file():
+        return native
+    fts = ROOT / 'drivers/FuxiFtsTouch'
+    if fts.is_symlink():
+        candidate = fts.resolve().parent / 'NativeUfs'
+        if (candidate / 'NativeUfs.cpp').is_file():
+            if not native.exists():
+                native.symlink_to(candidate, target_is_directory=True)
+            return native
+    sys.exit(f'{native}/NativeUfs.cpp missing: add the drivers/NativeUfs submodule first')
+
+
+SOURCE = resolve_native_ufs() / 'NativeUfs.cpp'
 
 CXX_FLAGS = ['-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
              '-Wno-c99-designator', '-Wno-reorder-init-list',
