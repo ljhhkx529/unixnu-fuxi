@@ -9,6 +9,7 @@
 #include <libkern/c++/OSKext.h>
 #include <pexpert/pexpert.h>
 #include <mach/kmod.h>
+#include <kern/thread.h>
 extern kmod_info_t g_kernel_kmod_info;
 extern "C" void native_hid_static_init(void) __asm__("__GLOBAL__sub_I_NativeHidInput.cpp");
 extern "C" IOService *native_hid_input_allocate(void);
@@ -27,6 +28,8 @@ volatile uint32_t native_hid_input_command;
 char native_hid_input_registry[2048];
 char native_hid_input_props[1024];
 extern volatile uint32_t native_legacy_transfer_calls;
+// fuxi_touch_probe sets this before its thread starts, so the digitizer service can be created without a boot argument.
+extern "C" {extern volatile int native_fuxi_touch_enabled;}
 // Optional unattended Home presses for hardware, which has no external harness writing the mailbox:
 // offline-hid-auto-home=<seconds after the second presented frame>, offline-hid-auto-home-count (default 1)
 // and offline-hid-auto-home-interval (default 20 s). Disabled unless the first argument is set.
@@ -142,10 +145,9 @@ void native_hid_input_observed(unsigned event,int result) {
     if(event<8){native_hid_input_events[event]=native_hid_input_events[event]+1;native_hid_input_results[event]=result;}
 }
 __attribute__((noinline)) void native_hid_checkpoint(void) { __asm__ volatile("" ::: "memory"); }
-void native_hid_input_probe(void) {
-    unsigned enabled=0;
-    if(!PE_parse_boot_argn("offline-hid-input",&enabled,sizeof(enabled)) || enabled!=1)return;
+static void native_hid_input_probe_body(void) {
     if(native_hid_stage)return;
+    const bool fuxiTouch=native_fuxi_touch_enabled!=0;
     native_hid_stage=1;
     native_hid_load_status=OSKextLoadKextWithIdentifier("com.apple.iokit.IOHIDFamily");
     if(!native_hid_load_status)
@@ -164,27 +166,35 @@ void native_hid_input_probe(void) {
         IOService *resource=match?IOService::waitForMatchingService(match,5000000000ULL):nullptr;
         native_hid_resource_found=resource!=nullptr;
         unsigned sendHome=0;PE_parse_boot_argn("offline-hid-home",&sendHome,sizeof(sendHome));
-        if(resource && sendHome==1 && native_hid_class_sizes[4]==208) {
+        if(resource && (sendHome==1 || fuxiTouch) && native_hid_class_sizes[4]==208) {
             void *handle=OSMetaClass::preModLoad(g_kernel_kmod_info.name);
             if(handle) {
                 native_hid_static_init();native_hid_input_meta_status=OSMetaClass::postModLoad(handle);
                 if(!native_hid_input_meta_status) {
-                    IOService *device=native_hid_input_allocate();
-                    native_hid_input_object=(uintptr_t)device;
-                    bool valid=device && device->metaCast("IOHIDDevice") && device->init();
-                    native_hid_input_observed(0,valid?0:kIOReturnError);
-                    bool attached=valid && device->attach(resource);
-                    native_hid_input_observed(1,attached?0:kIOReturnError);
-                    bool started=attached && device->start(resource);
-                    if(!started) {
-                        native_hid_input_observed(7,kIOReturnError);
-                        if(attached)device->detach(resource);
-                        OSSafeReleaseNULL(device);native_hid_input_object=0;
+                    bool started=false;
+                    if(sendHome==1 || fuxiTouch) {
+                        // fuxi touch uses the keyboard-first combined device: on this kernel the standalone digitizer
+                        // service starts but never gets an IOHIDEventDriver (t27: started=1 driver=0), while the
+                        // combined descriptor is the arrangement the event driver attaches to. NativeHidInput adds
+                        // the digitizer collection when fuxi touch is enabled and republishes Digitizer/Touch Screen
+                        // plus Built-In on the matched service, which is what backboardd's digitizer filter reads.
+                        IOService *device=native_hid_input_allocate();
+                        native_hid_input_object=(uintptr_t)device;
+                        bool valid=device && device->metaCast("IOHIDDevice") && device->init();
+                        native_hid_input_observed(0,valid?0:kIOReturnError);
+                        bool attached=valid && device->attach(resource);
+                        native_hid_input_observed(1,attached?0:kIOReturnError);
+                        started=attached && device->start(resource);
+                        if(!started) {
+                            native_hid_input_observed(7,kIOReturnError);
+                            if(attached)device->detach(resource);
+                            OSSafeReleaseNULL(device);native_hid_input_object=0;
+                        }
                     }
                     unsigned touchHid=0;
                     unsigned split=0;
                     PE_parse_boot_argn("sheng-touch-split",&split,sizeof(split));
-                    if(started && split==1 && PE_parse_boot_argn("sheng-touch-hid",&touchHid,sizeof(touchHid)) && touchHid==1) {
+                    if(!fuxiTouch && started && split==1 && PE_parse_boot_argn("sheng-touch-hid",&touchHid,sizeof(touchHid)) && touchHid==1) {
                         // Separate digitizer service (primary usage Digitizer/Touch Screen, Built-In).
                         IOService *touch=native_hid_touch_allocate();
                         bool touchStarted=touch && touch->metaCast("IOHIDDevice") && touch->init() && touch->attach(resource) && touch->start(resource);
@@ -198,5 +208,27 @@ void native_hid_input_probe(void) {
         OSSafeReleaseNULL(resource);OSSafeReleaseNULL(match);
     }
     native_hid_stage=3;native_hid_checkpoint();
+}
+// Loading IOHIDFamily and starting the digitizer service from bsd_autoconf() stalls the boot handoff at the logo
+// (t25: boot UI and touch thread alive, progress frozen). The fuxi path runs the same probe from its own thread.
+static void native_hid_probe_thread(void *, wait_result_t) {
+    unsigned delayMs=20000;
+    if(!PE_parse_boot_argn("fuxi-touch-hid-delay",&delayMs,sizeof(delayMs)) || delayMs>120000)delayMs=20000;
+    IOSleep(delayMs);
+    native_hid_input_probe_body();
+}
+void native_hid_input_probe(void) {
+    unsigned enabled=0;
+    const bool fuxiTouch=native_fuxi_touch_enabled!=0;
+    if((!PE_parse_boot_argn("offline-hid-input",&enabled,sizeof(enabled)) || enabled!=1) && !fuxiTouch)return;
+    if(fuxiTouch) {
+        static bool spawned;
+        if(spawned)return;
+        spawned=true;
+        thread_t thread=nullptr;
+        if(kernel_thread_start(native_hid_probe_thread,nullptr,&thread)==KERN_SUCCESS)thread_deallocate(thread);
+        return;
+    }
+    native_hid_input_probe_body();
 }
 }

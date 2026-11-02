@@ -68,6 +68,7 @@ while index < len(arguments):
         command.append(value)
     index += 1
 command.extend(['-Wall', '-Wextra', '-Werror', '-Wno-unknown-warning-option',
+                '-Wno-missing-designated-field-initializers',
                 '-Wno-unused-parameter',
                 '-Wno-c99-designator', '-Wno-reorder-init-list', '-Wno-deprecated-enum-enum-conversion',
                 '-Wno-unnecessary-virtual-specifier', '-I', str(ROOT / '.cache/xnu-work/osfmk')])

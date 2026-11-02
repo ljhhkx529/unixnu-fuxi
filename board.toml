@@ -157,10 +157,8 @@ trust_cache_sha256 = [
   "8900d6a93d7a59ce1a872a5c081e559f4240a218f97e12d44d22dda46644d68f",
 ]
 kernel_args = [
-  "-v",
   "serial=3",
   "debug=0x14e",
-  "boot-progress=2",
   "kt_fixed_zones=120",
   "offline-apfs-load=1",
   "-apfs_shared_datavolume",
@@ -185,7 +183,6 @@ kernel_args = [
   "sheng-fb-gpu=1",
   "sheng-vsync=120",
   "sheng-dpu=3",
-  "armcpu-diagnostics=1",
   "armcpu-spi-ipi=1",
   "sheng-smp=1",
   "sheng-cpufreq=4",
@@ -198,6 +195,10 @@ kernel_args = [
   "qcom-usb-debug=1",
   "-no_slto_panic",
   "ml-timeout-lock-panic-scale=40",
+  "fuxi-touch-stage=4",
+  "fuxi-touch-hid=1",
+  "fuxi-touch-hw=7",
+  "fuxi-buttons=1",
 ]
 text_fixups = [
   "BTAudioHALPlugin,38bec,ffc300d1f44f01a9,000080d2c0035fd6",

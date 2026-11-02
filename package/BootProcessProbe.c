@@ -59,8 +59,11 @@ static int selected(proc_t p,void *arg) {
 }
 static int capture(proc_t p,void *arg) {
  (void)arg;
- const char *name=proc_best_name(p);unsigned index=10;
- for(unsigned i=0;i<10;++i)if(!strcmp(name,targets[i])){index=i;break;}
+ const char *name=proc_best_name(p);unsigned index=10,fallback=10;
+ // A name listed twice (a focus slot reusing a default one) belongs to the slot that actually traces it;
+ // the earlier untraced row would otherwise swallow the match and the focus trace stays empty.
+ for(unsigned i=0;i<10;++i)if(!strcmp(name,targets[i])){if(trace_slot[i]){index=i;break;}if(fallback==10)fallback=i;}
+ if(index==10)index=fallback;
  if(proc_pid(p)==0)index=9;
  if(followed_slot(p)<10)index=followed_slot(p);
  // A slot the chain uses belongs to the followed process only (runningboardd/PreBoard would mix their threads into its trace).

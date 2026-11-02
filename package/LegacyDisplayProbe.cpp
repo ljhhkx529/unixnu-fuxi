@@ -479,6 +479,8 @@ void native_legacy_display_late_probe(void);
 extern void native_hid_input_probe(void);
 extern void native_keystore_probe(void);
 extern void native_touch_probe(void);
+extern void fuxi_touch_probe(void);
+extern void fuxi_buttons_probe(void);
 extern void sheng_cpufreq_probe(void);
 extern void sheng_gpu_power_probe(void);
 extern void sheng_backlight_probe(void);
@@ -488,6 +490,8 @@ void native_legacy_display_late_probe(void) {
     sheng_cpufreq_probe();
     sheng_gpu_power_probe();
     native_touch_probe();
+    fuxi_touch_probe();
+    fuxi_buttons_probe();
     sheng_backlight_probe();
     sheng_dpu_probe();
     native_hid_input_probe();

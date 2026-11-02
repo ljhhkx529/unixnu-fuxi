@@ -53,9 +53,12 @@ crash_obj = compile_like(crash_record, ROOT / 'kits/sheng/BootCrashExport.c', OU
                          ['-I', str(ROOT / 'kits/sheng')])
 touch_stats_obj = compile_like(record, ROOT / 'kits/sheng/BootLogTouchStats.c', OUT / 'BootLogTouchStats.o',
                                [])
+fence_stub_obj = compile_like(record, ROOT / 'kits/sheng/BootLogFenceStubs.c', OUT / 'BootLogFenceStubs.o',
+                              [])
 
 archive = OUT / 'libBootLog.a'
 archive.unlink(missing_ok=True)
-subprocess.run(['xcrun', 'ar', 'rcs', str(archive), str(log_obj), str(crash_obj), str(touch_stats_obj)],
+subprocess.run(['xcrun', 'ar', 'rcs', str(archive), str(log_obj), str(crash_obj), str(touch_stats_obj),
+                str(fence_stub_obj)],
                check=True, timeout=30)
 print(f'boot log archive: {archive}')
