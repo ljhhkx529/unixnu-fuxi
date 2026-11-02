@@ -153,9 +153,8 @@ of `-v serial=3 debug=0x14e kt_fixed_zones=120 sheng-pmgr=2`.
 | p1-pmgr | 13:25:38 | none | `cba346b63087500c` | no reset in the 150 s watched; panel: first the bands, then `Failed to mount root device` |
 | p3-poll | 13:38:54 | `fuxi-touch=4 fuxi-touch-poll=1 fuxi-touch-panic=2` | `d17cc5498a404abd` | no reset; panel: the stage 4 touch report below |
 
-Reading: the bridge satisfies AMFI, and with it the kernel runs on to the root device wait. The reset appeared once, with
-the touch probe's interrupt armed; the polling image differs from it only by `fuxi-touch-poll=1` and does not reset. One run
-each, so the cause is not settled.
+Reading: the bridge satisfies AMFI, and with it the kernel runs on to the root device wait. The reset is not tied to the
+interrupt: the same t4b-touch image ran to its touch report on a second run (next section).
 
 p1-pmgr panel:
 
@@ -199,3 +198,37 @@ free=0x0000000000125c42
 
 The position fits the tap the owner was asked to make (lower left, about 2 cm from both edges): `y` is above the short-axis
 range, so the axes are not swapped, and small `x` with large `y` means neither is mirrored. One tap, not a calibration.
+
+## Interrupt mode
+
+| Image | Started | Added arguments | SHA-256 | Result |
+| --- | --- | --- | --- | --- |
+| t4c-diag | 14:01:18 | `fuxi-touch=4 fuxi-touch-panic=2 armcpu-diagnostics=1` | `dd04ebd82e680c5f` | no reset; panel: touch report |
+| t4b-touch, second run | 14:08:28 | `fuxi-touch=4 fuxi-touch-panic=2` (the same bytes as the run that reset) | `ca080270f58e179c` | no reset; panel: touch report |
+
+Rows 1 to 3 of both panels equal those of p3-poll, and so do the frames (the probe's own report). Row 4 differs:
+
+```
+t4c-diag:              FTS rd12 ev13 in1 mv9 up1 er0/00 rdy0 rearm0 c0 1295,16685 hid0 irq11/0 xf0 @FuxiTouchProbe.cpp:530
+t4b-touch, second run: FTS rd11 ev12 in1 mv8 up1 er0/00 rdy0 rearm0 c0 1635,19935 hid0 irq10/0 xf0 @FuxiTouchProbe.cpp:530
+```
+
+`irq11/0` and `irq10/0` are the interrupts taken and the spurious ones: one interrupt per touch event (1 + 9 + 1 and
+1 + 8 + 1), none spurious, and one FIFO read more than interrupts, against 3531 reads in polling mode. Both runs have the
+same 2 events beyond the touch events as p3-poll. The GIC route through the TLMM summary interrupt, the falling edge on
+GPIO 25 and the wakeup of the probe's thread all work.
+
+All three taps were asked for at the lower left, and all three read there:
+
+| Image | Raw position | Pixel | From the left edge | From the bottom edge |
+| --- | --- | --- | --- | --- |
+| p3-poll | 2885,18595 | 288,1860 | 17.7 mm | 33.2 mm |
+| t4c-diag | 1295,16685 | 130,1668 | 7.9 mm | 44.9 mm |
+| t4b-touch, second run | 1635,19935 | 164,1994 | 10.0 mm | 24.9 mm |
+
+The unexplained reset: the first t4b-touch run reset the phone by itself within seconds of the kernel starting, with no panic
+screen, and the second run of the same bytes did not. `armcpu-diagnostics=1` reported nothing in t4c-diag, which did not
+reset either. So the reset is intermittent: one of the three boots with the bridge and the interrupt armed. The first run is
+the only one of those that did not come straight from an XNU panic screen: the phone was last seen in Android, and the owner
+entered fastboot by hand. The other two, and p3-poll, came from a panic screen. That is one sample, so it is the next thing
+to test and not a cause.
