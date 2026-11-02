@@ -45,7 +45,6 @@ archives = [
   "build-libpthread-kernel.py",
   "build-mockfs-fixture.py",
   "build-fuxi-platform-power.py",
-  "build-boot-progress.py",
   "build-boot-log.py",
   "build-fuxi-hid-input.py",
   "build-fuxi-touch.py",

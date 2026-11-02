@@ -19,7 +19,11 @@ CONFIG_XNU_NATIVE_VIRTIO_BLOCK=y
 # bundle, both of which are only required to mount the APFS root. The first UFS
 # milestone is the read-only probe chain (native-ufs-probe=10/12), so leave it off.
 # CONFIG_XNU_VERIFIED_ROOT_PROBE is not set
-CONFIG_XNU_BOOT_PROGRESS=y
+# BOOT_PROGRESS is deferred with VerifiedRoot/RamBlock: build-xnu-4k-baseline.sh
+# gates BOOT_PROGRESS=1 on XNU_OWNER_ROOT_AUDIT=1, which belongs to the APFS
+# root mount step. boot_progress_poll is weak in NativeUfs.cpp, so the read-only
+# UFS probe chain links without it.
+# CONFIG_XNU_BOOT_PROGRESS is not set
 CONFIG_XNU_NATIVE_VIRTIO_BLOCK_ARCHIVE="{tree}/build/virtio-mmio-block-verified-bundle/libVirtioMmioBlock.a"
 # The SoC fragment enables the Adreno driver; it is not selected for fuxi yet.
 # CONFIG_XNU_NATIVE_ADRENO is not set
