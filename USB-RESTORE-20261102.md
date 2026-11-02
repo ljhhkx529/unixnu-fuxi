@@ -66,3 +66,13 @@ checks only; phone enumeration remains untested.
 USB 与进度显示共存：板级 PE_init_kprintf 提前返回前初始化 QUD，保留原进度
 输出；基线补丁循环之前撤回自身改动，未知上下文拒绝应用。已做源码检查，
 尚未进行本轮手机枚举测试。编译失败日志同时保留首个错误，便于定位根因。
+
+The shared GopFramebuffer consumer also requires NATIVE_LEGACY_LEAVES and
+kLegacyVsyncClients in its generated ABI header. Emit the seven audited
+abstract leaves (excluding the two implemented methods), and the +5592 queue
+offset already checked against the unchanged original vsync sender. No
+original executable or inheritance checks are removed.
+
+共享显示驱动还需要生成头中的 NATIVE_LEGACY_LEAVES 和 kLegacyVsyncClients。
+从审计结果生成七个拒绝执行的抽象叶子；队列偏移 +5592 沿用原始 vsync
+发送指令的核验。保留原始代码与继承关系检查。
