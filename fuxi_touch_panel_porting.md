@@ -186,7 +186,7 @@
 ### 7.3 尚未验证（需要上机）
 1. RPMh：TCS 的完成位不开中断时会不会置位不确定，所以等不到时只记录 `w-1`，不算失败。TCS 2 在 fuxi 的 UEFI 下是否空闲也没确认，`fuxi-touch-tcs` 可以换成别的 TCS。2026-11-02 上机：请求返回 0，完成位没等到（`w-1`），芯片随后正常应答。但 bootloader 可能本来就留着两路电源，投票本身是否起作用，要用 `fuxi-touch-power=0` 对比一次。
 2. GENI 不提供"拉高 CS 前等 10 µs"的设置（驱动的 `SPI_DELAY_CS`）。12 MHz 下应该问题不大，但没有实测。2026-11-02 上机：复位、读 FIFO、读芯片 ID 的传输全部成功（`xf0`）。
-3. 坐标轴方向、`ShengHidInput` 在 fuxi 竖屏下的方向处理。
+3. 坐标轴方向、`ShengHidInput` 在 fuxi 竖屏下的方向处理。2026-11-02 上机：在左下角点一下，读到 `2885,18595`（屏幕像素 288,1859），和点的位置相符，说明坐标轴没有交换、没有镜像；只点了一次，不算校准。HID 层还没接上。
 4. 启动时机：探针在 `bsd_init` 里启动，这时 IOKit 已经可用。2026-11-02 已验证：探针在自己的内核线程里跑完第 3 阶段，panic 屏正常显示 4 行报告。
 
 ### 7.4 CI
@@ -256,3 +256,7 @@
   - AMFI 对它只做一件事：通过 nub 读一个值、或上第 2 位、再写回去；原厂实现读出来是 `0xffffffff`、写入什么都不做，不碰任何硬件。
   - 解决办法沿用 UniXNU-sheng：原样带上它的 PMGR 桥 `ShengPlatformPower.cpp`，打开 `CONFIG_XNU_SHENG_PMGR`，启动参数加 `sheng-pmgr=2`。sheng 的构建脚本要用本地旧构建留下的预链接内核做核对，CI 里没有，所以 `scripts/build-fuxi-platform-power.py` 只改了这一处，核对挪到链接之后，由 `ci/check-pmgr-bridge.py` 对实际发出的内核做（同时核对 AMFI 和 PMGR 的指令约定）。
   - 这个桥不是电源管理：它的所有电源操作都会 panic 并报出编号。
+- **带 PMGR 桥上机，第 4 阶段通过**（2026-11-02，提交 `484a650`，记录见 `evidence/2026-11-02-first-boot.md`）：
+  - 只开桥、不跑探针（`p1-pmgr`）：AMFI 放行，内核走到找系统分区，最后 panic 在 `Failed to mount root device`。镜像里还没有系统分区，这是预期的结局。
+  - 第 4 阶段、轮询模式（`p3-poll`，`fuxi-touch-poll=1`）：开始扫描成功；点一下屏幕，读到 `in1 mv8 up1`（一次按下、8 次移动、一次抬起），坐标 `2885,18595`，没有错误事件，所有 SPI 传输都成功。这是第一次在 XNU 里读到真实的触摸。
+  - 第 4 阶段、中断模式（`t4b-touch`，默认）：手机在内核启动几秒内自己重启回安卓，没有 panic 屏。它和轮询版只差 `fuxi-touch-poll=1`。只试过一次，原因还没查清。中断代码和 sheng 基本相同，只是边沿方向相反（fuxi 按设备树是下降沿）；另外 sheng 的启动参数里有 `sheng-smp=1`、`armcpu-spi-ipi=1`，fuxi 没有。下一步用 `armcpu-diagnostics=1` 再跑一次，看重启能否复现、ArmCpu 会不会报出原因。

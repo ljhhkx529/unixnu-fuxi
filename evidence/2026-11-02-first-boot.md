@@ -140,3 +140,62 @@ call site at 0xfffffff004aaeb40, the address UniXNU's `scripts/audit-amfi-pmgr-c
 call. In the stage 3 runs the touch probe panicked first; in stage 4 it waits for a touch, so AMFI's panic comes before
 any touch could be reported. The fix is UniXNU-sheng's PMGR bridge (`CONFIG_XNU_SHENG_PMGR`, `sheng-pmgr=2`; see the power
 area of `porting.toml`).
+
+## With the PMGR bridge (run 41390823512, device commit 484a650)
+
+Kernel `99e19285024252de`, firmware volume `dd72bd0c` (the same code as `627fe52a`: only PcdDxe's PDB GUID differs). The
+post-link check `ci/check-pmgr-bridge.py` passes on this kernel. Each image below changes only the boot arguments, on top
+of `-v serial=3 debug=0x14e kt_fixed_zones=120 sheng-pmgr=2`.
+
+| Image | Started | Added arguments | SHA-256 | Result |
+| --- | --- | --- | --- | --- |
+| t4b-touch | 13:10:36 | `fuxi-touch=4 fuxi-touch-panic=2` | `ca080270f58e179c` | the phone reset by itself: the owner saw the bands, then a restart; Android up 65 s after the boot command |
+| p1-pmgr | 13:25:38 | none | `cba346b63087500c` | no reset in the 150 s watched; panel: first the bands, then `Failed to mount root device` |
+| p3-poll | 13:38:54 | `fuxi-touch=4 fuxi-touch-poll=1 fuxi-touch-panic=2` | `d17cc5498a404abd` | no reset; panel: the stage 4 touch report below |
+
+Reading: the bridge satisfies AMFI, and with it the kernel runs on to the root device wait. The reset appeared once, with
+the touch probe's interrupt armed; the polling image differs from it only by `fuxi-touch-poll=1` and does not reset. One run
+each, so the cause is not settled.
+
+p1-pmgr panel:
+
+```
+Failed to mount root device @IOKitBSDInit.cpp:984
+frames fffffff007a1c978 fffffff007929898 fffffff0076b5c44 fffffff00799620c fffffff0073f74a4
+pages=0x000000000012705c
+free=0x0000000000125c61
+```
+
+The frames are `IOFindBSDRoot` (cold path and body), `bsd_init`, `kernel_bootstrap_thread` and `Call_continuation`: the main
+boot path, at the end of the wait for a root device (ROOTDEVICETIMEOUT is 60 s in this XNU; the time was not measured). The payload has none, so this panic is the expected end of the boot.
+
+p3-poll panel, after one tap near the lower left of the panel:
+
+```
+fuxi-touch report (stage 4 of 4)
+FTS s4/4 st10 e0 vote443c0200 h00000000 80000002 00004000 00004000 00004000 gpe0000005
+FTS p00000085 00000085 00000085 00000087 rst000302c3 irq000000c3 hw30090000 L2/4 12000000Hz
+FTS pwr vdd40900 avdd41b00 tcs2 rc0 w-1 id3640 rc0 rst0/1 sp40 ev030000 sense0
+FTS rd3531 ev12 in1 mv8 up1 er0/00 rdy0 rearm0 c0 2885,18595 hid0 irq0/0 xf0 @FuxiTouchProbe.cpp:530
+frames fffffff007a20434 fffffff00797c758 fffffff0073f74a4
+pages=0x000000000012705d
+free=0x0000000000125c42
+```
+
+| Field | Value | Meaning |
+| --- | --- | --- |
+| `s4/4 st10 e0` | stage 4 of 4, step 10, error 0 | sensing started and the event loop ran |
+| `sense0` | status 0 | `A0 00 00`, 50 ms, `A0 00 01` succeeded |
+| `rd3531` | 3531 FIFO reads | polled every 8 ms or more: at least 28 s between the start of sensing and the end of the tap |
+| `ev12` | 12 events | 10 touch events, 2 others (not errors and not ready events) |
+| `in1 mv8 up1` | 1 enter, 8 moves, 1 leave | one complete touch, which is what `fuxi-touch-panic=2` waits for |
+| `er0/00 rdy0 rearm0` | no error event, no unexpected ready, no re-arm | the controller stayed up |
+| `c0` | no contact | the finger had lifted |
+| `2885,18595` | last position, raw | range 0..10800 x 0..24000: pixel (288, 1859), 17.7 mm from the left and 33 mm from the bottom edge |
+| `hid0` | no HID report | no HID layer is linked yet |
+| `irq0/0` | no interrupt | polling mode |
+| `xf0` | no failed transfer | all 3531 reads and the commands before them |
+| `frames` | `touchThread` (cold), `touchThread`, `Call_continuation` | the probe's own report |
+
+The position fits the tap the owner was asked to make (lower left, about 2 cm from both edges): `y` is above the short-axis
+range, so the axes are not swapped, and small `x` with large `y` means neither is mirrored. One tap, not a calibration.
