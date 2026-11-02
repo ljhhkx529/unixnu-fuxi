@@ -226,9 +226,33 @@ All three taps were asked for at the lower left, and all three read there:
 | t4c-diag | 1295,16685 | 130,1668 | 7.9 mm | 44.9 mm |
 | t4b-touch, second run | 1635,19935 | 164,1994 | 10.0 mm | 24.9 mm |
 
-The unexplained reset: the first t4b-touch run reset the phone by itself within seconds of the kernel starting, with no panic
-screen, and the second run of the same bytes did not. `armcpu-diagnostics=1` reported nothing in t4c-diag, which did not
-reset either. So the reset is intermittent: one of the three boots with the bridge and the interrupt armed. The first run is
-the only one of those that did not come straight from an XNU panic screen: the phone was last seen in Android, and the owner
-entered fastboot by hand. The other two, and p3-poll, came from a panic screen. That is one sample, so it is the next thing
-to test and not a cause.
+## Two contacts, started from Android
+
+| Image | Started | Added arguments | SHA-256 | Result |
+| --- | --- | --- | --- | --- |
+| t4b-touch, third run | 14:28:08 | `fuxi-touch=4 fuxi-touch-panic=2` (the same bytes) | `ca080270f58e179c` | no reset; panel: touch report |
+
+Android had been up since 14:23:06 with its boot completed; `adb reboot bootloader`, then `fastboot boot`. The owner pressed
+with two fingers and lifted one. Rows 1 to 3 and the frames are as before; row 4 reads:
+
+```
+FTS rd291 ev544 in2 mv539 up1 er0/00 rdy0 rearm0 c1 3095,15215 hid0 irq290/0 xf0 @FuxiTouchProbe.cpp:530
+```
+
+`in2`: two contacts went down. `up1 c1`: at the first lift, which ends the run, one contact is still down, at 3095,15215 (pixel
+310,1522). `ev544` is 2 + 539 + 1 touch events plus the same 2 other events as in every run. `irq290/0` and `rd291`: with two
+fingers an interrupt brings about two events, because the probe drains the FIFO in one read; still none is spurious, and no
+transfer failed.
+
+## The unexplained reset
+
+| Boot with the bridge and the interrupt armed | How it reached fastboot | Result |
+| --- | --- | --- |
+| t4b-touch, first run (13:10:36) | by hand (power + volume down); the phone was last seen in Android, but adb did not list it just before | reset by itself within seconds of the kernel starting, no panic screen |
+| t4c-diag (14:01:18) | by hand from the p3-poll panic screen | touch report |
+| t4b-touch, second run (14:08:28) | by hand from the t4c-diag panic screen | touch report |
+| t4b-touch, third run (14:28:08) | `adb reboot bootloader` from running Android | touch report |
+
+The same bytes reset once and ran twice, and `armcpu-diagnostics=1` reported nothing, so the reset is intermittent and its
+cause is unknown. Starting from Android by itself does not bring it back. The first run remains the only one that entered
+fastboot by hand after Android; that is one sample and not a cause. Record how the phone reached fastboot if it happens again.
