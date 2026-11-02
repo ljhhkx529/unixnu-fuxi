@@ -13,9 +13,10 @@ fork [OddlyLabs/UniXNU](https://github.com/OddlyLabs/UniXNU) (branch `fuxi`), wh
 
 | 子系统 | 状态 |
 |---|---|
-| 触控（ST FTM5） | 驱动和分阶段探针已写好，在 CI 里编进内核；还没有上机 |
-| 固件和启动镜像 | CI 构建 DEBUG 固件和 `fastboot boot` 用的启动镜像，只上传加密版本。2026-11-02 第一次上机：bootloader 接受镜像，固件、UniXNU 菜单和 DarwinBoot 都正常；XNU 先后停在两处：`ml_parse_cpu_topology`（缺 sheng 的 AMP 补丁，已加入并验证越过）；之后停在 `PE_create_console` 一带，那里内核按树莓派的固定地址读写 panic 日志区，已打开 `CONFIG_XNU_DT_PANIC_REGION`，等待上机验证（见 `porting.toml` 的 cpu、memory 区域） |
-| 显示、存储、CPU、GPU、网络、音频、电源 | 计划中；显示和电源的硬件资料已整理 |
+| 触控（ST FTM5） | 驱动和分阶段探针已写好。2026-11-02 第 3 阶段上机通过：上电、时钟、引脚和 12 MHz SPI 都正常，复位后收到就绪事件，读到芯片 ID `36 40`。第 4 阶段（触摸事件）待测 |
+| 固件和启动镜像 | CI 构建 DEBUG 固件和 `fastboot boot` 用的启动镜像，只上传加密版本。2026-11-02 上机：bootloader 接受镜像，固件、UniXNU 菜单和 DarwinBoot 正常，XNU 启动到 `bsd_init`。途中修了两处：缺 sheng 的 AMP 补丁（CPU 拓扑）；内核按树莓派的固定地址读写 panic 日志区（打开 `CONFIG_XNU_DT_PANIC_REGION`）。记录见 `evidence/2026-11-02-first-boot.md`。固件内存表有两段和这台 12 GB 手机不符，待修 |
+| CPU | 引导核跑到 `bsd_init`；其余 7 个核还没启动 |
+| 显示、存储、GPU、网络、音频、电源 | 计划中；显示和电源的硬件资料已整理 |
 
 ## 相关仓库
 
