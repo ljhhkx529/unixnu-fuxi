@@ -255,6 +255,9 @@ transfer failed.
 | t4b-touch, second run (14:08:28) | by hand from the t4c-diag panic screen | touch report |
 | t4b-touch, third run (14:28:08) | `adb reboot bootloader` from running Android | touch report |
 | m1-touch, new firmware and kernel (15:15:32) | `adb reboot bootloader` from running Android | touch report |
+| s1-smp, all cores started (17:29:53) | `adb reboot bootloader` from running Android | touch report |
+| s2-smp, all cores started (17:52:29) | `adb reboot bootloader` from running Android | touch report |
+| s3-selfipi, all cores started (17:59:41) | by hand from the s2-smp panic screen | touch report |
 
 The same bytes reset once and ran twice, and `armcpu-diagnostics=1` reported nothing, so the reset is intermittent and its
 cause is unknown. Starting from Android by itself does not bring it back. The first run remains the only one that entered
@@ -294,3 +297,99 @@ free=0x0000000000125c40
 The page counts equal those of the third t4b-touch run, which had the same arguments and the old firmware: the kernel manages
 the same amount of memory. The firmware log of this boot was not photographed, so the new rows are read from the image, not
 from the panel, and the address of DarwinBoot's window was not read.
+
+## Secondary cores (run 41419783238, device commit 680a818)
+
+With `sheng-smp=1` ArmCpu starts each secondary core with PSCI CPU_ON (over smc, from the ADT's /psci); the new core enters
+the kernel's reset vector and then ArmCpu's initCPU. Since 680a818 the touch report ends with two SMP rows from ArmCpu's
+variables when `sheng-smp` is set (fuxi_touch_panel_porting.md section 7.2). s1-smp uses the kernel of run 41401828450, which
+has no SMP rows; the other three use kernel `271ae11d` of run 41419783238. All four use firmware volume `42cfcc46` and add
+their arguments to `-v serial=3 debug=0x14e kt_fixed_zones=120 sheng-pmgr=2`.
+
+| Image | Started | Added arguments | SHA-256 | Result |
+| --- | --- | --- | --- | --- |
+| s1-smp | 17:29:53 | `sheng-smp=1 armcpu-spi-ipi=1 armcpu-diagnostics=1 fuxi-touch=4 fuxi-touch-panic=2` | `281e450dddc9dea5` | no reset in the 240 s watched; panel: touch report |
+| s2-smp | 17:52:29 | the same as s1-smp | `6ca28d294bb2b318` | no reset; panel: touch report with SMP rows |
+| s3-selfipi | 17:59:41 | `sheng-smp=1 armcpu-spi-ipi=1 armcpu-self-ipi=1 fuxi-touch=4 fuxi-touch-panic=2` | `ff832779a415c262` | no reset; panel: touch report with SMP rows |
+| p4-power0 | 18:00:56 | `fuxi-touch=4 fuxi-touch-panic=2 fuxi-touch-power=0` | `a2c0581f2ea1cacb` | no reset; panel: stage 2 report |
+
+s2-smp to p4-power0 ran as one batch: `adb reboot bootloader` once, then after each photograph the owner held power and
+volume down, and the next image was booted from fastboot. The phone came back to fastboot 432 s and 74 s after the first two
+boot commands and to Android 123 s after the last, each time when the owner pressed the keys.
+
+s1-smp, two fingers pressed and one lifted (rows 1 to 3 and the frames as in m1-touch):
+
+```
+FTS rd44 ev85 in2 mv80 up1 er0/00 rdy0 rearm0 c1 4095,17295 hid0 irq43/0 xf0 @FuxiTouchProbe.cpp:530
+pages=0x000000000012705c
+free=0x0000000000125ac1
+```
+
+s2-smp, two fingers pressed and one lifted, and s3-selfipi, one tap (rows 1 to 3 as before in both):
+
+```
+s2-smp:
+FTS rd87 ev172 in2 mv167 up1 er0/00 rdy0 rearm0 c1 7495,11165 hid0 irq86/0 xf0
+SMP run7 c1 b0 cpu3 av8 st7777777 f0000000 psci0,0,0,0,0,0,0 ipi0/0
+SMP tmr76/0/0/677/679/226/200/228 ipi0/0/0/0/0/0/0/0 @FuxiTouchProbe.cpp:568
+frames fffffff007a20784 fffffff00797c758 fffffff0073f74a4
+pages=0x000000000012705e
+free=0x0000000000125ac3
+
+s3-selfipi:
+FTS rd9 ev10 in1 mv6 up1 er0/00 rdy0 rearm0 c0 3665,16785 hid0 irq8/0 xf0
+SMP run7 c1 b0 cpu4 av8 st7777777 f0000000 psci0,0,0,0,0,0,0 ipi85/84
+SMP tmr76/0/0/2006/6/5/0/2 ipi1/1/1/28/51/1/1/1 @FuxiTouchProbe.cpp:568
+frames fffffff007a20784 fffffff00797c758 fffffff0073f74a4
+pages=0x000000000012705b
+free=0x0000000000125ac0
+```
+
+| Field | s2-smp | s3-selfipi | Meaning |
+| --- | --- | --- | --- |
+| `run7` | 7 | 7 | secondary cores at step 7 (running) |
+| `c1 b0` | smc, 0 | smc, 0 | PSCI conduit; MPIDR affinity of the boot core |
+| `cpu` | 3 | 4 | the core the probe's thread reported from, a P core (cortex-a715) |
+| `av8` | 8 | 8 | `processor_avail_count`: the scheduler runs threads on all eight cores |
+| `st7777777 f0000000` | same | same | cores 1 to 7 at step 7, none parked |
+| `psci0,...` | all 0 | all 0 | every CPU_ON succeeded |
+| `ipi` (row 1) | 0/0 | 85/84 | IPIs ArmCpu was asked to send / IPIs taken, all cores |
+| `tmr` | 76/0/0/677/679/226/200/228 | 76/0/0/2006/6/5/0/2 | timer interrupts taken by cores 0 to 7 |
+| `ipi` (row 2) | all 0 | 1/1/1/28/51/1/1/1 | IPIs taken by cores 0 to 7 |
+
+Reading:
+
+- All seven secondary cores start and run, and the scheduler uses all eight: CPU_ON returns 0 for each core, each enters
+  initCPU with its own MPIDR and finds its redistributor, and the probe's thread ran on a P core. s1-smp could not show this,
+  but its free page count, 383 pages below m1-touch and two below s2-smp, fits the same state.
+- Without `armcpu-self-ipi=1` the kernel sent no IPI at all. In xnu-10063.141.1 every core starts with SIGPdisabled set in its
+  `cpu_signal` (osfmk/arm64/cpu.c, cpu_data_init), `cpu_signal_internal` does not signal another core while it is set, and
+  only handling an IPI clears it (`cpu_signal_handler_internal(FALSE)`, osfmk/arm/cpu_common.c). Nothing ever sends the first
+  one, so no IPI reached ArmCpu, and a thread woken for an idle core waited for that core's next timer interrupt. XNU expects
+  the platform to send it: per the comment in osfmk/kern/machine.c, cpu_machine_init calls PE_cpu_machine_init, which sends a
+  self-IPI. With `armcpu-self-ipi=1` ArmCpu's initCPU sends it: in s3-selfipi every core took it, then the kernel's IPIs went
+  through (cores 3 and 4 took 28 and 51). The per-core counts add up to 85; the shared total
+  reads 84 because ArmCpu increments it from several cores without atomics.
+- Cores 1 and 2 (cortex-a510, cluster E) took no timer interrupt in either boot, and core 6 none in s3-selfipi: they started
+  but ran nothing that set a timer deadline. Whether the scheduler ever puts work on cores 1 and 2 is not known.
+- The touch path works with all cores running: irq43/0, irq86/0 and irq8/0, no spurious interrupt, no error event and no
+  failed transfer, while the interrupt stays routed to core 0 and the probe's thread ran on core 3 or 4.
+
+p4-power0, without the probe's RPMh votes (a failed stage panics at once, so this report needs no touch):
+
+```
+fuxi-touch report (stage 2 of 4)
+FTS s2/4 st7 e-19 vote443c0200 h00000000 80000002 00004000 00004000 00004000 gpe0000005
+FTS p00000085 00000085 00000085 00000087 rst000302c3 irq000000c3 hw30090000 L2/4 12000000Hz
+FTS pwr vdd40900 avdd41b00 tcs2 rc0 w0 id0000 rc-19 rst-19/3 sp41 ev000000 sense99
+FTS rd0 ev0 in0 mv0 up0 er0/00 rdy0 rearm0 c0 -1,-1 hid0 irq0/0 xf0 @FuxiTouchProbe.cpp:568
+frames fffffff007a20784 fffffff00797c758 fffffff0073f74a4
+pages=0x000000000012705e
+free=0x0000000000125c43
+```
+
+`fuxi-touch-power=0` skips only the two rail votes (`rc0 w0`: no RPMh request); the QUP clocks and the pins are set as in every
+other boot (rows 1 and 2 are unchanged). The controller never answered: no ready event after three resets and the 4-wire
+fallback (`rst-19/3 sp41`, -19 is FTS_ERR_CHIP), and the chip id reads `00 00`, while no transfer failed (`xf0`), so the SPI
+engine ran. Every boot with the votes reads `36 40`. So at least on a boot that entered fastboot by hand from a panic screen,
+as this one did, the touch rails are not usable until the probe votes them: the votes are needed.
