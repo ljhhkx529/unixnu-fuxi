@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: BSD-2-Clause-Patent
 """Build build/fuxi-touch/libFuxiTouch.a for the fuxi kernel.
 
-The archive holds the board probe (kits/fuxi/FuxiTouchProbe.cpp), the FTM5 protocol and contact tracking (FuxiFtsTouch),
+The archive holds the board probe (kits/fuxi/FuxiTouchProbe.cpp) with the HID glue it starts (kits/fuxi/FuxiHidProbe.cpp),
+the FTM5 protocol and contact tracking (FuxiFtsTouch),
 the GENI SPI engine (QcomGeniSpi) and the RPMh request helpers (kits/fuxi/QcomRpmh.c). They are compiled with the flags of
 the XNU build's own compile records, as UniXNU-sheng builds its probes: the C++ probe from the record of iokit
 IOPlatformExpert.cpp, the C sources from the record of osfmk startup.c, with XNU's warning flags replaced by
@@ -55,7 +56,8 @@ def main():
     c = record(OBJ / 'osfmk/DEVELOPMENT/startup.o.json')
     osfmk = ['-I', ROOT / '.cache/xnu-work/osfmk']
     includes = ['-I', KIT, '-I', ROOT / 'drivers/FuxiFtsTouch', '-I', ROOT / 'drivers/QcomGeniSpi']
-    jobs = [(cxx, KIT / 'FuxiTouchProbe.cpp', CXX_FLAGS + osfmk + includes)]
+    jobs = [(cxx, KIT / 'FuxiTouchProbe.cpp', CXX_FLAGS + osfmk + includes),
+            (cxx, KIT / 'FuxiHidProbe.cpp', CXX_FLAGS + osfmk + includes)]
     for source in (ROOT / 'drivers/FuxiFtsTouch/FtsProtocol.c', ROOT / 'drivers/FuxiFtsTouch/FtsTouchCore.c',
                    ROOT / 'drivers/QcomGeniSpi/GeniSpi.c', KIT / 'QcomRpmh.c'):
         jobs.append((c, source, C_FLAGS + osfmk))

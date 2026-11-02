@@ -24,7 +24,8 @@ update the pinned revisions in `.github/workflows/build.yml` after each merge.
 Take hardware values from the stock device tree or a measurement on the device, and record the source next to the value.
 Other fuxi ports are references, not sources of truth. Do not copy GPL code (the Android `fts_spi` driver) into this
 repository. `package/TouchBoard.h`, `package/QcomRpmh.*`, `package/SmmuBypass.h` and `package/ShengPlatformPower.cpp`
-are unchanged copies from UniXNU-sheng `package/`; keep them unchanged so they can be compared with their origin.
+are unchanged copies from UniXNU-sheng `package/`, and `package/NativeHidInput.cpp` is an unchanged copy of UniXNU
+ShengHidInput (71a40e7); keep them unchanged so they can be compared with their origin.
 
 Run from the UniXNU fork checkout:
 

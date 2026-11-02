@@ -17,6 +17,8 @@
 // fuxi-touch-panic (1: when the requested stage ends or fails, panic with the four diagnostic rows as the message, so the
 // result can be read from the panic screen while no display driver runs; 2: in stage 4, also after the first lift).
 // With sheng-smp=1 the panic message has two more rows: the secondary-core state ArmCpu records (smpText).
+// fuxi-touch-hid=1: once sensing runs, start ShengHidInput's touch digitizer (FuxiHidProbe.cpp), which sends every published
+// contact set as a HID report (the hid counter); the panic message then has a HID row (fuxi_hid_row).
 // The probe starts from bsd_init (patches/xnu/fuxi-touch-probe.patch); every stage result is also printed to the kernel log.
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
@@ -452,6 +454,14 @@ static const char *smpText() {
     return gSmpText;
 }
 
+// The HID digitizer (FuxiHidProbe.cpp, in this archive): started from stage 4 with fuxi-touch-hid=1, reported as one more row.
+extern "C" void fuxi_hid_start(void);
+extern "C" bool fuxi_hid_settled(void);
+extern "C" const char *fuxi_hid_row(char *out, size_t size);
+static bool gHidRequested;
+static char gHidText[160];
+static const char *hidText() {return gHidRequested ? fuxi_hid_row(gHidText, sizeof gHidText) : "";}
+
 // Refreshes the diagnostic rows and prints them to the kernel log.
 static void report(const Session &s) {
     rows(s);
@@ -539,12 +549,19 @@ static void touchThread(void *, wait_result_t) {
         if (s->senseRc) {fail(9, s->senseRc); break;}
         native_touch_stage_done = 4;
         report(*s);
+        unsigned hid = 0;
+        PE_parse_boot_argn("fuxi-touch-hid", &hid, sizeof hid);
+        gHidRequested = hid == 1;
+        if (gHidRequested) fuxi_hid_start();   // its own thread: loading IOHIDFamily does not delay the touch loop
         mark(*s, 10);
         unsigned pollOnly = 0;
         PE_parse_boot_argn("fuxi-touch-poll", &pollOnly, sizeof pollOnly);
         const bool irqArmed = !pollOnly && armTouchIrq(*s);
         uint32_t seen = gTouchIrqEvents;
         unsigned tick = 0;
+        // With the HID digitizer the run ends at the first lift after its start has settled; otherwise at the first lift.
+        bool settled = !gHidRequested;
+        uint32_t leavesBefore = 0;
         for (;;) {
             native_touch_loop_step = 1;
             if (irqArmed) {
@@ -559,13 +576,14 @@ static void touchThread(void *, wait_result_t) {
             }
             if (!drain(*s)) break;
             if ((++tick & 15) == 0) rows(*s);
-            if (panicReport == 2 && s->core.leaves) break;   // one complete touch seen: report it
+            if (!settled && fuxi_hid_settled()) {settled = true; leavesBefore = s->core.leaves;}
+            if (panicReport == 2 && settled && s->core.leaves > leavesBefore) break;   // one complete touch seen: report it
         }
     } while (0);
     report(*s);
     if (panicReport) {
-        panic("fuxi-touch report (stage %u of %u)\n%s\n%s\n%s\n%s%s", native_touch_stage_done, native_touch_stage_req,
-              native_touch_rows[0], native_touch_rows[1], native_touch_rows[2], native_touch_rows[3], smpText());
+        panic("fuxi-touch report (stage %u of %u)\n%s\n%s\n%s\n%s%s%s", native_touch_stage_done, native_touch_stage_req,
+              native_touch_rows[0], native_touch_rows[1], native_touch_rows[2], native_touch_rows[3], smpText(), hidText());
     }
 }
 
