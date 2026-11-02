@@ -13,5 +13,8 @@ CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
 # reads it and zeroes 16 KiB there. On SM8550 no RAM or device tree node covers that address. With it the region comes
 # from the device tree, and the ADT has no /pram node, so no panic region is mapped.
 CONFIG_XNU_DT_PANIC_REGION=y
+# AMFI waits for an ApplePMGRNub service: the PMGR bridge (scripts/build-fuxi-platform-power.py, boot argument
+# sheng-pmgr=2) publishes the original one. Its power operations stop with a panic; it is not power management.
+CONFIG_XNU_SHENG_PMGR=y
 # bsd_init calls native_touch_probe() (patches/xnu/fuxi-touch-probe.patch); scripts/build-fuxi-touch.py builds it.
 CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/fuxi-touch/libFuxiTouch.a"

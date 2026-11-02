@@ -22,8 +22,9 @@ config_fragments = ["arch:configs/common.config", "soc:configs/sm8550.config", "
 patch_series = ["arch:patches/xnu/series", "soc:patches/xnu/series", "os:patches/xnu/series", "device:patches/xnu/series"]
 # The archives the merged configuration links, in build order: corecrypto from source (plain and namespaced), the ARM
 # platform and CPU drivers, SoftwareAES with its bindings (the arch fragment sets CONFIG_XNU_NATIVE_AES), libpthread, the
-# mockfs fixture (the OS fragment sets CONFIG_XNU_SOURCE_MOCKFS), and the touch archive that bsd_init calls into
-# (patches/xnu/fuxi-touch-probe.patch). The order follows UniXNU-sheng.
+# mockfs fixture (the OS fragment sets CONFIG_XNU_SOURCE_MOCKFS), the PMGR bridge (CONFIG_XNU_SHENG_PMGR: AMFI needs an
+# ApplePMGRNub service), and the touch archive that bsd_init calls into (patches/xnu/fuxi-touch-probe.patch). The order
+# follows UniXNU-sheng.
 archives = [
   "build-corecrypto-14.py",
   "build-corecrypto-14.py --namespace",
@@ -33,6 +34,7 @@ archives = [
   "build-software-aes-bindings.py",
   "build-libpthread-kernel.py",
   "build-mockfs-fixture.py",
+  "build-fuxi-platform-power.py",
   "build-fuxi-touch.py",
 ]
 
@@ -85,8 +87,10 @@ title = "UniXNU"
 panic_screen = true
 # -v, serial=3, debug=0x14e and kt_fixed_zones=120 as on UniXNU-sheng and the other SM8550 ports. fuxi-touch=3: touch
 # rails, QUP clocks, pins, GENI SPI, controller reset and chip id; fuxi-touch-panic=1 then panics with the probe's four
-# diagnostic rows as the message, so the result can be read from the panic screen.
-kernel_args = ["-v", "serial=3", "debug=0x14e", "kt_fixed_zones=120", "fuxi-touch=3", "fuxi-touch-panic=1"]
+# diagnostic rows as the message, so the result can be read from the panic screen. sheng-pmgr=2 publishes the original
+# ApplePMGRNub that AMFI waits for (kits/fuxi/ShengPlatformPower.cpp, as UniXNU-sheng); without it AMFI panics with
+# "AMFI: No PMGR?" a few seconds into bsd_init.
+kernel_args = ["-v", "serial=3", "debug=0x14e", "kt_fixed_zones=120", "sheng-pmgr=2", "fuxi-touch=3", "fuxi-touch-panic=1"]
 
 [payload.adt]
 # Supply the board's identity seed through --unique-chip-id.

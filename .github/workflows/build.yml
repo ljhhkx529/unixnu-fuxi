@@ -156,7 +156,7 @@ jobs:
         run: |
           ./unixnu build kernel --device "$GITHUB_WORKSPACE/fuxi"
           ./unixnu status --device "$GITHUB_WORKSPACE/fuxi" --json > "$RUNNER_TEMP/unixnu-status.json" || true
-      - name: Check the touch probe in the kernel
+      - name: Check the touch probe and the PMGR bridge in the kernel
         run: |
           kernel=$(find unixnu/out -path '*/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf' | head -n 1)
           [ -n "$kernel" ] || { echo "::error::linked kernel not found"; exit 1; }
@@ -187,6 +187,11 @@ jobs:
           fi
           prelinked=$(find unixnu/out -path '*/kernel/kernel.macho' | head -n 1)
           if [ -n "$prelinked" ]; then ls -l "$prelinked"; shasum -a 256 "$prelinked"; else echo "::error::no prelinked kernel"; missing=1; fi
+          # The PMGR bridge AMFI waits for (CONFIG_XNU_SHENG_PMGR): the AMFI -> PMGR instruction contract in the prelinked
+          # kexts, ShengPlatformPower's provider table against the native IOPMGR vtable, and the call from bsd_init.
+          if [ -n "$prelinked" ] && ! python3 fuxi/ci/check-pmgr-bridge.py "$prelinked"; then
+            echo "::error::PMGR bridge check failed"; missing=1
+          fi
           exit $missing
       - name: Build payload
         working-directory: unixnu

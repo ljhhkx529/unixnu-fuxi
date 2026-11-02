@@ -251,3 +251,8 @@
     - 第一次复位就收到 CONTROLLER_READY（`03 00 00`），读到芯片 ID `36 40`，所有 SPI 传输都没出错。
     - panic 时内核管理着 4.61 GiB 内存（窗口 4.75 GiB 减去内核和启动数据）。
   - 这是第一次由本项目自己的驱动在真机上和触控芯片通信。下一步是第 4 阶段：开始扫描、接中断、读触摸事件（`fuxi-touch=4 fuxi-touch-panic=2`，摸一下屏幕，第一次完整的按下、抬起之后 panic 报告坐标）。
+- **第 4 阶段第一次尝试**（2026-11-02 12:03，镜像 `a4314587…`）：屏幕上不是触控报告，而是 `AMFI: No PMGR?`（`ConfigurationSettings.cpp:235`）。
+  - AMFI 是苹果的代码签名组件（iPadOS 内核缓存里的 kext，原样预链接），它会等一个叫 `ApplePMGRNub` 的电源管理服务，等不到就 panic。第 3 阶段的探针在 `bsd_init` 之后不到一秒就主动 panic 了，所以之前没遇到；第 4 阶段要等人摸屏幕，AMFI 的检查就先到了。
+  - AMFI 对它只做一件事：通过 nub 读一个值、或上第 2 位、再写回去；原厂实现读出来是 `0xffffffff`、写入什么都不做，不碰任何硬件。
+  - 解决办法沿用 UniXNU-sheng：原样带上它的 PMGR 桥 `ShengPlatformPower.cpp`，打开 `CONFIG_XNU_SHENG_PMGR`，启动参数加 `sheng-pmgr=2`。sheng 的构建脚本要用本地旧构建留下的预链接内核做核对，CI 里没有，所以 `scripts/build-fuxi-platform-power.py` 只改了这一处，核对挪到链接之后，由 `ci/check-pmgr-bridge.py` 对实际发出的内核做（同时核对 AMFI 和 PMGR 的指令约定）。
+  - 这个桥不是电源管理：它的所有电源操作都会 panic 并报出编号。

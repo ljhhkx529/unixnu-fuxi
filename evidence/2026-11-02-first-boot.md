@@ -121,3 +121,22 @@ Decoded with `package/FuxiTouchProbe.cpp` at e901139 (`rows()`, `enable()`, `tou
 
 Not shown by this report: whether the RPMh votes changed anything (the bootloader may have left both rails on;
 `fuxi-touch-power=0` would tell), and stage 4 (sensing, interrupt, touch events).
+
+## Stage 4 attempt (image t4-touch)
+
+Packed locally from the run 41378843724 kernel and firmware with `fuxi-touch=4 fuxi-touch-panic=2` (SHA-256
+`a43145873cbdfd7e`), started at 12:03:36. The panel shows a panic screen that is not the touch report:
+
+```
+"AMFI: No PMGR?\n" @ConfigurationSettings.cpp:235
+frames fffffff004ac9420 fffffff004aaed08 fffffff004aaeaac fffffff004ab865c fffffff0072d8608 fffffff0072d9be8 fffffff0073f74a4
+pages=0x0000000000127069
+free=0x0000000000125cce
+```
+
+The first four frames are in the prelinked kext text (`__PLK_TEXT_EXEC`); two of them lie within 0x200 bytes of AMFI's PMGR
+call site at 0xfffffff004aaeb40, the address UniXNU's `scripts/audit-amfi-pmgr-contract.py` pins. The last three are
+`thread_call_invoke`, `thread_call_thread` and `Call_continuation` in the kernel: AMFI checks for the PMGR from a thread
+call. In the stage 3 runs the touch probe panicked first; in stage 4 it waits for a touch, so AMFI's panic comes before
+any touch could be reported. The fix is UniXNU-sheng's PMGR bridge (`CONFIG_XNU_SHENG_PMGR`, `sheng-pmgr=2`; see the power
+area of `porting.toml`).
