@@ -198,6 +198,7 @@ kernel_args = [
   "fuxi-touch-stage=4",
   "fuxi-touch-hid=1",
   "fuxi-touch-hw=7",
+  "fuxi-buttons=1",
 ]
 text_fixups = [
   "BTAudioHALPlugin,38bec,ffc300d1f44f01a9,000080d2c0035fd6",

@@ -28,8 +28,6 @@ volatile uint32_t native_hid_input_command;
 char native_hid_input_registry[2048];
 char native_hid_input_props[1024];
 extern volatile uint32_t native_legacy_transfer_calls;
-// No board key source exists on fuxi; the HID device's optional hook must still resolve at kernel link.
-extern "C" __attribute__((weak)) void native_buttons_set_sink(void (*)(void *, uint32_t), void *) {}
 // fuxi_touch_probe sets this before its thread starts, so the digitizer service can be created without a boot argument.
 extern "C" {extern volatile int native_fuxi_touch_enabled;}
 // Optional unattended Home presses for hardware, which has no external harness writing the mailbox:

@@ -58,6 +58,7 @@ extern volatile uint32_t native_adreno_map_fail[7][2] __attribute__((weak_import
 extern volatile uint32_t native_adreno_pool_stats[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_wc_audit[6] __attribute__((weak_import));
 extern volatile uint32_t native_touch_edge_stats[4] __attribute__((weak_import));
+extern volatile int32_t fuxi_buttons_stats[10] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_reassert_ticks __attribute__((weak_import));
 extern volatile uint64_t native_adreno_cache_stats[5] __attribute__((weak_import));
 // NativeAdrenoPublish.cpp: per process name that opened the GPU, and the processes that asked the Metal discovery for its plugin.
@@ -559,6 +560,13 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
                r[2] / 10, r[3] / 10, r[4] / 10, r[5] / 10, r[6]);
       at = put(out, at, cap, row, sizeof row);
     }
+  }
+  if (&fuxi_buttons_stats && (fuxi_buttons_stats[0] || fuxi_buttons_stats[1])) {
+    char row[170];
+    snprintf(row, sizeof row, "[btn] stage=%d irq=%d reports=%d mask=%d pon=%d gpio=%d clears=%d pdc=%x err=%d spurious=%d", fuxi_buttons_stats[0],
+             fuxi_buttons_stats[1], fuxi_buttons_stats[2], fuxi_buttons_stats[3], fuxi_buttons_stats[4], fuxi_buttons_stats[5],
+             fuxi_buttons_stats[6], (unsigned)fuxi_buttons_stats[7], fuxi_buttons_stats[8], fuxi_buttons_stats[9]);
+    at = put(out, at, cap, row, sizeof row);
   }
   if (&native_adreno_map_fail && native_adreno_map_fail[0][1]) {
     char row[170];
