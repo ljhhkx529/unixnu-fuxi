@@ -12,7 +12,9 @@ CONFIG_XNU_NATIVE_UFS=y
 # boot-progress supplies boot_progress_poll. boot-log (NativeUFS-fuxi keeps the
 # old fuxi boot_log_* references) is appended to EXTRA_LD_ARCHIVES below.
 CONFIG_XNU_NATIVE_VIRTIO_BLOCK=y
-CONFIG_XNU_NATIVE_RAM_BLOCK=y
+# RamBlock (Data volume RAM disk) is deferred until the APFS root mount step;
+# the read-only UFS probe chain does not reference it.
+# CONFIG_XNU_NATIVE_RAM_BLOCK is not set
 # VERIFIED_ROOT_PROBE is deferred: it needs the vr_* symbols and a signed policy
 # bundle, both of which are only required to mount the APFS root. The first UFS
 # milestone is the read-only probe chain (native-ufs-probe=10/12), so leave it off.

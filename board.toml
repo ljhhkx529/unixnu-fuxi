@@ -21,7 +21,7 @@ lba_bytes = 4096
 
 [components]
 # The template set, plus the GENI SPI engine and the FTM5 protocol of the touch controller.
-include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot", "QcomGeniSpi", "FuxiFtsTouch", "VirtioMmioBlock", "RamBlock", "VerifiedRoot"]
+include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot", "QcomGeniSpi", "FuxiFtsTouch", "VirtioMmioBlock", "VerifiedRoot"]
 
 [kernel]
 defconfig = "fuxi_defconfig"
@@ -41,8 +41,6 @@ archives = [
   "build-software-aes-bindings.py",
   "build-fuxi-ufs.py",
   "component:VirtioMmioBlock",
-  "component:RamBlock",
-  "build-virtio-mmio-bindings.py --component RamBlock --directory build/ram-block",
   "build-fuxi-virtio-bindings.py",
   "build-libpthread-kernel.py",
   "build-mockfs-fixture.py",
