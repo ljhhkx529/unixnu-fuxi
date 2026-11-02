@@ -38,7 +38,6 @@ volatile uint64_t native_adreno_vm_phase_us[2][8] __attribute__((weak));
 volatile uint32_t native_adreno_map_fail[7][2] __attribute__((weak));
 volatile uint32_t native_adreno_pool_stats[8] __attribute__((weak));
 volatile uint32_t native_adreno_wc_audit[6] __attribute__((weak));
-volatile uint32_t native_touch_edge_stats[4];
 volatile uint64_t native_adreno_reassert_ticks __attribute__((weak));
 volatile uint64_t native_adreno_cache_stats[5] __attribute__((weak));
 struct native_adreno_client_record native_adreno_client_log[8] __attribute__((weak));
