@@ -61,10 +61,17 @@ fence_stub_obj = compile_like(record, ROOT / 'kits/fuxi/BootLogFenceStubs.c', OU
 # drivers are linked. Without it the stage-1 kernel cannot link BootLog.
 stubs_obj = compile_like(record, ROOT / 'kits/fuxi/BootLogStubs.c', OUT / 'BootLogStubs.o',
                          ['-I', str(ROOT / 'kits/fuxi')])
+# StageAProbeStubs supplies native_data_persist_* and the rest of the
+# dashboard counters; BootLogExtraStubs supplies fuxi_buttons_stats and
+# native_process_wait_port until those real sources are linked.
+stage_stubs_obj = compile_like(record, ROOT / 'kits/fuxi/StageAProbeStubs.c', OUT / 'StageAProbeStubs.o',
+                               ['-I', str(ROOT / 'kits/fuxi')])
+extra_stubs_obj = compile_like(record, ROOT / 'kits/fuxi/BootLogExtraStubs.c', OUT / 'BootLogExtraStubs.o',
+                               ['-I', str(ROOT / 'kits/fuxi')])
 
 archive = OUT / 'libBootLog.a'
 archive.unlink(missing_ok=True)
 subprocess.run(['xcrun', 'ar', 'rcs', str(archive), str(log_obj), str(crash_obj), str(touch_stats_obj),
-                str(fence_stub_obj), str(stubs_obj)],
+                str(fence_stub_obj), str(stubs_obj), str(stage_stubs_obj), str(extra_stubs_obj)],
                check=True, timeout=30)
 print(f'boot log archive: {archive}')
