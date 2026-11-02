@@ -32,9 +32,9 @@ env:
   UEFI_REPO: OddlyLabs/uefi-fuxi
   UEFI_REF: ${{ inputs.uefi_ref || 'c5793bc2c60a2e2f5d9fbaad8717ed3f2736bfd2' }}
   XCODE: ${{ inputs.xcode || '26.6' }}
-  # Bring-up platform seed for the payload's device tree, not this phone's own value: the first images only reach the
-  # touch probe's panic report, before any user data exists. Replace it before booting to userland.
-  BRINGUP_SEED: "0x0123456789abcdef"
+  # Platform seed of the device, supplied through a GitHub Actions secret so the value
+  # is never committed. Set UNIXNU_UNIQUE_CHIP_ID in the repository Settings -> Secrets.
+  DEVICE_SEED: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
 
 jobs:
   host-tests:
@@ -201,7 +201,7 @@ jobs:
           exit $missing
       - name: Build payload
         working-directory: unixnu
-        run: ./unixnu build payload --device "$GITHUB_WORKSPACE/fuxi" --uefi "$GITHUB_WORKSPACE/uefi-fuxi" --unique-chip-id "$BRINGUP_SEED"
+        run: ./unixnu build payload --device "$GITHUB_WORKSPACE/fuxi" --uefi "$GITHUB_WORKSPACE/uefi-fuxi" --unique-chip-id "$DEVICE_SEED"
       - name: Build firmware
         working-directory: unixnu
         # DEBUG: the firmware prints its log on the panel, the only console before the touch report.
