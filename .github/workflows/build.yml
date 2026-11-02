@@ -175,6 +175,16 @@ jobs:
           else
             echo "::error::bsd_init does not call native_touch_probe"; missing=1
           fi
+          # PE_create_console must not use the Raspberry Pi's panic log address 0x3c0fc000 (CONFIG_XNU_DT_PANIC_REGION): on
+          # SM8550 that is not RAM, and the kernel would zero 16 KiB there. initialize_screen shows the disassembly is real.
+          "$(brew --prefix llvm)/bin/llvm-objdump" --disassemble-symbols=_PE_create_console "$kernel" > "$RUNNER_TEMP/pe_create_console.txt"
+          if ! grep -q '_initialize_screen' "$RUNNER_TEMP/pe_create_console.txt"; then
+            echo "::error::could not read PE_create_console"; missing=1
+          elif grep -q '0x3c0f' "$RUNNER_TEMP/pe_create_console.txt"; then
+            echo "::error::PE_create_console uses the Raspberry Pi panic log address"; missing=1
+          else
+            echo "PE_create_console: no fixed panic log address"
+          fi
           prelinked=$(find unixnu/out -path '*/kernel/kernel.macho' | head -n 1)
           if [ -n "$prelinked" ]; then ls -l "$prelinked"; shasum -a 256 "$prelinked"; else echo "::error::no prelinked kernel"; missing=1; fi
           exit $missing

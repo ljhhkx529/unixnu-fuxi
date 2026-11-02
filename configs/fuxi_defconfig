@@ -9,5 +9,9 @@ CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
 # CONFIG_XNU_NATIVE_UFS is not set
 # The SoC fragment enables the Adreno driver; it is not selected for fuxi yet.
 # CONFIG_XNU_NATIVE_ADRENO is not set
+# Without this the BCM2837 target maps PLATFORM_PANIC_LOG_PADDR (0x3c0fc000, RAM on a Raspberry Pi 3) in PE_create_console,
+# reads it and zeroes 16 KiB there. On SM8550 no RAM or device tree node covers that address. With it the region comes
+# from the device tree, and the ADT has no /pram node, so no panic region is mapped.
+CONFIG_XNU_DT_PANIC_REGION=y
 # bsd_init calls native_touch_probe() (patches/xnu/fuxi-touch-probe.patch); scripts/build-fuxi-touch.py builds it.
 CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/fuxi-touch/libFuxiTouch.a"

@@ -14,7 +14,7 @@ fork [OddlyLabs/UniXNU](https://github.com/OddlyLabs/UniXNU) (branch `fuxi`), wh
 | 子系统 | 状态 |
 |---|---|
 | 触控（ST FTM5） | 驱动和分阶段探针已写好，在 CI 里编进内核；还没有上机 |
-| 固件和启动镜像 | CI 构建 DEBUG 固件和 `fastboot boot` 用的启动镜像，只上传加密版本。2026-11-02 第一次上机：bootloader 接受镜像，固件、UniXNU 菜单和 DarwinBoot 都正常；XNU 停在 `ml_parse_cpu_topology`：设备树把 CPU 分成 E、P 两个簇，内核却只允许 1 个簇。已加入 sheng 的 AMP 补丁，等待上机验证（见 `porting.toml` 的 cpu 区域） |
+| 固件和启动镜像 | CI 构建 DEBUG 固件和 `fastboot boot` 用的启动镜像，只上传加密版本。2026-11-02 第一次上机：bootloader 接受镜像，固件、UniXNU 菜单和 DarwinBoot 都正常；XNU 先后停在两处：`ml_parse_cpu_topology`（缺 sheng 的 AMP 补丁，已加入并验证越过）；之后停在 `PE_create_console` 一带，那里内核按树莓派的固定地址读写 panic 日志区，已打开 `CONFIG_XNU_DT_PANIC_REGION`，等待上机验证（见 `porting.toml` 的 cpu、memory 区域） |
 | 显示、存储、CPU、GPU、网络、音频、电源 | 计划中；显示和电源的硬件资料已整理 |
 
 ## 相关仓库
