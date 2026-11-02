@@ -8,6 +8,10 @@ so this device-local script compiles drivers/NativeUfs/NativeUfs.cpp with the sa
 UniXNU's build-arm-driver.py applies to the NativeUfs legacy component, and emits the
 archive at that fixed path. No component catalog entry is required; the runtime class and
 bundle id stay NativeUfs / org.blu-sharky.NativeUfs.
+
+NativeUfs, VerifiedRoot and VirtioMmioBlock are not selected components, so the assembled
+tree does not link their directories. Resolve the device checkout and the UniXNU checkout
+through already-linked symlinks and reference those sources/headers by absolute path.
 """
 import json
 import shutil
@@ -21,10 +25,8 @@ OBJ = ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837'
 
 
 def resolve_native_ufs():
-    """NativeUfs is built by this device script, not a component, so the assembled
-    tree does not link drivers/NativeUfs. Resolve the device checkout through the
-    already-linked drivers/FuxiFtsTouch symlink and link drivers/NativeUfs into the
-    tree when it is missing."""
+    """Resolve the device checkout through the already-linked drivers/FuxiFtsTouch
+    symlink and link drivers/NativeUfs into the tree when it is missing."""
     native = ROOT / 'drivers/NativeUfs'
     if (native / 'NativeUfs.cpp').is_file():
         return native
@@ -38,20 +40,33 @@ def resolve_native_ufs():
     sys.exit(f'{native}/NativeUfs.cpp missing: add the drivers/NativeUfs submodule first')
 
 
+def resolve_unixnu_root():
+    """VerifiedRoot and VirtioMmioBlock are not selected components, so the tree does
+    not link their directories. Resolve the UniXNU checkout root through an
+    already-linked UniXNU directory and reference those headers by absolute path."""
+    for link in ('kits/XnuPrelink', 'drivers/ArmCpu', 'drivers/ArmDTPlatform', 'drivers/SoftwareAES'):
+        path = ROOT / link
+        if path.is_symlink():
+            return path.resolve().parents[1]
+    sys.exit('cannot resolve the UniXNU checkout root from the assembled tree')
+
+
 SOURCE = resolve_native_ufs() / 'NativeUfs.cpp'
 
 CXX_FLAGS = ['-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
              '-Wno-c99-designator', '-Wno-reorder-init-list',
              '-Wno-deprecated-enum-enum-conversion', '-Wno-unnecessary-virtual-specifier']
 
-# The same includes/defines build-arm-driver.py adds for the NativeUfs legacy component.
-UFS_EXTRA = ['-I', ROOT / '.cache/xnu-work/osfmk',
-             '-I', ROOT / 'build/storage-abi/include',
-             '-I', ROOT / 'kits/VerifiedRoot/include',
-             '-I', ROOT / 'drivers/VirtioMmioBlock',
-             '-DNATIVE_VERIFIED_BLOCK=1',
-             '-DNATIVE_VERIFIED_BLOCK_MULTI_POLICY=1',
-             '-mgeneral-regs-only']
+
+def ufs_extra(unixnu):
+    # The same includes/defines build-arm-driver.py adds for the NativeUfs legacy component.
+    return ['-I', ROOT / '.cache/xnu-work/osfmk',
+            '-I', ROOT / 'build/storage-abi/include',
+            '-I', unixnu / 'kits/VerifiedRoot/include',
+            '-I', unixnu / 'drivers/VirtioMmioBlock',
+            '-DNATIVE_VERIFIED_BLOCK=1',
+            '-DNATIVE_VERIFIED_BLOCK_MULTI_POLICY=1',
+            '-mgeneral-regs-only']
 
 
 def record(path):
@@ -83,9 +98,10 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     if not SOURCE.is_file():
         sys.exit(f'{SOURCE} missing: add the drivers/NativeUfs submodule first')
+    unixnu = resolve_unixnu_root()
     rec = record(OBJ / 'iokit/DEVELOPMENT/IOPlatformExpert.cpo.json')
     obj = OUT / 'NativeUfs.o'
-    subprocess.run(command(rec, SOURCE, obj, CXX_FLAGS + UFS_EXTRA),
+    subprocess.run(command(rec, SOURCE, obj, CXX_FLAGS + ufs_extra(unixnu)),
                    cwd=rec['directory'], check=True, timeout=180)
     print(f'compiled {SOURCE.relative_to(ROOT)}')
     archive = OUT / 'libShengUfs.a'
