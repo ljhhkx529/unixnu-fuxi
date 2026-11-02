@@ -230,3 +230,9 @@
   - 之后既没有 XNU 的文字，也没有 panic 屏，手机一直没有出现在 USB 上。
   - 结论：固件、菜单、DarwinBoot 和镜像格式都没问题；内核停在打开 MMU 到 `PE_init_printf`（第一个能往屏幕上写字的位置）之间。
   - 下一步用会自动重启的入口探针定位（README 的“探针镜像”一节）。两个社区移植（mouse233、Kerfand）的内核在同一颗 SoC 上能越过这一段，内存窗口大小也和本仓库相同；它们都用 sheng 的 kit，本仓库用模板组件 ArmDTPlatform、ArmCpu，这是首先要排查的差异。
+- **探针定位**（2026-11-02）：在 `arm_init` 的各个调用之后放会自动重启的探针，逐个上机。
+  - 能走到：打开 MMU、进入 `arm_init`、`cpu_data_init`、`PE_init_platform`、`configure_misc_apple_regs`。
+  - 走不到：`ml_parse_cpu_topology` 之后（以及更后面的 `processor_bootstrap`、`arm_vm_init`）。
+  - 原因：`dts/fuxi.dts` 照 sheng 把 cpu0–2 标成 E 簇、cpu3–7 标成 P 簇，内核据此建立两个簇；但 BCM2837 配置的 `MAX_CPU_CLUSTERS` 仍是 1（sm8550-common 只把 `MAX_CPUS` 改成了 8），开发版内核里的断言 `cluster_id < MAX_CPU_CLUSTERS` 失败，在控制台出现之前就 panic 了，所以屏幕上什么都没有。
+  - sheng 用它自己的设备补丁 `zzyf-sheng-amp.patch` 解决了这个问题（`MAX_CPU_CLUSTERS` 改成 2，并配好 E/P 两簇的调度）。fuxi 的核心布局完全相同，所以原样带上这个补丁。
+  - 另外，读出了这台手机（12 GB）真实的内存布局：固件内存表来自一台 8 GB 手机，高端内存里有两段（`0x8B9D00000` 起 2 MiB、`0x8BBD00000` 起约 22 MiB）在这台手机上并不是安卓的内存，固件却当成了空闲内存。内核用的窗口不受影响，但固件需要修正。
