@@ -55,10 +55,16 @@ touch_stats_obj = compile_like(record, ROOT / 'kits/fuxi/BootLogTouchStats.c', O
                                [])
 fence_stub_obj = compile_like(record, ROOT / 'kits/fuxi/BootLogFenceStubs.c', OUT / 'BootLogFenceStubs.o',
                               [])
+# BootLogStubs provides placeholder definitions for every diagnostic-page
+# global BootLog.c composes (boot_progress_*, native_adreno_*, native_dpu_*,
+# native_touch_*, native_data_persist_*, boot_reset_*, ...) until the real
+# drivers are linked. Without it the stage-1 kernel cannot link BootLog.
+stubs_obj = compile_like(record, ROOT / 'kits/fuxi/BootLogStubs.c', OUT / 'BootLogStubs.o',
+                         ['-I', str(ROOT / 'kits/fuxi')])
 
 archive = OUT / 'libBootLog.a'
 archive.unlink(missing_ok=True)
 subprocess.run(['xcrun', 'ar', 'rcs', str(archive), str(log_obj), str(crash_obj), str(touch_stats_obj),
-                str(fence_stub_obj)],
+                str(fence_stub_obj), str(stubs_obj)],
                check=True, timeout=30)
 print(f'boot log archive: {archive}')
