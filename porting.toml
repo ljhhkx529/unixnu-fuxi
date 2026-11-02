@@ -77,7 +77,7 @@ limits = ["The DTS memory map is the SoC default."]
 next_action = ["Account for the hand-off regions XNU maps against the firmware's reservations."]
 evidence = [
   { kind = "device", command = "fastboot boot of the run 41378843724 image (SHA-256 e360c41aa4057d27)", revision = "e90113974b1186120e4eb4c3f77bfb8d909934bf", reference = "evidence/2026-11-02-first-boot.md", result = "With CONFIG_XNU_DT_PANIC_REGION the kernel passes PE_create_console and reaches bsd_init; vm_page_pages 0x127068 and vm_page_free_count 0x125ccd at the panic" },
-  { kind = "device", command = "fastboot boot of image m1-touch (SHA-256 be38300f17d03ca1): uefi-fuxi c5793bc2, fuxi-touch=4 fuxi-touch-panic=2", revision = "740711055534bd48f056f25d7bbc2673b1f57044", reference = "evidence/2026-11-02-first-boot.md", result = "Kernel on the corrected map: vm_page_pages 0x12705b and vm_page_free_count 0x125c40, as with the old map; no reset" },
+  { kind = "device", command = "fastboot boot of image m1-touch (SHA-256 be38300f17d03ca1): uefi-fuxi c5793bc2, fuxi-touch=4 fuxi-touch-panic=2", revision = "740711055534bd48f056f25d7bbc2673b1f57044", reference = "evidence/2026-11-02-first-boot.md", result = "Kernel on the corrected map: vm_page_pages 0x12705b and vm_page_free_count 0x125c40, the same as the third t4b-touch boot (old map, same arguments); no reset" },
 ]
 
 [[area]]

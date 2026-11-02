@@ -233,10 +233,12 @@ All three taps were asked for at the lower left, and all three read there:
 | t4b-touch, third run | 14:28:08 | `fuxi-touch=4 fuxi-touch-panic=2` (the same bytes) | `ca080270f58e179c` | no reset; panel: touch report |
 
 Android had been up since 14:23:06 with its boot completed; `adb reboot bootloader`, then `fastboot boot`. The owner pressed
-with two fingers and lifted one. Rows 1 to 3 and the frames are as before; row 4 reads:
+with two fingers and lifted one. Rows 1 to 3 and the frames are as before; row 4 and the page counts read:
 
 ```
 FTS rd291 ev544 in2 mv539 up1 er0/00 rdy0 rearm0 c1 3095,15215 hid0 irq290/0 xf0 @FuxiTouchProbe.cpp:530
+pages=0x000000000012705b
+free=0x0000000000125c40
 ```
 
 `in2`: two contacts went down. `up1 c1`: at the first lift, which ends the run, one contact is still down, at 3095,15215 (pixel
@@ -261,8 +263,10 @@ fastboot by hand after Android; that is one sample and not a cause. Record how t
 ## Corrected firmware memory map (run 41401828450, device commit 7407110)
 
 Firmware from uefi-fuxi c5793bc2, volume `42cfcc46f1f6b7ae`; kernel `b1ca4e8d4c4120c7`, rebuilt by CI from the same sources as
-484a650 (only the firmware pin changed), and `ci/check-pmgr-bridge.py` passes on it. The high DRAM rows in SEC's table, read
-from the two volumes:
+484a650 (only the firmware pin changed), and `ci/check-pmgr-bridge.py` passes on it. Its hash differs from `99e19285` only
+through build stamps: the 1977 differing bytes are the UUID, the build time in the version string (twice), `_PrelinkKCID` in
+the prelink info, and the object-file times of 966 debug-map (N_OSO) symbols. No code or data differ, so the frames match.
+The high DRAM rows in SEC's table, read from the two volumes:
 
 ```
 before: 0x880000000 + 0x3B300000   0x8BB500000 + 0x1E00000   0x8C0000000 + 0x140000000
@@ -287,5 +291,6 @@ pages=0x000000000012705b
 free=0x0000000000125c40
 ```
 
-The page counts equal those of the third t4b-touch run with the old firmware, as they should: DarwinBoot's window did not move.
-The firmware log of this boot was not photographed, so the new rows are read from the image, not from the panel.
+The page counts equal those of the third t4b-touch run, which had the same arguments and the old firmware: the kernel manages
+the same amount of memory. The firmware log of this boot was not photographed, so the new rows are read from the image, not
+from the panel, and the address of DarwinBoot's window was not read.
