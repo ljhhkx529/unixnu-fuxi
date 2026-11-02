@@ -252,7 +252,40 @@ transfer failed.
 | t4c-diag (14:01:18) | by hand from the p3-poll panic screen | touch report |
 | t4b-touch, second run (14:08:28) | by hand from the t4c-diag panic screen | touch report |
 | t4b-touch, third run (14:28:08) | `adb reboot bootloader` from running Android | touch report |
+| m1-touch, new firmware and kernel (15:15:32) | `adb reboot bootloader` from running Android | touch report |
 
 The same bytes reset once and ran twice, and `armcpu-diagnostics=1` reported nothing, so the reset is intermittent and its
 cause is unknown. Starting from Android by itself does not bring it back. The first run remains the only one that entered
 fastboot by hand after Android; that is one sample and not a cause. Record how the phone reached fastboot if it happens again.
+
+## Corrected firmware memory map (run 41401828450, device commit 7407110)
+
+Firmware from uefi-fuxi c5793bc2, volume `42cfcc46f1f6b7ae`; kernel `b1ca4e8d4c4120c7`, rebuilt by CI from the same sources as
+484a650 (only the firmware pin changed), and `ci/check-pmgr-bridge.py` passes on it. The high DRAM rows in SEC's table, read
+from the two volumes:
+
+```
+before: 0x880000000 + 0x3B300000   0x8BB500000 + 0x1E00000   0x8C0000000 + 0x140000000
+after:  0x880000000 + 0x39D00000                             0x8C0000000 + 0x140000000
+```
+
+46 of the 54 FVMAIN modules differ from run 41390823512, and they are exactly the 46 that hold the table: `SerialPortLib` is
+FrameBufferSerialPortLib, which finds "Display Reserved" through MemoryMapHelperLib, so nearly every module links a copy. In
+their `.text` 5859 instructions differ, all in immediates only (5823 imm12, 35 adrp, 1 mov): no opcode or register changed, and
+no `.text` changed size. In the smallest module, checked by hand, offsets move by 0x48 (one row), a compare goes from 82 to 81
+(the row count), and the rest is the section size and the PDB GUID.
+
+| Image | Started | Added arguments | SHA-256 | Result |
+| --- | --- | --- | --- | --- |
+| m1-touch | 15:15:32 | `fuxi-touch=4 fuxi-touch-panic=2` | `be38300f17d03ca1` | no reset; panel: touch report |
+
+Rows 1 to 3 and the frames are as before; row 4 reads, after pressing with two fingers and lifting one:
+
+```
+FTS rd114 ev226 in2 mv221 up1 er0/00 rdy0 rearm0 c1 3575,13965 hid0 irq113/0 xf0 @FuxiTouchProbe.cpp:530
+pages=0x000000000012705b
+free=0x0000000000125c40
+```
+
+The page counts equal those of the third t4b-touch run with the old firmware, as they should: DarwinBoot's window did not move.
+The firmware log of this boot was not photographed, so the new rows are read from the image, not from the panel.
