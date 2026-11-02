@@ -43,7 +43,7 @@ archives = [
   "component:VirtioMmioBlock",
   "component:RamBlock",
   "build-virtio-mmio-bindings.py --component RamBlock --directory build/ram-block",
-  "build-virtio-mmio-bindings.py --component VirtioMmioBlock",
+  "build-fuxi-virtio-bindings.py",
   "build-libpthread-kernel.py",
   "build-mockfs-fixture.py",
   "build-fuxi-platform-power.py",
