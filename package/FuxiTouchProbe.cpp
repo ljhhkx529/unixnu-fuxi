@@ -16,6 +16,7 @@
 // fuxi-touch-map (FTS_MAP_* bits applied before publishing: 1 swap, 2 mirror x, 4 mirror y),
 // fuxi-touch-panic (1: when the requested stage ends or fails, panic with the four diagnostic rows as the message, so the
 // result can be read from the panic screen while no display driver runs; 2: in stage 4, also after the first lift).
+// With sheng-smp=1 the panic message has two more rows: the secondary-core state ArmCpu records (smpText).
 // The probe starts from bsd_init (patches/xnu/fuxi-touch-probe.patch); every stage result is also printed to the kernel log.
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
@@ -414,6 +415,43 @@ static bool armTouchIrq(Session &s) {
 }
 static bool lineLow(const Session &s) {return (rd32(s.tlmmIrq.va, 4) & 1) == 0;}
 
+// Secondary-core state of ArmCpu (UniXNU drivers/ArmCpu/ArmCpu.cpp) on a boot with sheng-smp=1. Step of each core 1..7:
+// 1 nub started, 2 registered, 3 start thread running, 4 PSCI CPU_ON issued, 5 initCPU entered on the new core,
+// 6 redistributor ready, 7 running. A failure code parks the core (1 MPIDR differs, 2 or 3 redistributor, 4 registration);
+// psci is the CPU_ON result (0 success; -1000 no start thread, -1001 no PSCI method in the DT). Weak like armcpu_spi_attach:
+// a kernel without ArmCpu reports no SMP rows.
+extern "C" {
+extern volatile uint32_t __attribute__((weak_import)) armcpu_smp_requested, armcpu_smp_running, armcpu_smp_conduit,
+    armcpu_boot_mpidr, armcpu_smp_step[8], armcpu_smp_fail[8], armcpu_core_timer[8], armcpu_core_sgi[8];
+extern volatile int32_t __attribute__((weak_import)) armcpu_smp_psci_rc[8];
+extern volatile uint64_t __attribute__((weak_import)) armcpu_ipi_sent, armcpu_ipi_interrupts;
+extern uint32_t processor_avail_count;   // osfmk/kern/processor.h: processors the scheduler runs threads on
+int cpu_number(void);
+}
+// Two report rows: running cores, PSCI conduit (1 smc, 2 hvc), boot MPIDR, the core this thread reports from, the
+// scheduler's processor count, then per secondary core its step, failure code and CPU_ON result, IPIs sent and taken;
+// the second row has the timer interrupts and IPIs each core took. Empty without sheng-smp, so that report is unchanged.
+static char gSmpText[320];
+static const char *smpText() {
+    if (!&armcpu_smp_requested || !armcpu_smp_requested) return "";
+    char st[8], f[8];
+    for (unsigned c = 1; c < 8; ++c) {
+        st[c - 1] = static_cast<char>('0' + armcpu_smp_step[c] % 10);
+        f[c - 1] = static_cast<char>('0' + armcpu_smp_fail[c] % 10);
+    }
+    st[7] = f[7] = 0;
+    const volatile int32_t *rc = armcpu_smp_psci_rc;
+    const volatile uint32_t *t = armcpu_core_timer, *i = armcpu_core_sgi;
+    snprintf(gSmpText, sizeof gSmpText,
+        "\nSMP run%u c%u b%x cpu%d av%u st%s f%s psci%d,%d,%d,%d,%d,%d,%d ipi%llu/%llu"
+        "\nSMP tmr%u/%u/%u/%u/%u/%u/%u/%u ipi%u/%u/%u/%u/%u/%u/%u/%u",
+        armcpu_smp_running, armcpu_smp_conduit, armcpu_boot_mpidr & 0xffffffu, cpu_number(), processor_avail_count, st, f,
+        rc[1], rc[2], rc[3], rc[4], rc[5], rc[6], rc[7],
+        static_cast<unsigned long long>(armcpu_ipi_sent), static_cast<unsigned long long>(armcpu_ipi_interrupts),
+        t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], i[0], i[1], i[2], i[3], i[4], i[5], i[6], i[7]);
+    return gSmpText;
+}
+
 // Refreshes the diagnostic rows and prints them to the kernel log.
 static void report(const Session &s) {
     rows(s);
@@ -526,8 +564,8 @@ static void touchThread(void *, wait_result_t) {
     } while (0);
     report(*s);
     if (panicReport) {
-        panic("fuxi-touch report (stage %u of %u)\n%s\n%s\n%s\n%s", native_touch_stage_done, native_touch_stage_req,
-              native_touch_rows[0], native_touch_rows[1], native_touch_rows[2], native_touch_rows[3]);
+        panic("fuxi-touch report (stage %u of %u)\n%s\n%s\n%s\n%s%s", native_touch_stage_done, native_touch_stage_req,
+              native_touch_rows[0], native_touch_rows[1], native_touch_rows[2], native_touch_rows[3], smpText());
     }
 }
 
