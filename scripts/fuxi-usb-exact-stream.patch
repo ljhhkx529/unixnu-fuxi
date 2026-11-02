@@ -1,0 +1,298 @@
+--- a/soc/QcomUsbDmaDomain.c
++++ b/soc/QcomUsbDmaDomain.c
+@@ -12,7 +12,22 @@
+ #define FSR_FORMAT 0x600U     /* Read-only status, generated from VA64/effective EAE. */
+ #define FSR_RESERVED (~(FSR_FAULT|FSR_FORMAT))
+ enum { CFG=1, TLBI=2, SYNC=3, ENABLE=4, S2PREP=5, SMRPREP=6, COMMIT=7,
+-       LIVE=8, INVALIDATE=9, DISABLE=10, RESTORE_CFG=11, PAIR_FIRST=12, PAIR_LAST=13 };
++       LIVE=8, INVALIDATE=9, DISABLE=10, RESTORE_CFG=11, PAIR_FIRST=12, PAIR_LAST=13,
++       TAKEOVER=14 };
++
++/* Board opt-in: retain the exact old pair, never reuse or modify its bank.
++ * Masked/duplicate matches and unknown S2CR types remain refusals. */
++static int inherited_stream(const QUSB_DOMAIN_LEASE *l)
++{
++#if QUD_ALLOW_EXACT_STREAM_TAKEOVER
++  return l->old_smr==(l->extended_stream_ids?QUSB_STREAM_ID:(0x80000000U|QUSB_STREAM_ID))&&
++    (l->extended_stream_ids?(l->old_s2cr&(1U<<10))!=0:1)&&
++    ((l->old_s2cr>>16)&3U)<3U&&
++    (((l->old_s2cr>>16)&3U)!=0U||(l->old_s2cr&255U)!=l->cb);
++#else
++  (void)l;return 0;
++#endif
++}
+ 
+ static void zero(void *p,QUSB_U32 n) { unsigned char *b=p; while(n--) *b++=0; }
+ static QUSB_U32 physical_bits(QUSB_U32 code)
+@@ -99,7 +114,8 @@
+      l->cb_base+0x8f4U>QUSB_SMMU_BASE+QUSB_SMMU_BYTES||
+      l->new_smr!=(l->extended_stream_ids?QUSB_STREAM_ID:(0x80000000U | QUSB_STREAM_ID))||
+      l->new_s2cr!=(l->cb|(l->extended_stream_ids<<10))||
+-     (l->extended_stream_ids?(l->old_s2cr&(1U<<10)):(l->old_smr&0x80000000U))) return 0;
++     ((l->extended_stream_ids?(l->old_s2cr&(1U<<10)):(l->old_smr&0x80000000U))&&
++       !inherited_stream(l))) return 0;
+   for(i=0;i<QUSB_DOMAIN_REGISTER_COUNT;i++) {
+     if(l->regs[i].address!=reg_address(l,i)||l->regs[i].installed!=reg_value(l,i)||
+        l->regs[i].width!=((i==4||i==5)?8U:4U)||l->regs[i].touched>1U) return 0;
+@@ -125,6 +141,9 @@
+   }
+   if(width!=4) return 0;
+   switch(l->phase) {
++    case TAKEOVER:return inherited_stream(l)&&
++      (l->extended_stream_ids?a==s2cr&&v==(l->old_s2cr&~(1U<<10)):
++                               a==smr&&v==QUSB_STREAM_ID);
+     case TLBI:return a==l->cb_base+0x610&&v==l->asid;
+     case SYNC:return a==l->cb_base+0x7f0&&v==0xffffffffU;
+     case ENABLE:return a==l->cb_base&&v==SCTLR_VALUE;
+@@ -217,6 +236,7 @@
+                                unsigned char used[128],int installed)
+ {
+   QUSB_U32 i,smr,s2cr,mask,id,matches=0,first=0xffffffffU,oldsmr=0,olds2cr=0;
++  QUSB_U32 inherited=0xffffffffU,inherited_smr=0,inherited_s2cr=0;
+   for(i=0;i<l->stream_count;i++) {
+     if(!p->read32(p->cookie,QUSB_SMMU_BASE+0x800+4*i,&smr)||
+        !p->read32(p->cookie,QUSB_SMMU_BASE+0xc00+4*i,&s2cr))return QusbDomainReadFailed;
+@@ -228,9 +248,26 @@
+     id=smr&(l->extended_stream_ids?0xffffU:0x7fffU);
+     if((QUSB_STREAM_ID&~mask)!=(id&~mask))continue;
+     matches++;
+-    if(!installed||i!=l->index||smr!=l->new_smr||s2cr!=l->new_s2cr)return QusbDomainStreamExists;
+-  }
+-  if(installed)return matches==1?QusbDomainOkay:QusbDomainOwnershipChanged;
++    if(installed==1) {
++      if(i!=l->index||smr!=l->new_smr||s2cr!=l->new_s2cr)return QusbDomainStreamExists;
++      continue;
++    }
++    if(installed==2)return QusbDomainStreamExists; /* Prepared pair must be invalid. */
++#if QUD_ALLOW_EXACT_STREAM_TAKEOVER
++    if(matches==1&&!mask&&id==QUSB_STREAM_ID&&
++       smr==(l->extended_stream_ids?QUSB_STREAM_ID:(0x80000000U|QUSB_STREAM_ID))&&
++       ((s2cr>>16)&3U)<3U) {
++      inherited=i;inherited_smr=smr;inherited_s2cr=s2cr;continue;
++    }
++#endif
++    return QusbDomainStreamExists;
++  }
++  if(installed==1)return matches==1?QusbDomainOkay:QusbDomainOwnershipChanged;
++  if(installed==2)return QusbDomainOkay;
++  if(inherited!=0xffffffffU) {
++    l->index=inherited;l->old_smr=inherited_smr;l->old_s2cr=inherited_s2cr;
++    return QusbDomainOkay;
++  }
+   if(matches)return QusbDomainStreamExists;
+   if(first==0xffffffffU)return QusbDomainNoSlot;
+   l->index=first;l->old_smr=oldsmr;l->old_s2cr=olds2cr;return QusbDomainOkay;
+@@ -313,7 +350,23 @@
+   if(!p->read32(p->cookie,QUSB_SMMU_BASE+0x800+4*l->index,&v)||v!=l->old_smr||
+      !p->read32(p->cookie,QUSB_SMMU_BASE+0xc00+4*l->index,&v)||v!=l->old_s2cr)
+     return QusbDomainOwnershipChanged;
++#if QUD_ALLOW_EXACT_STREAM_TAKEOVER
++  /* A firmware mapping may only be withdrawn after a complete second scan,
++   * pair/bank snapshots and DEVICE-halt qualification still agree. */
++  {
++    QUSB_DOMAIN_LEASE checked=*l;
++    r=scan(p,&checked,0,0);if(r)return r;
++    if(checked.index!=l->index||checked.old_smr!=l->old_smr||checked.old_s2cr!=l->old_s2cr)
++      return QusbDomainOwnershipChanged;
++    r=halted(p);if(r)return r;
++  }
++#endif
+   l->magic=MAGIC;l->active=1;
++  if(inherited_stream(l)) {
++    r=write_value(p,l,TAKEOVER,0,QUSB_SMMU_BASE+(l->extended_stream_ids?0xc00:0x800)+4*l->index,
++                  l->extended_stream_ids?(l->old_s2cr&~(1U<<10)):QUSB_STREAM_ID,4,1);
++    if(r)return r;
++  }
+   for(i=0;i<9;i++) {
+     if(i==2) {
+       r=capture_tcr2(p,l);if(r)return r;
+@@ -337,7 +390,7 @@
+   r=write_value(p,l,SMRPREP,0,QUSB_SMMU_BASE+0x800+4*l->index,QUSB_STREAM_ID,4,1);if(r)return r;
+   {
+     QUSB_DOMAIN_LEASE checked=*l;
+-    r=scan(p,&checked,0,0);if(r)return r;
++    r=scan(p,&checked,0,2);if(r)return r;
+     if(checked.index!=l->index)return QusbDomainOwnershipChanged;
+     if(!p->read32(p->cookie,QUSB_SMMU_BASE+0x800+4*l->index,&v)||v!=QUSB_STREAM_ID||
+        !p->read32(p->cookie,QUSB_SMMU_BASE+0xc00+4*l->index,&v)||v!=l->cb)
+@@ -380,7 +433,9 @@
+      !p->read32(p->cookie,l->cb_base+4,&v))return QusbDomainReadFailed;
+   if(v!=l->old_actlr)return QusbDomainOwnershipChanged;
+   if((smr!=l->old_smr&&smr!=QUSB_STREAM_ID&&smr!=l->new_smr)||
+-     (s2cr!=l->old_s2cr&&s2cr!=l->cb&&s2cr!=l->new_s2cr))return QusbDomainOwnershipChanged;
++     (s2cr!=l->old_s2cr&&s2cr!=l->cb&&s2cr!=l->new_s2cr&&
++       !(inherited_stream(l)&&l->extended_stream_ids&&s2cr==(l->old_s2cr&~(1U<<10)))))
++    return QusbDomainOwnershipChanged;
+   for(i=0;i<QUSB_DOMAIN_REGISTER_COUNT;i++) {
+     if(!read_reg(p,l->regs[i].address,l->regs[i].width,&value))return QusbDomainReadFailed;
+     if(l->phase==LIVE&&value!=l->regs[i].installed)return QusbDomainOwnershipChanged;
+@@ -401,6 +456,16 @@
+        (value!=l->regs[i].installed&&!(i==9&&value==0))))return QusbDomainOwnershipChanged;
+   }
+   if(l->extended_stream_ids?(s2cr&(1U<<10)):(smr&0x80000000U)) {
++    if(inherited_stream(l)&&smr==l->old_smr&&s2cr==l->old_s2cr&&
++       (l->phase==TAKEOVER||l->phase==PAIR_LAST)) {
++      /* Failed withdrawal before the store, or a completed final restoration
++       * whose callback reported failure: close only if the new bank is exact. */
++      for(i=0;i<QUSB_DOMAIN_REGISTER_COUNT;i++) {
++        if(l->regs[i].touched||!read_reg(p,l->regs[i].address,l->regs[i].width,&value)||
++           value!=l->regs[i].saved)return QusbDomainOwnershipChanged;
++      }
++      l->active=0;return QusbDomainOkay;
++    }
+     if(smr!=l->new_smr||s2cr!=l->new_s2cr)return QusbDomainOwnershipChanged;
+     r=write_value(p,l,INVALIDATE,0,QUSB_SMMU_BASE+(l->extended_stream_ids?0xc00:0x800)+4*l->index,
+                   l->extended_stream_ids?l->cb:QUSB_STREAM_ID,4,1);if(r)return r;
+--- a/soc/QcomUsbDmaDomain.h
++++ b/soc/QcomUsbDmaDomain.h
+@@ -2,6 +2,9 @@
+ #ifndef SOCRATES_QCOM_USB_DMA_DOMAIN_H
+ #define SOCRATES_QCOM_USB_DMA_DOMAIN_H
+ #include "QcomUsbQualify.h"
++#ifndef QUD_ALLOW_EXACT_STREAM_TAKEOVER
++#define QUD_ALLOW_EXACT_STREAM_TAKEOVER 0
++#endif
+ 
+ #define QUSB_DOMAIN_IOVA QUD_DMA_IOVA
+ #define QUSB_DOMAIN_DMA_BYTES 32768U
+--- a/tests/test_domain.c
++++ b/tests/test_domain.c
+@@ -12,6 +12,7 @@
+   unsigned int ext,timeout,delay;
+   QUSB_U32 forced_a64, corrupt_tcr2;
+   unsigned int fail_capture, fail_tcr2_readback;
++  unsigned int stream_race;
+   QUSB_U32 fsr_on_enable;
+   QUSB_U32 fsr_format_override;
+ };
+@@ -76,6 +77,12 @@
+ {
+   unsigned int i,allowed=0,fail;
+   QUSB_DOMAIN_LEASE*l=m->lease;
++#if QUD_ALLOW_EXACT_STREAM_TAKEOVER
++  if(l->phase==1||l->phase==4||l->phase==11) {
++    QUSB_U64 pair=get(m,QUSB_SMMU_BASE+(m->ext?0xc00:0x800)+4*l->index);
++    assert(!(pair&(m->ext?(1U<<10):0x80000000U)));
++  }
++#endif
+   assert(QcomUsbDomainWriteAllowed(l,a,v,width));
+   assert(a!=QUSB_SMMU_BASE&&a!=QUSB_SMMU_BASE+0x68&&a!=QUSB_SMMU_BASE+0x70);
+   for(i=0;i<QUSB_DOMAIN_REGISTER_COUNT;i++)if(a==l->regs[i].address)allowed=1;
+@@ -103,7 +110,13 @@
+ static void delay(void*c,QUSB_U32 us){((struct model*)c)->delay+=us;}
+ static int clean(void*c,void*cpu,QUSB_U32 bytes)
+ {
+-  struct model*m=c;assert(cpu==m->tables&&bytes==QUSB_DOMAIN_PT_BYTES);m->cleaned=1;return 1;
++  struct model*m=c;assert(cpu==m->tables&&bytes==QUSB_DOMAIN_PT_BYTES);m->cleaned=1;
++  if(m->stream_race==1) {
++    set(m,QUSB_SMMU_BASE+0x80c,(m->ext?0:0x80000000U)|QUSB_STREAM_ID);
++    set(m,QUSB_SMMU_BASE+0xc0c,1U|(m->ext<<10));
++  }
++  if(m->stream_race==2)set(m,QUSB_DWC3_BASE+0xc704,1U<<31);
++  return 1;
+ }
+ static QUSB_DOMAIN_PLATFORM platform(struct model*m)
+ {
+@@ -137,6 +150,82 @@
+   unsigned int i;assert(!m->lease->active);
+   for(i=0;i<m->initial_count;i++)assert(get(m,m->initial[i].a)==m->initial[i].v);
+ }
++#if QUD_ALLOW_EXACT_STREAM_TAKEOVER
++static void inherited_init(struct model*m,QUSB_DOMAIN_LEASE*l,void*pt,unsigned int ext,unsigned int slot)
++{
++  init(m,l,pt,ext);
++  set(m,QUSB_SMMU_BASE+0x800+4*slot,(ext?0:0x80000000U)|QUSB_STREAM_ID);
++  set(m,QUSB_SMMU_BASE+0xc00+4*slot,1U|(ext<<10)); /* Shares old CB1 with another SID. */
++  set(m,QUSB_SMMU_BASE+0x81000,0x1001U); /* Original bank remains enabled/untouched. */
++  m->initial_count=m->count;memcpy(m->initial,m->cells,sizeof(m->cells));
++}
++static void inherited_tests(void *pt)
++{
++  struct model m;QUSB_DOMAIN_LEASE l;QUSB_DOMAIN_PLATFORM p;
++  QUSB_DOMAIN_RESULT result;unsigned int ext,slot,i,after,before,iw,rw;
++  for(ext=0;ext<2;ext++)for(slot=0;slot<3;slot+=2) {
++    inherited_init(&m,&l,pt,ext,slot);p=platform(&m);
++    assert(QcomUsbDomainInstall(&p,pt,m.table_pa,QUSB_DOMAIN_PT_BYTES,m.dma_pa,QUSB_DOMAIN_DMA_BYTES,&l)==QusbDomainOkay);
++    assert(l.index==slot&&l.cb==3&&get(&m,QUSB_SMMU_BASE+0x81000)==0x1001U);
++    assert(l.old_smr==((ext?0:0x80000000U)|QUSB_STREAM_ID));
++    iw=m.writes;assert(iw==16);
++    assert(walk(&m,QUSB_DOMAIN_IOVA)==m.dma_pa&&!walk(&m,QUSB_DOMAIN_IOVA+32768));
++    assert(QcomUsbDomainRestore(&p,&l)==QusbDomainOkay);rw=m.writes-iw;restored(&m);
++    for(i=1;i<=2;i++) {
++      inherited_init(&m,&l,pt,ext,slot);p=platform(&m);
++      set(&m,QUSB_SMMU_BASE+0xc00+4*slot,(i<<16)|1U|(ext<<10));
++      m.initial_count=m.count;memcpy(m.initial,m.cells,sizeof(m.cells));
++      assert(QcomUsbDomainInstall(&p,pt,m.table_pa,QUSB_DOMAIN_PT_BYTES,m.dma_pa,QUSB_DOMAIN_DMA_BYTES,&l)==QusbDomainOkay);
++      assert(get(&m,QUSB_SMMU_BASE+0xc00+4*slot)==(l.cb|(ext<<10))); /* New path is translated. */
++      assert(QcomUsbDomainRestore(&p,&l)==QusbDomainOkay);restored(&m);
++    }
++    inherited_init(&m,&l,pt,ext,slot);p=platform(&m);
++    set(&m,QUSB_SMMU_BASE+0x83000,1U);
++    assert(QcomUsbDomainInstall(&p,pt,m.table_pa,QUSB_DOMAIN_PT_BYTES,m.dma_pa,QUSB_DOMAIN_DMA_BYTES,&l)==QusbDomainNoBank);
++    assert(!m.writes&&!l.active); /* Never borrow the old/shared bank. */
++    for(i=1;i<=iw;i++)for(after=0;after<2;after++) {
++      inherited_init(&m,&l,pt,ext,slot);p=platform(&m);m.fail_on=i;m.after=after;
++      assert(QcomUsbDomainInstall(&p,pt,m.table_pa,QUSB_DOMAIN_PT_BYTES,m.dma_pa,QUSB_DOMAIN_DMA_BYTES,&l)!=QusbDomainOkay);
++      assert(l.active);m.fail_on=0;before=m.writes;result=QcomUsbDomainRestore(&p,&l);
++      if(l.tlb_poisoned)assert(result==QusbDomainTlbTimeout&&l.active&&m.writes==before);
++      else {assert(result==QusbDomainOkay);restored(&m);}
++    }
++    for(i=1;i<=rw;i++)for(after=0;after<2;after++) {
++      inherited_init(&m,&l,pt,ext,slot);p=platform(&m);
++      assert(QcomUsbDomainInstall(&p,pt,m.table_pa,QUSB_DOMAIN_PT_BYTES,m.dma_pa,QUSB_DOMAIN_DMA_BYTES,&l)==QusbDomainOkay);
++      m.fail_on=m.writes+i;m.after=after;
++      assert(QcomUsbDomainRestore(&p,&l)!=QusbDomainOkay&&l.active);
++      m.fail_on=0;before=m.writes;result=QcomUsbDomainRestore(&p,&l);
++      if(l.tlb_poisoned)assert(result==QusbDomainTlbTimeout&&l.active&&m.writes==before);
++      else {assert(result==QusbDomainOkay);restored(&m);}
++    }
++    /* Wildcard, duplicate, reserved type and ambiguous SMR bits refuse before writes. */
++    for(i=0;i<4;i++) {
++      inherited_init(&m,&l,pt,ext,slot);p=platform(&m);
++      if(i==0)set(&m,QUSB_SMMU_BASE+0x800+4*slot,get(&m,QUSB_SMMU_BASE+0x800+4*slot)|(1U<<16));
++      if(i==1) {
++        set(&m,QUSB_SMMU_BASE+0x80c,(ext?0:0x80000000U)|QUSB_STREAM_ID);
++        set(&m,QUSB_SMMU_BASE+0xc0c,2U|(ext<<10));
++      }
++      if(i==2)set(&m,QUSB_SMMU_BASE+0xc00+4*slot,(3U<<16)|1U|(ext<<10));
++      if(i==3)set(&m,QUSB_SMMU_BASE+0x800+4*slot,get(&m,QUSB_SMMU_BASE+0x800+4*slot)|(1U<<30));
++      assert(QcomUsbDomainInstall(&p,pt,m.table_pa,QUSB_DOMAIN_PT_BYTES,m.dma_pa,QUSB_DOMAIN_DMA_BYTES,&l)==QusbDomainStreamExists);
++      assert(!m.writes&&!l.active);
++    }
++    for(i=1;i<=2;i++) {
++      inherited_init(&m,&l,pt,ext,slot);p=platform(&m);m.stream_race=i;
++      result=QcomUsbDomainInstall(&p,pt,m.table_pa,QUSB_DOMAIN_PT_BYTES,m.dma_pa,QUSB_DOMAIN_DMA_BYTES,&l);
++      assert(result==(i==1?QusbDomainStreamExists:QusbDomainCoreRunning));
++      assert(!m.writes&&!l.active);
++    }
++    inherited_init(&m,&l,pt,ext,slot);p=platform(&m);
++    assert(QcomUsbDomainInstall(&p,pt,m.table_pa,QUSB_DOMAIN_PT_BYTES,m.dma_pa,QUSB_DOMAIN_DMA_BYTES,&l)==QusbDomainOkay);
++    set(&m,QUSB_SMMU_BASE+0x800+4*slot,get(&m,QUSB_SMMU_BASE+0x800+4*slot)^1U);before=m.writes;
++    assert(QcomUsbDomainRestore(&p,&l)==QusbDomainOwnershipChanged&&l.active&&m.writes==before);
++  }
++  puts("PASS exact-stream takeover: both SID modes/slot positions, private bank, exact restore, every write failure, overlap/race refusal");
++}
++#endif
+ int main(void)
+ {
+   void*pt=0;struct model m;QUSB_DOMAIN_LEASE l,bad;QUSB_DOMAIN_PLATFORM p;
+@@ -192,7 +281,8 @@
+     before=m.writes;assert(l.active&&l.tlb_poisoned&&m.delay==1000);
+     assert(QcomUsbDomainRestore(&p,&l)==QusbDomainTlbTimeout&&m.writes==before);
+     init(&m,&l,pt,ext);p=platform(&m);
+-    set(&m,QUSB_SMMU_BASE+0x808,(ext?0:0x80000000U)|QUSB_STREAM_ID);
++    set(&m,QUSB_SMMU_BASE+0x808,(ext?0:0x80000000U)|QUSB_STREAM_ID|
++        (QUD_ALLOW_EXACT_STREAM_TAKEOVER?(1U<<16):0));
+     set(&m,QUSB_SMMU_BASE+0xc08,2U|(ext<<10));
+     assert(QcomUsbDomainInstall(&p,pt,m.table_pa,QUSB_DOMAIN_PT_BYTES,m.dma_pa,QUSB_DOMAIN_DMA_BYTES,&l)==QusbDomainStreamExists);
+     assert(!m.writes&&!l.active);
+@@ -250,5 +340,9 @@
+   }
+   assert(QcomUsbDomainBuildTables(pt,0x1000000000000ULL,QUSB_DOMAIN_PT_BYTES,0x234560000ULL,32768,48)==QusbDomainBadArgument);
+   assert(QcomUsbDomainBuildTables(pt,0x123450000ULL,QUSB_DOMAIN_PT_BYTES,0x123450000ULL,32768,44)==QusbDomainBadArgument);
++#if QUD_ALLOW_EXACT_STREAM_TAKEOVER
++  model_forced_a64=0;inherited_tests(pt);
++  model_forced_a64=0x80000520U;inherited_tests(pt);
++#endif
+   free(pt);puts("Private SMMUv2 translated domain: table walker, high PA, ownership and failure tests passed");
+ }

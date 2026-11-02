@@ -61,7 +61,7 @@ git clone -b fuxi https://github.com/OddlyLabs/UniXNU
 git clone -b fuxi https://github.com/OddlyLabs/uefi-fuxi
 ```
 
-在 UniXNU 目录里依次运行：
+在 UniXNU 目录里依次运行
 
 ```bash
 ./unixnu defconfig fuxi_defconfig -D ../unixnu-fuxi
