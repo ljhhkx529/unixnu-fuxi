@@ -12,6 +12,13 @@ os_profile = "ipados-17.7.11-21H461"
 description = "Xiaomi 13"
 kit = "fuxi"
 
+# The raw GPT entry "userdata" of LUN 0, read from the device (BUILD-PROGRESS.md probe=10).
+# LBA values are decimal, matching UniXNU-sheng's [userdata] schema (no windows array).
+[userdata]
+first_lba = 3110976   # 0x2f7840
+last_lba  = 61880618  # 0x3afc3fa (corrected; the old board.toml wrongly had 0x76923FA)
+lba_bytes = 4096
+
 [components]
 # The template set, plus the GENI SPI engine and the FTM5 protocol of the touch controller.
 include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot", "QcomGeniSpi", "FuxiFtsTouch"]
@@ -32,6 +39,7 @@ archives = [
   "component:ArmCpu",
   "component:SoftwareAES",
   "build-software-aes-bindings.py",
+  "build-fuxi-ufs.py",
   "build-libpthread-kernel.py",
   "build-mockfs-fixture.py",
   "build-fuxi-platform-power.py",
@@ -93,13 +101,24 @@ panic_screen = true
 # (evidence/2026-11-02-first-boot.md). fuxi-touch=4 runs the touch probe up to sensing with the interrupt, fuxi-touch-hid=1
 # starts the HID digitizer that turns its contacts into reports (kits/fuxi/FuxiHidProbe.cpp), and fuxi-touch-panic=2 panics
 # with the probe's rows after the first lift, so the result can be read from the panic screen. Without a touch the boot ends
-# in the root device wait.
+# in the root device wait. native-ufs-root=1 starts NativeUfs from the root-device personality (UniXNU-sheng style); during
+# validation add native-ufs-probe=10 (GPT geometry) or native-ufs-probe=12 (full startRoot + media report) temporarily.
 kernel_args = ["-v", "serial=3", "debug=0x14e", "kt_fixed_zones=120", "sheng-pmgr=2", "sheng-smp=1", "armcpu-spi-ipi=1",
-               "armcpu-self-ipi=1", "fuxi-touch=4", "fuxi-touch-hid=1", "fuxi-touch-panic=2"]
+               "armcpu-self-ipi=1", "native-ufs-root=1", "fuxi-touch=4", "fuxi-touch-hid=1", "fuxi-touch-panic=2"]
 
 [payload.adt]
 # Supply the board's identity seed through --unique-chip-id.
 chip_id = "207"
 unique_chip_id = "required"
+# The OS root volume verified on the device (probe=12): disk5s1.
+root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
 # Memory DarwinBoot gives XNU, as mouse233's fuxi RAM-root port uses it (verified there on this phone model).
 owned_memory_size = "0x130000000"
+
+# ADT defaults, following UniXNU-sheng's [adt.defaults.u32].
+[adt.defaults.u32]
+# No SEP and only a bridged PMGR: keep the device awake and report a virtual platform.
+sleep-disabled = 1
+vmm-present = 1
+# The 4.75 GiB owned window (4864 MiB): memory/64K + 1024, the same value UniXNU-sheng uses.
+"kern.maxvnodes" = 78848
