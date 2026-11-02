@@ -10,7 +10,7 @@ on:
         default: 6ae4c252937ae1920ab68eaded10fc78447e0194
       uefi_ref:
         description: OddlyLabs/uefi-fuxi ref (branch fuxi of the uefi-sheng fork)
-        default: 87554bf90a6f5707ceeb3720b3dc507de914db94
+        default: c5793bc2c60a2e2f5d9fbaad8717ed3f2736bfd2
       xcode:
         description: Xcode version of the macos-26 image (the newest Xcode 26 if it is not installed)
         default: "26.6"
@@ -30,7 +30,7 @@ env:
   UNIXNU_REPO: OddlyLabs/UniXNU
   UNIXNU_REF: ${{ inputs.unixnu_ref || '6ae4c252937ae1920ab68eaded10fc78447e0194' }}
   UEFI_REPO: OddlyLabs/uefi-fuxi
-  UEFI_REF: ${{ inputs.uefi_ref || '87554bf90a6f5707ceeb3720b3dc507de914db94' }}
+  UEFI_REF: ${{ inputs.uefi_ref || 'c5793bc2c60a2e2f5d9fbaad8717ed3f2736bfd2' }}
   XCODE: ${{ inputs.xcode || '26.6' }}
   # Bring-up platform seed for the payload's device tree, not this phone's own value: the first images only reach the
   # touch probe's panic report, before any user data exists. Replace it before booting to userland.
