@@ -17,13 +17,6 @@
 struct native_adreno_client_record { char name[20]; uint32_t opens, refused, closes, slot, peak_mib, last_refusal; };
 struct native_adreno_asker_record { char name[20]; uint32_t reads; };
 
-char boot_progress_page_text[48][120];
-char boot_progress_banner_text[49][120];
-volatile unsigned boot_progress_banner_rows;
-char boot_progress_ext[8][48];
-char boot_progress_ext_wide[2][112];
-char boot_progress_panic_text[256];
-
 volatile uint64_t native_gop_wait_stats[7];
 volatile uint32_t native_adreno_fence_wait[8] __attribute__((weak));
 volatile uint32_t native_adreno_stall[29] __attribute__((weak));
@@ -71,8 +64,6 @@ volatile uint32_t native_dpu_stats[20] __attribute__((weak));
 volatile uint32_t native_dpu_pipes[54] __attribute__((weak));
 volatile uint32_t native_dpu_more[40] __attribute__((weak));
 
-const char *boot_progress_tag(void) { return ""; }
-size_t boot_progress_profile_rows(char *out, size_t cap) { (void)out; (void)cap; return 0; }
 unsigned boot_ui_trace_role_rows(unsigned role, char rows[][120], unsigned count, unsigned mode)
 { (void)role; (void)rows; (void)count; (void)mode; return 0; }
 unsigned boot_ui_trace_hot_rows(char rows[][120], unsigned count)
