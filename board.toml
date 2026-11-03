@@ -166,6 +166,12 @@ kernel-ctrr-to-be-enabled = 0
 osenvironment = "main"
 crypto-hash-method = "sha2-384"
 
+# The 208-byte 21H461 SystemVolume auth blob AppleImage4 reads for
+# SecurityLock SOFTWARE_LOCK (LockCapsuleInterface). Value transcribed from
+# the old fuxi ADT; it is the unchanged SystemVolume root-hash payload.
+[adt.chosen.bytes]
+system-volume-auth-blob = "0200000000000000010000002000000061f50c6269a33b16100d87e8a69de5797ccf07c1ab54ad68b02d5f236f36674500000000000000000000000000000000000000000000000000000000000000008a413a0cda7f6a6502edabd0a8d1c7f139995a1f6b3b034abcee8dbf2e6dff2900000000000000000000000000000000000000000000000000000000000000006f445c471a849af9c22fcef44be334badf77981d881549faf4bda03e8ff0750e0000000000000000000000000000000000000000000000000000000000000000"
+
 # Defaults: keep the device awake and report a virtual platform (no SEP).
 [adt.defaults.u32]
 sleep-disabled = 1
