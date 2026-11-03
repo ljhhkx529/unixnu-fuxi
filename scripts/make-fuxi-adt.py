@@ -36,6 +36,14 @@ UFS_HC_SIZE = 0x3000
 UFS_PHY = 0x1d80000
 UFS_PHY_SIZE = 0x2000
 
+# The phone identities this board can present: root model -> (target type, product name, artwork geometry).
+# iPhone10,3 is the iOS row of the pinned UniXNU MobileGestalt guide; iPhone15,2 is the published identifier of the
+# iPhone 14 Pro, whose target type comes from Apple's own model references.
+# artwork-device-subtype is the artwork family's native pixel height, the same reading as the guide's iPad example 2732
+# (iPad Pro 12.9). The point width is not what the cell carries: iPhone X is 1125x2436 at 3x (375 pt), iPhone 14 Pro
+# 1179x2556 at 3x (393 pt).
+PHONE_MODELS = {'iPhone10,3': ('D22', 'iPhone X', 2436), 'iPhone15,2': ('D72', 'iPhone 14 Pro', 2556)}
+
 
 def node(name, properties=(), children=()):
     properties = [('name', name.encode() + b'\0'), *properties]
@@ -84,6 +92,11 @@ def main():
     parser.add_argument('--ipad-identity', action='store_true',
                         help='/product and /buttons describe an iPad-class device without a Home button (MobileGestalt reads these from the tree); '
                              'values follow the unchanged iPad7,1 tree, the panel geometry and button set are sheng\'s')
+    parser.add_argument('--phone-identity', action='store_true',
+                        help='/product and /buttons describe an iPhone-class device without a Home button, with the geometry of --phone-model. '
+                             'The installed System must be an iPhoneOS root for its userland to match this identity')
+    parser.add_argument('--phone-model', default='iPhone15,2', choices=sorted(PHONE_MODELS),
+                        help='root model of the phone identity')
     parser.add_argument('--cpu-regs', default='0',
                         help='Comma-separated CPU MPIDR affinity values (the /cpus reg of each core); the first is the running boot CPU. '
                              'SM8550 numbers its cores 0x000..0x700 in Affinity1 (sm8550.dtsi). More than one adds /psci')
@@ -130,11 +143,23 @@ def main():
                                    ('device_type', b'cpu\0'), ('compatible', b'arm,cortex-a715\0'),
                                    ('timebase-frequency', struct.pack('<I', TIMEBASE))])
             for index, reg in enumerate(cpu_regs)]
+    if args.ipad_identity and args.phone_identity:
+        parser.error('--ipad-identity and --phone-identity select one identity each')
+    if args.ipad_identity:
+        identity = {'model': 'iPad7,1', 'target': 'J120', 'name': 'iPad Pro (12.9-inch) (2nd generation)',
+                    'idiom': 'pad', 'subtype': 2732, 'scale': 2, 'gamut': 'sRGB', 'fallback': 'iPad6,7'}
+    elif args.phone_identity:
+        target, name, subtype = PHONE_MODELS[args.phone_model]
+        # No compatible-device-fallback: its value comes from an iPhone device tree, which no pinned source here carries.
+        identity = {'model': args.phone_model, 'target': target, 'name': name,
+                    'idiom': 'phone', 'subtype': subtype, 'scale': 3, 'gamut': 'P3', 'fallback': None}
+    else:
+        identity = None
     tree = node('device-tree', [
         # hw.product/hw.machine/hw.target come from the root 'model'/'target-type' (IODTPlatformExpert);
-        # libMobileGestalt prefix-matches hw.product against iPhone/iPod/iPad, so the iPad identity needs both here.
-        ('model', b'iPad7,1\0' if args.ipad_identity else b'sheng-first-boot\0'),
-        *([('target-type', b'J120\0')] if args.ipad_identity else []),
+        # libMobileGestalt prefix-matches hw.product against iPhone/iPod/iPad, so a device identity needs both here.
+        ('model', identity['model'].encode() + b'\0' if identity else b'sheng-first-boot\0'),
+        *([('target-type', identity['target'].encode() + b'\0')] if identity else []),
         # Root compatible strings of the compiled board DT (xiaomi,sheng / qcom,sm8550).
         ('compatible', b'xiaomi,sheng\0qcom,sm8550\0'),
         ('#address-cells', struct.pack('<I', 2)),
@@ -153,7 +178,7 @@ def main():
                         # baseband). Values established on hardware by github.com/dipa-studio/ios-sweet (tools/mkadt.py).
                         *([('certificate-production-status', struct.pack('<I', 0)), ('effective-production-status-ap', struct.pack('<I', 0)),
                            ('certificate-security-mode', struct.pack('<I', 1)), ('effective-security-mode-sep', struct.pack('<I', 1))]
-                          if args.ipad_identity else []),
+                          if identity else []),
                         # This property describes the actual volatile Data RAM disk. A persistent one is not ephemeral: with the property
                         # datamigrator skips every migration (os_variant_uses_ephemeral_storage), so the staged system apps never install.
                         *([('ephemeral-storage', struct.pack('<I', 1))]
@@ -193,16 +218,16 @@ def main():
         *( [node('buttons', [('compatible', b'buttons\0'), ('device_type', b'buttons\0'),
                              # No 'menu' entry: sheng has no Home button. 2 = the non-mechanical answer BSPlatform passes through.
                              ('button-names', b'hold\0voldown\0volup\0'),
-                             ('home-button-type', struct.pack('<I', 2))])] if args.ipad_identity else [] ),
-        node('product', [('product-name', b'iPad Pro (12.9-inch) (2nd generation)\0' if args.ipad_identity else b'Xiaomi Pad 6S Pro 12.4\0'),
+                             ('home-button-type', struct.pack('<I', 2))])] if identity else [] ),
+        node('product', [('product-name', identity['name'].encode() + b'\0' if identity else b'Xiaomi Pad 6S Pro 12.4\0'),
                          ('model', b'xiaomi,sheng\0'),
-                         *( [('product-description', b'iPad Pro (12.9-inch) (2nd generation)\0'),
-                             ('artwork-device-idiom', b'pad\0'),
-                             ('artwork-device-subtype', struct.pack('<I', 2732)),
-                             ('artwork-scale-factor', struct.pack('<I', 2)),
-                             ('artwork-display-gamut', b'sRGB\0'),
-                             ('compatible-device-fallback', b'iPad6,7\0'),
-                             ('thin-bezel', struct.pack('<I', 1))] if args.ipad_identity else [] )]),
+                         *( [('product-description', identity['name'].encode() + b'\0'),
+                             ('artwork-device-idiom', identity['idiom'].encode() + b'\0'),
+                             ('artwork-device-subtype', struct.pack('<I', identity['subtype'])),
+                             ('artwork-scale-factor', struct.pack('<I', identity['scale'])),
+                             ('artwork-display-gamut', identity['gamut'].encode() + b'\0'),
+                             *([('compatible-device-fallback', identity['fallback'].encode() + b'\0')] if identity['fallback'] else []),
+                             ('thin-bezel', struct.pack('<I', 1))] if identity else [] )]),
         node('arm-io', [('device_type', b'arm-io\0'),
                         ('#address-cells', struct.pack('<I', 2)),
                         ('#size-cells', struct.pack('<I', 2)),
