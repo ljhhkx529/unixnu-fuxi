@@ -40,7 +40,7 @@ archives = [
   "component:SoftwareAES",
   "build-software-aes-bindings.py",
   "build-fuxi-ufs.py",
-  "component:VirtioMmioBlock",
+  "build-arm-driver.py NativeVirtioBlock --verified-root --verified-root-bundle",
   "component:RamBlock",
   "build-fuxi-ram-block.py",
   "build-fuxi-virtio-bindings.py",

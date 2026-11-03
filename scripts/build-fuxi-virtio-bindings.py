@@ -25,11 +25,12 @@ OUT = ROOT / 'build/virtio-mmio-block-verified-bundle'
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
-    obj = ROOT / 'build/virtio-mmio-block/libVirtioMmioBlock.a'
-    object_src = ROOT / 'build/virtio-mmio-block/NativeVirtioBlock.o'
+    obj = OUT / 'libVirtioMmioBlock.a'
+    object_src = OUT / 'NativeVirtioBlock.o'
     if not obj.is_file() or not object_src.is_file():
-        # component:VirtioMmioBlock builds the plain archive and object; it must run first.
-        sys.exit(f'{obj} or {object_src} missing: keep component:VirtioMmioBlock before this script in [kernel].archives')
+        # build-arm-driver.py NativeVirtioBlock --verified-root --verified-root-bundle
+        # builds the verified archive and object here; it must run first.
+        sys.exit(f'{obj} or {object_src} missing: keep the verified VirtioMmioBlock build before this script in [kernel].archives')
 
     source = ROOT / 'scripts/data/native-storage-original-bindings.S'
     text = source.read_text()
@@ -46,10 +47,8 @@ def main():
                     '-Werror', '-Wno-incompatible-sysroot', '-c', source,
                     '-o', bindings_object], check=True)
 
-    # Copy the plain archive and append the absolute-symbol object.
+    # Append the absolute-symbol object to the verified archive in place.
     archive = OUT / 'libVirtioMmioBlock.a'
-    archive.unlink(missing_ok=True)
-    shutil.copyfile(obj, archive)
     subprocess.run(['xcrun', 'ar', 'q', str(archive), str(bindings_object)], check=True)
 
     # The baseline bindings check derives the object name from the archive name

@@ -61,10 +61,15 @@ fault_source = ROOT / 'kits/fuxi/BootFaultProbe.c'
 fault_obj = compile_like(shim_record, fault_source, OUT / 'BootFaultProbe.o',
                           ['-mgeneral-regs-only', '-Wall', '-Wextra', '-Werror',
                            '-I', str(ROOT / '.cache/xnu-work/osfmk')])
+stubs_source = ROOT / 'kits/fuxi/BootProgressStubs.c'
+stubs_obj = compile_like(shim_record, stubs_source, OUT / 'BootProgressStubs.o',
+                          ['-mgeneral-regs-only', '-Wall', '-Wextra', '-Werror',
+                           '-I', str(ROOT / '.cache/xnu-work/osfmk')])
 
 archive = OUT / 'libBootProgress.a'
 archive.unlink(missing_ok=True)
-subprocess.run(['xcrun', 'ar', 'rcs', str(archive), str(policy_obj), str(progress_obj), str(fault_obj)],
+subprocess.run(['xcrun', 'ar', 'rcs', str(archive), str(policy_obj), str(progress_obj), str(fault_obj),
+                str(stubs_obj)],
                check=True, timeout=30)
 (OUT / 'build-report.json').write_text(json.dumps({
     'watchdog_policy_sha256': hashlib.sha256(policy_source.read_bytes()).hexdigest(),
