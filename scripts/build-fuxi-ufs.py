@@ -59,13 +59,16 @@ CXX_FLAGS = ['-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
 
 
 def ufs_extra(unixnu):
-    # Verified block is deferred: the first milestone is the read-only probe chain
-    # (native-ufs-probe=10/12), which must not pull in vr_* / verified_root_* or a
-    # signed policy bundle. NATIVE_VERIFIED_BLOCK gates configureVerification() in
-    # NativeUfs.cpp; leave it off until the APFS root mount step needs it.
+    # Stage 2 (APFS root mount): enable verified-block so NativeUfs verifies each
+    # read against the signed root policy (vr_* / verified_root_* symbols from
+    # libVerifiedRootProbe.a). The includes/defines match build-arm-driver.py's
+    # NativeUfs legacy component.
     return ['-I', ROOT / '.cache/xnu-work/osfmk',
             '-I', ROOT / 'build/storage-abi/include',
+            '-I', unixnu / 'kits/VerifiedRoot/include',
             '-I', unixnu / 'drivers/VirtioMmioBlock',
+            '-DNATIVE_VERIFIED_BLOCK=1',
+            '-DNATIVE_VERIFIED_BLOCK_MULTI_POLICY=1',
             '-mgeneral-regs-only']
 
 

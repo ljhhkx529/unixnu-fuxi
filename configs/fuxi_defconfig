@@ -12,19 +12,24 @@ CONFIG_XNU_NATIVE_UFS=y
 # boot-progress supplies boot_progress_poll. boot-log (NativeUFS-fuxi keeps the
 # old fuxi boot_log_* references) is appended to EXTRA_LD_ARCHIVES below.
 CONFIG_XNU_NATIVE_VIRTIO_BLOCK=y
-# RamBlock (Data volume RAM disk) is deferred until the APFS root mount step;
-# the read-only UFS probe chain does not reference it.
-# CONFIG_XNU_NATIVE_RAM_BLOCK is not set
-# VERIFIED_ROOT_PROBE is deferred: it needs the vr_* symbols and a signed policy
-# bundle, both of which are only required to mount the APFS root. The first UFS
-# milestone is the read-only probe chain (native-ufs-probe=10/12), so leave it off.
-# CONFIG_XNU_VERIFIED_ROOT_PROBE is not set
-# BOOT_PROGRESS is deferred with VerifiedRoot/RamBlock: build-xnu-4k-baseline.sh
-# gates BOOT_PROGRESS=1 on XNU_OWNER_ROOT_AUDIT=1, which belongs to the APFS
-# root mount step. boot_progress_poll is weak in NativeUfs.cpp, so the read-only
-# UFS probe chain links without it.
-# CONFIG_XNU_BOOT_PROGRESS is not set
+CONFIG_XNU_NATIVE_RAM_BLOCK=y
+CONFIG_XNU_VERIFIED_ROOT_PROBE=y
+CONFIG_XNU_BOOT_PROGRESS=y
 CONFIG_XNU_NATIVE_VIRTIO_BLOCK_ARCHIVE="{tree}/build/virtio-mmio-block-verified-bundle/libVirtioMmioBlock.a"
+CONFIG_XNU_VERIFIED_ROOT_ARCHIVE="{tree}/build/verified-root-os-xnu-bundle/libVerifiedRootProbe.a"
+# Owner root mount chain (union SystemOS + Data), following unixnu-fuxi-old's
+# fuxi_full_defconfig and UniXNU-sheng's sheng_defconfig.
+CONFIG_XNU_OWNER_ROOT_AUDIT=y
+CONFIG_XNU_OWNER_ROOT_TRUST=y
+CONFIG_XNU_OWNER_CACHE_MOUNT=y
+CONFIG_XNU_OWNER_CACHE_STARTUP=y
+CONFIG_XNU_OWNER_CACHE_CARRIER=n
+CONFIG_XNU_OWNER_BOOT_MANIFEST=y
+CONFIG_XNU_OWNER_DATA_MOUNT=y
+CONFIG_XNU_OWNER_DATA_VOLUME_UUID="3E81D4A6-8D16-496B-B890-E680C6E6997C"
+CONFIG_XNU_OWNER_CACHE_VOLUME_UUID="8846FE78-2910-4297-AF97-D59BB6F8FC16"
+CONFIG_XNU_OWNER_CRYPTEX_FILES=n
+CONFIG_XNU_OWNER_UNION_SYSTEMOS=y
 # The SoC fragment enables the Adreno driver; it is not selected for fuxi yet.
 # CONFIG_XNU_NATIVE_ADRENO is not set
 # Without this the BCM2837 target maps PLATFORM_PANIC_LOG_PADDR (0x3c0fc000, RAM on a Raspberry Pi 3) in PE_create_console,
