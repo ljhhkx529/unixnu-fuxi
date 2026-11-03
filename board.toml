@@ -122,9 +122,45 @@ root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
 # Memory DarwinBoot gives XNU, as mouse233's fuxi RAM-root port uses it (verified there on this phone model).
 owned_memory_size = "0x130000000"
 
-# ADT defaults, following UniXNU-sheng's [adt.defaults.u32].
+# ADT root properties: the fuxi identity AppleImage4 needs for software
+# unlock (SecurityLock::LockCapsuleInterface). These come from
+# unixnu-fuxi-old's make-fuxi-adt.py --ipad-identity; without them AppleImage4
+# panics with the SecurityLock SOFTWARE_LOCK message. The model is the
+# iPad7,1 / J120 target the unchanged 21H461 IPSW was built for.
+[adt.root.string]
+model = "iPad7,1"
+target-type = "J120"
+
+# The product node AppleImage4 requires. UniXNU-sheng puts model/artwork here
+# for its 27.x target; fuxi uses the old 17.7.11 iPad Pro identity.
+[adt.product.string]
+model = "iPad Pro (12.9-inch) (2nd generation)"
+product-name = "iPad Pro (12.9-inch) (2nd generation)"
+artwork-display-gamut = "sRGB"
+compatible-device-fallback = "iPad6,7"
+
+[adt.product.u32]
+artwork-device-subtype = 2732
+artwork-scale-factor = 2
+thin-bezel = 1
+
+# Security state as on a dev-fused, undemoted board (0,0,1,1): mobileactivationd
+# then takes its native Hactivation branch without a SEP or baseband. The
+# crypto hash method matches the target iPad's /chosen sha2-384.
+[adt.chosen.u32]
+certificate-production-status = 0
+effective-production-status-ap = 0
+certificate-security-mode = 1
+effective-security-mode-sep = 1
+amfi-only-platform-code = 1
+kernel-ctrr-to-be-enabled = 0
+
+[adt.chosen.string]
+osenvironment = "main"
+crypto-hash-method = "sha2-384"
+
+# Defaults: keep the device awake and report a virtual platform (no SEP).
 [adt.defaults.u32]
-# No SEP and only a bridged PMGR: keep the device awake and report a virtual platform.
 sleep-disabled = 1
 vmm-present = 1
 # The 4.75 GiB owned window (4864 MiB): memory/64K + 1024, the same value UniXNU-sheng uses.
