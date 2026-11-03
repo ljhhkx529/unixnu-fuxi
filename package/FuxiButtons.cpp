@@ -8,7 +8,9 @@
 // enable bit sits in IRQ_i_CFG) drivers use it:
 // per APID in the "chnls" window +0x100 ACC_ENABLE, +0x104 IRQ_STATUS, +0x108 IRQ_CLEAR; the owner's accumulated status words at "intr" +
 // 0x1000 * EE + 4 * word; in the peripheral 0x10 RT_STS, 0x11 SET_TYPE, 0x12 POLARITY_HIGH, 0x13 POLARITY_LOW, 0x14 LATCHED_CLR, 0x15 EN_SET.
-// The interrupt handler acknowledges and wakes one thread; the thread reads the three levels and reports a change. Nothing polls.
+// The interrupt handler acknowledges, latches the edges it saw and wakes one thread; the thread reports the live levels, or a latched
+// edge when nothing is held any more. A tap shorter than the wake-up latency is up again before the levels are read, so without the
+// latch only a long press would reach HID. A latched press is reported as a complete pair and held for kMinPressMs.
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IODeviceMemory.h>
@@ -32,6 +34,8 @@ constexpr uint8_t kRtSts = 0x10, kSetType = 0x11, kPolHigh = 0x12, kPolLow = 0x1
 constexpr uint32_t kPdcPin = 1, kSpi = 481, kPdcVersion = 0x1000, kPdcCfg = 0x110, kPdcEnableBank = 0x10;
 // Report 2 bits (NativeHidInput): 1 Power, 2 Volume Increment, 3 Volume Decrement.
 constexpr uint32_t kReportPower = 1u << 1, kReportVolumeUp = 1u << 2, kReportVolumeDown = 1u << 3;
+// How long a reported press stays down before its release, however briefly the key was touched.
+constexpr uint64_t kMinPressMs = 60;
 
 struct Window {IOMemoryMap *map; volatile uint32_t *va;};
 Window gCore, gCnfg, gObs, gChn, gIntr, gPdc;
@@ -39,6 +43,8 @@ br_arbiter gArb;
 int gPon = -1, gGpio = -1;
 uint32_t gApids;
 volatile uint32_t gEvents;
+volatile uint32_t gLatched;
+uint64_t gTicksPerMs, gMinPressTicks;
 void (*volatile gSink)(void *, uint32_t);
 void *volatile gSinkContext;
 
@@ -51,6 +57,25 @@ bool mapWindow(Window &w, uint64_t base, uint64_t size) {
 }
 volatile uint32_t *apidReg(int apid, uint32_t reg) {return gChn.va + (BR_CHNL_APID_STRIDE * (uint32_t)apid + reg) / 4;}
 void fail(int step, int error) {fuxi_buttons_stats[8] = error; fuxi_buttons_stats[0] = -step;}
+
+// The physical generic counter: it runs through the sleep in the thread below and needs no timer driver handle.
+uint64_t tickNow() {
+    uint64_t value;
+    __asm__ volatile("isb sy" ::: "memory");
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(value));
+    return value;
+}
+
+// The report 2 bits the edges of this status stand for. A bit is set by either edge, so the press and its release both arrive here.
+uint32_t reportBits(int apid, uint32_t status) {
+    uint32_t bits = 0;
+    if (apid == gPon) {
+        if (status & kPowerBit) bits |= kReportPower;
+        if (status & kResinBit) bits |= kReportVolumeDown;
+    }
+    if (apid == gGpio && (status & kGpioBit)) bits |= kReportVolumeUp;
+    return bits;
+}
 
 // The APID that serves ppid with its interrupts owned by this EE, as the mainline driver chooses it; -1 when there is none.
 int findApid(uint32_t ppid) {
@@ -78,9 +103,9 @@ int armPeripheral(int apid, uint8_t bits) {
     return rc;
 }
 
-// Primary interrupt context: acknowledge in the arbiter and the peripheral, then wake the thread. An APID that is not ours but raised
-// the line only gets its arbiter status cleared (mainline cleanup_irq): reading another APID's registers can end in a synchronous
-// external abort (int-227 panicked reading ACC_ENABLE of APIDs it did not own).
+// Primary interrupt context: acknowledge in the arbiter and the peripheral, record which of our keys it was, then wake the thread. An APID
+// that is not ours but raised the line only gets its arbiter status cleared (mainline cleanup_irq): reading another APID's registers can
+// end in a synchronous external abort (int-227 panicked reading ACC_ENABLE of APIDs it did not own).
 void buttonsIrq(void *) {
     bool ours = false;
     for (uint32_t word = 0; word * 32 < gApids; ++word) {
@@ -95,7 +120,10 @@ void buttonsIrq(void *) {
             }
             const uint32_t status = *apidReg(apid, kIrqStatus);
             *apidReg(apid, kIrqClear) = status;
-            if (status) br_write8(gChn.va, apid, kLatchedClr, (uint8_t)status);
+            if (status) {
+                br_write8(gChn.va, apid, kLatchedClr, (uint8_t)status);
+                __atomic_fetch_or(&gLatched, reportBits(apid, status), __ATOMIC_RELEASE);
+            }
             ours = true;
         }
     }
@@ -129,7 +157,18 @@ uint32_t pressed() {
     return mask;
 }
 
+void report(uint32_t mask) {
+    fuxi_buttons_stats[3] = (int32_t)mask;
+    void (*sink)(void *, uint32_t) = __atomic_load_n(&gSink, __ATOMIC_ACQUIRE);
+    if (sink) {sink(gSinkContext, mask); fuxi_buttons_stats[2] = fuxi_buttons_stats[2] + 1;}
+}
+
 bool setup() {
+    // A frequency of zero would only mean a board without the generic timer; the minimum press then simply is not held.
+    uint64_t frequency = 0;
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frequency));
+    gTicksPerMs = frequency / 1000;
+    gMinPressTicks = gTicksPerMs * kMinPressMs;
     gArb.ee = 0;
     if (!mapWindow(gCore, kCore, 0x3000) || !mapWindow(gCnfg, kCnfg, 0x4000) || !mapWindow(gIntr, kIntr, 0x1000) || !mapWindow(gPdc, kPdc, 0x2000)) {
         fail(1, -12); return false;
@@ -174,13 +213,28 @@ void buttonsThread(void *, wait_result_t) {
     thread_set_thread_name(current_thread(), "fuxi-buttons");
     if (!setup()) return;
     uint32_t seen = gEvents, last = 0;
+    uint64_t pressAt = 0;
     for (;;) {
-        const uint32_t mask = pressed();
+        const uint32_t levels = pressed();
+        // A held button reports its own level; with nothing held any more the edges the handler latched are the only trace of a tap.
+        const uint32_t latch = (levels || last) ? 0 : __atomic_exchange_n(&gLatched, 0, __ATOMIC_ACQ_REL);
+        const uint32_t mask = levels ? levels : (last ? 0 : latch);
         if (mask != last) {
+            if (mask) pressAt = tickNow();
+            else {
+                const uint64_t held = tickNow() - pressAt;
+                // The consumers of the power key act on a press of a length, so a shorter pair is stretched rather than dropped.
+                if (held < gMinPressTicks) {
+                    IOSleep((uint32_t)((gMinPressTicks - held) / gTicksPerMs) + 1);
+                    if (pressed()) continue;  // held again during the sleep: the pair stays open
+                }
+                // The edges of this pair are spent; left latched they would be read back as another tap.
+                __atomic_store_n(&gLatched, 0, __ATOMIC_RELEASE);
+            }
             last = mask;
-            fuxi_buttons_stats[3] = (int32_t)mask;
-            void (*sink)(void *, uint32_t) = __atomic_load_n(&gSink, __ATOMIC_ACQUIRE);
-            if (sink) {sink(gSinkContext, mask); fuxi_buttons_stats[2] = fuxi_buttons_stats[2] + 1;}
+            report(mask);
+            // A tap is over before it is reported, so run its release now rather than waiting for an edge that came before it.
+            if (mask && !levels) continue;
         }
         assert_wait((event_t)&gEvents, THREAD_UNINT);
         if (gEvents != seen) clear_wait(current_thread(), THREAD_AWAKENED);
