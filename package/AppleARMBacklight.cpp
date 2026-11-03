@@ -2,6 +2,8 @@
 // Panel brightness for the sheng board (boot argument sheng-backlight=1, started by BacklightProbe.cpp). The panel's backlight is two Kinetic KTZ8866 drivers at I2C
 // address 0x11, one on the QUP wrap1 serial engine 1 (i2c@a84000, "ktz8866a") and one on the I2C hub engine 2 (i2c@988000, "ktz8866b");
 // both get the same 11-bit level in BL_BRT_LSB (0x04, bits 2:0) and BL_BRT_MSB (0x05), as the mainline ktz8866 driver writes it.
+// fuxi runs the same service with fuxi-backlight=dsi on the panel's DSI link instead (see the kDsi0 constants below): no GCC clocks,
+// no GENI engines, no interrupts - every level is one DCS 0x51 write.
 // The engines run the GENI I2C firmware the boot loaders left loaded and clocked; this code votes their clocks on again, keeps the clock
 // and SCL timing the boot loader set and only issues FIFO transfers through the event-driven core in GeniI2c.c.
 // Transfers never wait: each engine's interrupt (SPI 354 for a, SPI 466 for b, level) only reads and clears the engine's status, records
@@ -47,12 +49,27 @@ constexpr uint32_t kHalt[] = {0x23294, 0x23284, 0x2327c, 0x23280, 0x1813c, 0x231
 constexpr uint8_t kAddress = 0x11, kBrtLsb = 0x04, kBrtMsb = 0x05;
 constexpr uint32_t kMaxLevel = 2047, kStepMs = 16, kPollMs = 1, kStepDeadlineMs = 25, kAttachMs = 250, kAttachTries = 240;
 
+// fuxi-backlight=dsi: the fuxi panel ("xiaomi m3 38 0c 0a sec cmd mode dsc dsi panel" on mdss_dsi_ctrl0) takes its brightness as
+// one DCS set_display_brightness (0x51, high byte first; 0x7ff is the normal maximum, 0xfff HBM) on the DSI link, and the board's
+// i2c@a84000 is disabled, so the KTZ8866 I2C path below must not run (touching it is what panics a plain sheng-backlight=1 boot
+// here). Register names are Qualcomm dsi_ctrl_hw_cmn's; the TPG command-DMA FIFO packet format follows msm dsi_host (houji's
+// HoujiBacklightProtocol.h drives the same DSI0 address this way). ShengBacklight's published 0..2047 is the panel's normal
+// range as it is.
+constexpr uint64_t kDsi0 = 0xae94000;
+constexpr uint32_t kDsiCtrl = 0x04, kDsiStatus = 0x08, kDsiDmaCtrl = 0x3c, kDsiDmaLen = 0x4c, kDsiDmaTrigger = 0x90,
+    kDsiIntCtrl = 0x110, kDsiTpgCtrl = 0x15c, kDsiTpgFifo = 0x17c, kDsiTpgFifoReset = 0x1ec, kDsiDmaSchedule = 0x390;
+constexpr uint32_t kDsiIntStatusBits = 0x55115501u, kDsiIntError = 1u << 24, kDsiIntDmaDone = 1u << 0;
+constexpr uint32_t kDsiMinLevel = 8;   // below this the panel goes fully dark
+
 struct Window {IOMemoryMap *map; volatile uint32_t *va;};
-Window gGcc, gSe[2];
+Window gGcc, gSe[2], gDsi;
 volatile uint32_t gIrqStatus[2];
 IOInterruptEventSource *volatile gInbox;
 // The newest brightness asked for: goal << 16 | fade milliseconds, with bit 63 set while the work loop has not taken it.
 volatile uint64_t gRequest;
+// fuxi-backlight=dsi state: gDsiMode selects the DSI transport for the whole service; gDsiHalt stops the writes after an
+// uncertain transfer (an error raised or a timeout after the trigger), since the panel may or may not have taken the last one.
+bool gDsiMode = false, gDsiHalt = false;
 
 bool mapWindow(Window &w, uint64_t base, uint64_t size) {
     IODeviceMemory *memory = IODeviceMemory::withRange(base, size);
@@ -86,6 +103,46 @@ void seIrq(void *context) {
     IOInterruptEventSource *inbox = gInbox;
     if (inbox && status) inbox->interruptOccurred(nullptr, nullptr, 0);
 }
+
+// One DSI long write through the TPG command-DMA FIFO; 0 when the panel link took it, else 1 not in command mode, 2 command DMA
+// busy, 3 the TPG FIFO is in use, 4 an error was already pending, 5 an error was raised, 6 no completion in ~50 ms. The controller
+// belongs to the display pipeline, so every register this touches is saved and written back, also after a failure - left on the TPG
+// the display stream would stall. DSI_INT_CTRL mixes write-one-to-clear status bits with enables; only kDsiIntStatusBits are status.
+int dsiSend(volatile uint32_t *base, uint32_t header, uint32_t payload, unsigned words) {
+    if ((rd(base, kDsiCtrl) & 5u) != 5u) return 1;   // controller enabled and in command mode
+    if (rd(base, kDsiStatus) & 2u) return 2;         // command DMA busy
+    if (rd(base, kDsiTpgCtrl)) return 3;             // the TPG FIFO belongs to someone else
+    if (rd(base, kDsiIntCtrl) & kDsiIntError) return 4;
+    const uint32_t dma = rd(base, kDsiDmaCtrl), schedule = rd(base, kDsiDmaSchedule), length = rd(base, kDsiDmaLen);
+    wr(base, kDsiIntCtrl, (rd(base, kDsiIntCtrl) & ~kDsiIntStatusBits) | kDsiIntDmaDone);
+    wr(base, kDsiTpgCtrl, 0x30006);
+    wr(base, kDsiTpgFifo, header);
+    wr(base, kDsiTpgFifo, words == 2 ? payload : 0);   // the FIFO takes word pairs; the DMA length counts payload words only
+    wr(base, kDsiDmaCtrl, (dma & 0x2bffffffu) | 0x10000000u);
+    wr(base, kDsiDmaSchedule, schedule & ~2u);
+    wr(base, kDsiDmaLen, words * 4);
+    wr(base, kDsiDmaTrigger, 1);
+    int rc = 6;
+    uint32_t status = 0;
+    for (unsigned n = 0; n < 5000; ++n) {
+        status = rd(base, kDsiIntCtrl);
+        if (status & kDsiIntError) {rc = 5; break;}
+        if (status & kDsiIntDmaDone) {rc = 0; break;}
+        IODelay(10);
+    }
+    wr(base, kDsiIntCtrl, (status & ~kDsiIntStatusBits) | kDsiIntDmaDone);
+    wr(base, kDsiTpgCtrl, 0);
+    wr(base, kDsiTpgFifoReset, 1);
+    wr(base, kDsiTpgFifoReset, 0);
+    wr(base, kDsiDmaCtrl, dma);
+    wr(base, kDsiDmaSchedule, schedule);
+    wr(base, kDsiDmaLen, length);
+    return rc;
+}
+// DCS set_display_brightness (0x51) with the level's high byte first: last + long write 0x39, 3 bytes, padded to the word pair.
+int dsiBrightness(uint32_t level) {
+    return dsiSend(gDsi.va, 0xc0390003u, 0xff000051u | ((level & 0xff) << 16) | ((level >> 8) << 8), 2);
+}
 }  // namespace
 
 class ShengBacklight : public IOService {
@@ -106,6 +163,24 @@ class ShengBacklight : public IOService {
 
     // Starts the engine's next transfer when it is free.
     void kick(unsigned i) {
+        if (gDsiMode) {
+            // Engine 0 is the DSI link; begin() kicks before the first publish, and that boot level stays as the boot loader set it.
+            if (i || gDsiHalt || !published) return;
+            Engine &e = engine[0];
+            if (e.written == (int32_t)target) return;
+            const uint32_t level = target > kMaxLevel ? kMaxLevel : target < kDsiMinLevel ? kDsiMinLevel : target;
+            const int rc = dsiBrightness(level);
+            e.written = (int32_t)target;   // a failed write is retried with the next level asked for
+            if (rc) {
+                bump(5);
+                native_backlight_stats[9] = rc;
+                if (rc >= 5) gDsiHalt = true;   // uncertain whether the panel took it: no more writes this boot
+            } else {
+                bump(15);
+                native_backlight_stats[2] = (int32_t)level;
+            }
+            return;
+        }
         Engine &e = engine[i];
         if (!e.usable || geni_i2c_busy(&e.bus)) return;
         int rc = 0;
@@ -172,6 +247,7 @@ class ShengBacklight : public IOService {
     }
     // The work loop's view of the engines: what the interrupts gathered, in polling mode the status register itself, then deadlines.
     void service() {
+        if (gDsiMode) return;   // the DSI link has no engine state to service; writes happen in kick()
         for (unsigned i = 0; i < 2; ++i) {
             uint32_t status = __atomic_exchange_n(&gIrqStatus[i], 0u, __ATOMIC_ACQUIRE);
             if (!irqMode) {
@@ -210,6 +286,7 @@ class ShengBacklight : public IOService {
     static void attachFired(OSObject *owner, IOTimerEventSource *sender) {
         ShengBacklight *self = static_cast<ShengBacklight *>(owner);   // see impersonate()
         if (!self || self->irqMode) return;
+        if (gDsiMode) return;   // no GENI engines, no lines to attach
         if (!armcpu_spi_attach) {native_backlight_stats[12] = -1; return;}
         native_backlight_stats[14] = (int32_t)++self->attachTries;
         int rc = armcpu_spi_attach(32 + kSpi[0], false, seIrq, (void *)(uintptr_t)0, nullptr, nullptr);
@@ -321,6 +398,19 @@ public:
         if (!loop || !fade || !tick || !attachTimer || !inbox || !request) return false;
         if (loop->addEventSource(fade) || loop->addEventSource(tick) || loop->addEventSource(attachTimer) || loop->addEventSource(inbox) ||
             loop->addEventSource(request)) return false;
+        if (gDsiMode) {
+            // No GENI engines exist on this transport: both are "started, not usable", so begin() publishes at once (no level
+            // read to wait for), no interrupt is ever attached and every new level is one DSI write out of kick().
+            for (unsigned i = 0; i < 2; ++i) {
+                engine[i].started = true;
+                engine[i].usable = false;
+                engine[i].written = -1;
+                native_backlight_stats[3 + i] = -1;
+            }
+            native_backlight_stats[0] = 2;
+            loop->runAction(&ShengBacklight::begin, this);
+            return true;
+        }
         for (unsigned i = 0; i < 2; ++i) {
             const GeniIo io = {ioRead, ioWrite, (void *)gSe[i].va};
             uint32_t config = 0;
@@ -363,6 +453,22 @@ OSDefineMetaClassAndStructors(ShengBacklight, IOService)
 // Called by BacklightProbe.cpp once this file's classes are registered (its static initializer runs between preModLoad and postModLoad).
 // The service starts with the engines' level reads in flight and publishes itself when they are answered.
 extern "C" void sheng_backlight_start(void) {
+    // fuxi-backlight=dsi runs the same service on the panel's DSI link: only DSI0 is mapped, and the GCC clock votes and the GENI
+    // engines below are left alone entirely (fuxi's i2c@a84000 is disabled; reaching it is what panics a plain sheng-backlight=1).
+    char transport[8] = {};
+    gDsiMode = PE_parse_boot_argn("fuxi-backlight", transport, sizeof transport) && !strncmp(transport, "dsi", sizeof transport);
+    if (gDsiMode) {
+        if (!mapWindow(gDsi, kDsi0, 0x1000)) {fail(1, -12); return;}
+        native_backlight_stats[0] = 1;
+        const bool usable[2] = {false, false};
+        ShengBacklight *backlight = OSTypeAlloc(ShengBacklight);
+        if (!backlight || !backlight->init() || !backlight->attach(IOService::getPlatform()) || !backlight->startBacklight(usable)) {
+            if (backlight) backlight->release();
+            fail(3, -19); return;
+        }
+        backlight->release();
+        return;
+    }
     if (!mapWindow(gGcc, kGcc, 0x60000) || !mapWindow(gSe[0], kSeA, 0x4000) || !mapWindow(gSe[1], kSeB, 0x4000)) {fail(1, -12); return;}
     native_backlight_stats[0] = 1;
     wr(gGcc.va, kGccVote, rd(gGcc.va, kGccVote) | kVoteBits);
