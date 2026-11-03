@@ -112,6 +112,8 @@ panic_screen = true
 # validation add native-ufs-probe=10 (GPT geometry) or native-ufs-probe=12 (full startRoot + media report) temporarily.
 kernel_args = ["-v", "serial=3", "debug=0x14e", "kt_fixed_zones=120", "sheng-pmgr=2", "sheng-smp=1", "armcpu-spi-ipi=1",
                "armcpu-self-ipi=1", "native-ufs-root=1", "fuxi-touch=4", "fuxi-touch-hid=1", "fuxi-touch-panic=2"]
+# Signed-text fixups (from unixnu-fuxi-old board.toml), travelled in /chosen/text-fixups.
+text_fixups = ["BTAudioHALPlugin,38bec,ffc300d1f44f01a9,000080d2c0035fd6"]
 
 [payload.adt]
 # Supply the board's identity seed through --unique-chip-id.
@@ -121,6 +123,9 @@ unique_chip_id = "required"
 root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
 # Memory DarwinBoot gives XNU, as mouse233's fuxi RAM-root port uses it (verified there on this phone model).
 owned_memory_size = "0x130000000"
+# Data volume handoff: DBRDISK1 packed APFS container, persistent across boots.
+packed_data_ramdisk = true
+persistent_data = true
 
 # ADT root properties: the fuxi identity AppleImage4 needs for software
 # unlock (SecurityLock::LockCapsuleInterface). These come from
@@ -134,8 +139,10 @@ target-type = "J120"
 # The product node AppleImage4 requires. UniXNU-sheng puts model/artwork here
 # for its 27.x target; fuxi uses the old 17.7.11 iPad Pro identity.
 [adt.product.string]
-model = "iPad Pro (12.9-inch) (2nd generation)"
+model = "xiaomi,fuxi"
 product-name = "iPad Pro (12.9-inch) (2nd generation)"
+product-description = "iPad Pro (12.9-inch) (2nd generation)"
+artwork-device-idiom = "pad"
 artwork-display-gamut = "sRGB"
 compatible-device-fallback = "iPad6,7"
 
@@ -165,3 +172,14 @@ sleep-disabled = 1
 vmm-present = 1
 # The 4.75 GiB owned window (4864 MiB): memory/64K + 1024, the same value UniXNU-sheng uses.
 "kern.maxvnodes" = 78848
+
+# No Home button: 2 is the non-mechanical answer BSPlatform passes through.
+[adt.buttons.string]
+compatible = "buttons"
+device_type = "buttons"
+
+[adt.buttons.strings]
+button-names = ["hold", "voldown", "volup"]
+
+[adt.buttons.u32]
+home-button-type = 2
