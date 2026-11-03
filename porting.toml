@@ -85,16 +85,16 @@ evidence = [
 
 [[area]]
 id = "storage"
-status = "planned"
-components = []
-paths = ["scripts/*ufs*", "scripts/*storage*", "scripts/*userdata*", "scripts/*root*"]
-inputs = ["UFS host of SM8550; the GPT of LUN 0 (userdata) on the device."]
-configuration = ["CONFIG_XNU_NATIVE_UFS is not set."]
-procedure = ["Select a UFS component after the firmware boots."]
-findings = ["Other fuxi ports report the UFS controller hand-off from the firmware as usable; not reproduced here."]
-completion = ["Host: register, clock, link and SMMU facts match the board inventory."]
-limits = ["No storage driver is selected."]
-next_action = ["Choose the root path (RAM root or UFS) once the firmware boots."]
+status = "implemented"
+components = ["VirtioMmioBlock", "VerifiedRoot"]
+paths = ["drivers/NativeUfs", "scripts/build-fuxi-ufs.py", "scripts/build-fuxi-virtio-bindings.py", "scripts/data/native-storage-original-bindings.S", "scripts/build-boot-log.py", "package/BootLog*.c", "package/BootLogStubs.c", "package/BootLogExtraStubs.c"]
+inputs = ["UFS host 0x1d84000/0x3000; PHY 0x1d80000/0x2000; GCC 0x100000.", "Apps SMMU 0x15000000, UFS stream 0x60.", "LUN 0 userdata spans LBAs 0x2f7840..0x3afc3fa (3110976..61880618), 4096-byte blocks.", "Root volume UUID 04769D26-2CA0-4825-B443-E2E5F88300F2."]
+configuration = ["drivers/NativeUfs is a submodule of ljhhkx529/NativeUFS-fuxi; CONFIG_XNU_NATIVE_UFS=y links build/sheng-ufs/libShengUfs.a.", "IOBlockStorageDevice imports are pinned by scripts/data/native-storage-original-bindings.S (no live interface-audit.json), appended to the VirtioMmioBlock verified-bundle archive by build-fuxi-virtio-bindings.py.", "boot-log (BootLog.c + BootLogStubs.c + BootLogExtraStubs.c) supplies the boot_log_* symbols NativeUFS-fuxi keeps; the startup call site is patches/xnu/zzzc-boot-log.patch."]
+procedure = ["Build with ./unixnu defconfig fuxi_defconfig then ./unixnu build kernel.", "Validate the read chain on device with native-ufs-probe=10 (GPT geometry) then =12 (published=2 reads>0 failures=0 media=6).", "Then enable native-ufs-root=1 and the owner/VerifiedRoot/RamBlock/boot-progress chain for the APFS root mount."]
+findings = ["sheng's build-virtio-mmio-bindings.py needs the offline binary audit build/storage-abi/interface-audit.json; fuxi has no such capture, so it reuses unixnu-fuxi-old's pinned .S instead.", "build-xnu-4k-baseline.sh gates BOOT_PROGRESS=1 on XNU_OWNER_ROOT_AUDIT=1, so boot-progress is deferred with VerifiedRoot/RamBlock.", "NativeUFS-fuxi keeps the old fuxi boot_log_* strong references; ShengUfs dropped them."]
+completion = ["Host: register, clock, link and SMMU facts match the board inventory.", "Reads: kernel links with NativeUfs, VirtioMmioBlock bindings and boot-log; device probe=10/12 still pending."]
+limits = ["VerifiedRoot, RamBlock and boot-progress are deferred until the APFS root mount step.", "The pinned .S binds the slide=-0x1000000 21H461 kernelcache; a different pin requires re-auditing."]
+next_action = ["Rebuild after the latest patch series and run native-ufs-probe=10 then =12 on the device."]
 evidence = []
 
 [[area]]
