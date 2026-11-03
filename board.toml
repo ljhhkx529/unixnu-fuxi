@@ -42,6 +42,7 @@ archives = [
   "build-fuxi-ufs.py",
   "component:VirtioMmioBlock",
   "component:RamBlock",
+  "build-fuxi-ram-block.py",
   "build-fuxi-virtio-bindings.py",
   "build-libpthread-kernel.py",
   "build-mockfs-fixture.py",

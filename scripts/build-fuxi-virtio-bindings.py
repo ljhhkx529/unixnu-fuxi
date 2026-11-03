@@ -26,9 +26,10 @@ OUT = ROOT / 'build/virtio-mmio-block-verified-bundle'
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     obj = ROOT / 'build/virtio-mmio-block/libVirtioMmioBlock.a'
-    if not obj.is_file():
-        # component:VirtioMmioBlock builds the plain archive; it must run first.
-        sys.exit(f'{obj} missing: keep component:VirtioMmioBlock before this script in [kernel].archives')
+    object_src = ROOT / 'build/virtio-mmio-block/NativeVirtioBlock.o'
+    if not obj.is_file() or not object_src.is_file():
+        # component:VirtioMmioBlock builds the plain archive and object; it must run first.
+        sys.exit(f'{obj} or {object_src} missing: keep component:VirtioMmioBlock before this script in [kernel].archives')
 
     source = ROOT / 'scripts/data/native-storage-original-bindings.S'
     text = source.read_text()
@@ -51,8 +52,16 @@ def main():
     shutil.copyfile(obj, archive)
     subprocess.run(['xcrun', 'ar', 'q', str(archive), str(bindings_object)], check=True)
 
+    # The baseline bindings check derives the object name from the archive name
+    # (libVirtioMmioBlock.a -> VirtioMmioBlock.o); expose the component object
+    # under that name so the sha256 gate and the RAM/Virtio import comparison pass.
+    object_link = OUT / 'VirtioMmioBlock.o'
+    if object_link.is_symlink() or object_link.is_file():
+        object_link.unlink()
+    object_link.symlink_to(object_src)
+
     (OUT / 'bindings.json').write_text(json.dumps(dict(
-        compiled_object_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),
+        compiled_object_sha256=hashlib.sha256(object_src.read_bytes()).hexdigest(),
         bindings=bindings, original_code_modified=False,
         live_capture=False), indent=2) + chr(10))
     print(f'fuxi virtio verified-bundle archive: {archive.relative_to(ROOT)} ({len(bindings)} storage bindings)')
