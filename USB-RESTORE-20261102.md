@@ -56,3 +56,13 @@ python3 tests/check-legacy-metadata.py --kernelcache /path/to/kernelcache.decomp
 
 The check also refuses corrupted name, size, parent, call stub and wrapper bytes.
 同时验证类名、大小、父类、调用桩和参数传递指令遭破坏时均被拒绝。
+
+USB / progress coexistence: the board progress hook returns early from
+PE_init_kprintf. A guarded board adaptation now initializes QUD before that
+return and retains the progress sink. It reverses its own edit before the
+baseline patch loop. Unknown source contexts fail closed. This has source
+checks only; phone enumeration remains untested.
+
+USB 与进度显示共存：板级 PE_init_kprintf 提前返回前初始化 QUD，保留原进度
+输出；基线补丁循环之前撤回自身改动，未知上下文拒绝应用。已做源码检查，
+尚未进行本轮手机枚举测试。编译失败日志同时保留首个错误，便于定位根因。

@@ -18,7 +18,8 @@ if text.count(anchor) != 1:
     raise SystemExit('kernel recipe root anchor changed')
 text = text.replace(anchor, 'ROOT=' + shlex.quote(str(root)))
 anchor = '# The optional observation hooks overlap existing root/exec patch context.'
-prepare = '''python3 "$ROOT/scripts/prepare-fuxi-usb-debug.py" \
+prepare = '''python3 "$ROOT/scripts/fuxi-usb-boot-progress.py" "$ROOT/.cache/xnu-work" --reverse
+python3 "$ROOT/scripts/prepare-fuxi-usb-debug.py" \
   --module "$ROOT/drivers/QcomXnuUsbDebug" --xnu "$ROOT/refer/xnu" \
   --output "$ROOT/.cache/fuxi-qud-module"
 QUD_MODULE="$ROOT/.cache/fuxi-qud-module"
@@ -40,6 +41,7 @@ if [[ "$QUD_STATE2" == *'"state_before": "ready"'* ]]; then
   python3 "$QUD_PATCHER" check --xnu "$ROOT/.cache/xnu-work" --profile darwin23-fuxi
   python3 "$QUD_PATCHER" apply --xnu "$ROOT/.cache/xnu-work" --profile darwin23-fuxi
 fi
+python3 "$ROOT/scripts/fuxi-usb-boot-progress.py" "$ROOT/.cache/xnu-work"
 '''
 if text.count(anchor) != 1:
     raise SystemExit('kernel patch completion anchor changed')
