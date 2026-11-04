@@ -199,6 +199,8 @@ kernel_args = [
   "fuxi-touch-hid=1",
   "fuxi-touch-hw=7",
   "fuxi-buttons=1",
+  "sheng-backlight=1",
+  "fuxi-backlight=dsi",
 ]
 text_fixups = [
   "BTAudioHALPlugin,38bec,ffc300d1f44f01a9,000080d2c0035fd6",
@@ -217,7 +219,15 @@ root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
 cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x600,0x700"
 packed_data_ramdisk = true
 persistent_data = true
-ipad_identity = true
+# One identity at a time: the ADT tool rejects both options together. The phone identity writes the same /buttons and activation
+# properties with the artwork geometry of phone_model. Three things still stand between this and an iPhone-shaped UI: the installed
+# System is the unchanged iPad7,1 iPadOS 17.7.11 root, and the guide keeps the OS family with that root (iPadOS root stays iPadOS);
+# MobileGestalt caches its answers on the Data volume, keyed by build and platform UUID, so an identity change needs those cached
+# answers cleared; and the UI point scale comes from the offline-legacy-unit-scale boot argument, which publishes /chosen/display-scale
+# that MobileGestalt reads, so artwork-scale-factor = 3 here only matches the screen once that argument says 3 too.
+ipad_identity = false
+phone_identity = true
+phone_model = "iPhone15,2"           # iPhone 14 Pro: root model, target type D72, 1179x2556 pixels at 3x (393 points wide)
 unique_chip_id = "required"          # the platform seed is not stored in any repository
 
 # Image parameters come from the Mu-Silicium device config; [bootimg.image] would override them.
