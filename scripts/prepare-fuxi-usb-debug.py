@@ -37,7 +37,10 @@ def stage(module, xnu, output):
     shutil.copytree(module, output, ignore=shutil.ignore_patterns('.git', '__pycache__'))
     (output / 'soc/FuxiSm8550.h').write_text('''/* fuxi board policy; hardware register layout is the existing SM8550 profile.
  * PHY, power and device routing must be inherited from the supplied firmware.
- * No fuxi PSCI reset qualification or display provider is claimed here. */
+ * No display provider is claimed here.
+ *
+ * QUD_PSCI_SMC_RESET stays 0: fuxi's SMC SYSTEM_RESET path is not qualified here, so the control
+ * channel offers STATUS and SCREENSHOT but no REBOOT (the module answers nohook). */
 #include "Sm8550.h"
 #undef QUD_SOC_NAME
 #define QUD_SOC_NAME "fuxi-sm8550-inherited"
@@ -107,6 +110,70 @@ def stage(module, xnu, output):
     text = text[:text.index('\n# Consumer-specific profile;')]
     text = replace_once(text, "if __name__ == '__main__':", suffix + "\nif __name__ == '__main__':")
     path.write_text(text)
+    # The diagnostic checkpoints are otherwise only recorded under qcom-usb-diag (which needs a
+    # reset-qualified SoC and is off for fuxi). Record them unconditionally so the status window can
+    # show how far the bring-up got; the reset target still only acts when the diagnostic is on.
+    path = output / 'kernel/QcomXnuUsbDebug.c'
+    source = path.read_text()
+    source = replace_once(source,
+        '''static void diag_checkpoint(unsigned int checkpoint)
+{
+    if (!usb_diag_enabled) return;
+    usb_diag_checkpoint = checkpoint;
+    native.status.diag_checkpoint = checkpoint;''',
+        '''/* The fuxi adapter traces each probe; declared here because the call sits in diag_checkpoint. */
+extern void fuxi_usb_probe_step(unsigned int checkpoint);
+/* A plain store, readable while the bring-up is still inside the driver: the status window
+ * polls it from another CPU, so it must not take usb_busy or depend on the diag boot argument. */
+volatile unsigned int qcom_usb_debug_checkpoint;
+/* The raw GCC/DWC3 words the inherited-state qualification sampled. They distinguish a genuinely
+ * unpowered domain from a wrong register offset: gdscr[0]=CFG_GDSCR (bit16 power-up complete),
+ * [1]=GDSCR, [2]=BCR (bit0 reset), [3..7]=CBCR0..4 (bit31 clock off), [8]=GCTL, [9]=GSNPSID. */
+volatile unsigned int qcom_usb_debug_qusb[10];
+static void diag_checkpoint(unsigned int checkpoint)
+{
+    native.status.diag_checkpoint = checkpoint;
+    qcom_usb_debug_checkpoint = checkpoint;
+    /* The fuxi adapter traces each probe to the console and to the status window. It must not take
+     * usb_busy (this thread holds it for the whole bring-up), so it only formats and stores. */
+    fuxi_usb_probe_step(checkpoint);
+    if (!usb_diag_enabled) return;
+    usb_diag_checkpoint = checkpoint;''')
+    # thread_bind(master_processor) does not stick on this kernel: the pump still ran on CPU7 while
+    # master_cpu was 0, so acquire() refused every call and the bring-up returned before its first
+    # probe. usb_busy already serialises every user of the controller (the polling thread and the
+    # console tee), so the boot-CPU restriction is dropped rather than fought.
+    source = replace_once(source,
+                          "    if (cpu_number() != master_cpu) return 0;\n", "")
+    # Publish the words the qualification sampled. Without them "power-domain-off" cannot be told
+    # apart from a register offset that reads the wrong bit on this board.
+    source = replace_once(source,
+                          "    result = QcomUsbInspectInherited(physical_read, 0, &inherited);\n"
+                          "    native.status.qcom_result = (uint32_t)result;\n",
+                          "    result = QcomUsbInspectInherited(physical_read, 0, &inherited);\n"
+                          "    native.status.qcom_result = (uint32_t)result;\n"
+                          "    qcom_usb_debug_qusb[0] = inherited.gcc_cfg_gdscr;\n"
+                          "    qcom_usb_debug_qusb[1] = inherited.gcc_gdscr;\n"
+                          "    qcom_usb_debug_qusb[2] = inherited.gcc_bcr;\n"
+                          "    qcom_usb_debug_qusb[3] = inherited.gcc_cbcr[0];\n"
+                          "    qcom_usb_debug_qusb[4] = inherited.gcc_cbcr[1];\n"
+                          "    qcom_usb_debug_qusb[5] = inherited.gcc_cbcr[2];\n"
+                          "    qcom_usb_debug_qusb[6] = inherited.gcc_cbcr[3];\n"
+                          "    qcom_usb_debug_qusb[7] = inherited.gcc_cbcr[4];\n"
+                          "    qcom_usb_debug_qusb[8] = inherited.gctl;\n"
+                          "    qcom_usb_debug_qusb[9] = inherited.gsnpsid;\n")
+    source = replace_once(source, "    native.gcc_va = ml_io_map((vm_offset_t)QUSB_GCC_BASE, GCC_BYTES);\n    diag_checkpoint(QCOM_USB_DEBUG_DIAG_MAP_USB);\n    native.usb_va = ml_io_map((vm_offset_t)QUSB_DWC3_BASE, USB_BYTES);\n    diag_checkpoint(QCOM_USB_DEBUG_DIAG_MAP_SMMU);\n    native.smmu_va = ml_io_map((vm_offset_t)QUSB_SMMU_BASE, QUSB_SMMU_BYTES);\n", "    /* acquire() masks IRQ/FIQ for the whole bring-up, but ml_io_map can block in the VM layer and a\n     * thread whose wakeup IPI can never be taken never resumes. Map with interrupts enabled and\n     * trace each mapping so a stall names the exact range. */\n    fuxi_usb_probe_step(300u);\n    __asm__ volatile(\"msr daifclr, #3\" ::: \"memory\");\n    native.gcc_va = ml_io_map((vm_offset_t)QUSB_GCC_BASE, GCC_BYTES);\n    fuxi_usb_probe_step(301u);\n    diag_checkpoint(QCOM_USB_DEBUG_DIAG_MAP_USB);\n    native.usb_va = ml_io_map((vm_offset_t)QUSB_DWC3_BASE, USB_BYTES);\n    fuxi_usb_probe_step(302u);\n    diag_checkpoint(QCOM_USB_DEBUG_DIAG_MAP_SMMU);\n    native.smmu_va = ml_io_map((vm_offset_t)QUSB_SMMU_BASE, QUSB_SMMU_BYTES);\n    __asm__ volatile(\"msr daifset, #3\" ::: \"memory\");\n    fuxi_usb_probe_step(303u);\n")
+    path.write_text(source)
+    # The probe trace calls back into the device adapter, so the archive's XNU-import allowlist has to
+    # accept it (the call sits in diag_checkpoint, which the patch above adds).
+    path = output / 'scripts/build.py'
+    source = path.read_text()
+    source = replace_once(source,
+        "'_bzero', '_memcpy', '_memset'}",
+        "'_bzero', '_memcpy', '_memset', '_fuxi_usb_probe_step'}")
+    # Every refusal and every entry is traced: a bring-up that returns before its first logical probe
+    # (a refused acquire, an already-set usb_busy) would otherwise leave no evidence at all.
+    path.write_text(source)
     path = output / 'tests/check_xnu.py'
     path.write_text(path.read_text().replace("'darwin22'", "'darwin23-fuxi'"))
     path = output / 'tests/check.py'
