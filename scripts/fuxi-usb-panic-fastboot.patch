@@ -1,0 +1,91 @@
+--- a/kernel/QcomXnuUsbDebug.c
++++ b/kernel/QcomXnuUsbDebug.c
+@@ -102,6 +102,44 @@
+ #endif
+     for (;;) __asm__ volatile("wfe" ::: "memory");
+ }
++
++#ifdef FUXI_PANIC_FASTBOOT
++/* Prepare mappings in normal context. No allocation or thread services after panic. */
++#include "BootResetCore.h"
++static struct br_arbiter reset_arb;
++static volatile uint32_t *reset_obs, *reset_chn;
++static void fuxi_prepare_fastboot(void)
++{
++    int seconds = 0;
++    struct br_found f;
++    if (!PE_parse_boot_argn("fuxi-panic-fastboot", &seconds, sizeof(seconds)) || seconds != 30)
++        return;
++    reset_arb.core = (void *)ml_io_map(0xc400000, 0x3000);
++    reset_arb.cnfg = (void *)ml_io_map(0xc42d000, 0x4000);
++    if (!reset_arb.core || !reset_arb.cnfg || br_find(&reset_arb, &f) || f.owner != 0)
++        return;
++    unsigned off = BR_OBS_APID_STRIDE * (unsigned)f.apid;
++    vm_offset_t obs = ml_io_map(0xc440000 + (off & ~4095u), 4096);
++    if (!obs) return;
++    reset_obs = (void *)(obs + (off & 4095u));
++    reset_chn = (void *)ml_io_map(0xc500000 + BR_CHNL_APID_STRIDE * (unsigned)f.apid, 4096);
++}
++static void fuxi_panic_fastboot(void)
++{
++    uint8_t before, after;
++    uint64_t hz = native.status.counter_frequency;
++    if (!reset_obs || !reset_chn || !hz || hz > COUNTER_MAX_FREQUENCY) return;
++    uint64_t start = counter();
++    while (counter() - start < 30 * hz) __asm__ volatile("yield" ::: "memory");
++    /* Both pointers already select this APID, EE0, so channel offset is zero. */
++    if (br_set_bootloader(reset_obs, reset_chn, &reset_arb, 0, &before, &after)) return;
++    __asm__ volatile("movz w0, #9\nmovk w0, #0x8400, lsl #16\n"
++                     "mov x1, xzr\nmov x2, xzr\nmov x3, xzr\ndsb sy\nsmc #0"
++                     ::: "x0","x1","x2","x3","x4","x5","x6","x7","x8","x9",
++                         "x10","x11","x12","x13","x14","x15","x16","x17","memory","cc");
++}
++#endif
++
+ static int qcom_usb_control_halt_restart(unsigned int type)
+ {
+     if (type == CONTROL_PE_RESTART_CPU &&
+@@ -808,6 +846,9 @@
+     usb_diag_polling = 0;
+     if (usb_diag_mode >= 201u && usb_diag_mode <= 203u) diag_reset(12);
+     diag_checkpoint(QCOM_USB_DEBUG_DIAG_ENUM_DONE);
++#ifdef FUXI_PANIC_FASTBOOT
++    fuxi_prepare_fastboot();
++#endif
+     native.status.phase = QCOM_USB_DEBUG_ACTIVE;
+     ret = 1;
+ out:
+@@ -1270,6 +1311,9 @@
+     static const char end[] = "\nQCOM PANIC END\n";
+     uint64_t flags, now;
+     unsigned int iterations = 200000u, marker_queued = 0, announced = 0;
++#ifdef FUXI_PANIC_FASTBOOT
++    int finished = 0;
++#endif
+     char announcement[192];
+     size_t announcement_bytes;
+     if (usb_diag_enabled && (native.status.phase == QCOM_USB_DEBUG_PREPARING ||
+@@ -1307,7 +1351,12 @@
+         }
+         if (!poll_owned()) break;
+         if (marker_queued && dwc3_queued(native.core) == 0 &&
+-            soc_usb_buffer_pending(&usb_log_buffer) == 0) break;
++            soc_usb_buffer_pending(&usb_log_buffer) == 0) {
++#ifdef FUXI_PANIC_FASTBOOT
++            finished = 1;
++#endif
++            break;
++        }
+         delay_us(0, 10);
+     }
+     native.deadline_active = 0;
+@@ -1318,6 +1367,9 @@
+ out:
+     buffer_status_owned();
+     release(flags);
++#ifdef FUXI_PANIC_FASTBOOT
++    if (finished) fuxi_panic_fastboot();
++#endif
+     if (usb_diag_enabled) diag_reset(10);
+ }
+ int qcom_usb_debug_stop(void)

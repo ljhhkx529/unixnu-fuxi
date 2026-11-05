@@ -9,6 +9,16 @@ import sys
 
 root = Path(__file__).resolve().parents[1]
 module = root / '.cache/fuxi-qud-module'
+# Only the iOS 17 fuxi archive opts into the post-drain hook.
+shutil.copy2(root / 'package/BootResetCore.h', module / 'kernel/BootResetCore.h')
+board_header = module / 'soc/FuxiSm8550.h'
+if 'FUXI_PANIC_FASTBOOT' not in board_header.read_text():
+    with board_header.open('a') as stream:
+        stream.write('\n#define FUXI_PANIC_FASTBOOT 1\n')
+if 'fuxi_panic_fastboot(void)' not in (module / 'kernel/QcomXnuUsbDebug.c').read_text():
+    subprocess.run(['patch', '-p1', '--batch', '--forward', '-i',
+                    str(Path(__file__).with_name('fuxi-usb-panic-fastboot.patch'))],
+                   cwd=module, check=True)
 out = root / '.cache/fuxi-qud-build'
 records = root / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837'
 # The module's host tests bind AF_UNIX sockets, which macOS caps near 104 bytes. The
