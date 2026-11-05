@@ -38,6 +38,9 @@ struct ctx {
 #ifndef PANIC_TEXT
 #define PANIC_TEXT 0UL
 #endif
+#ifndef QUD_BG
+#define QUD_BG 0UL
+#endif
 #define PANIC_TEXT_BYTES 2048   /* boot_progress_panic_text: a data abort's message with every register, then the frames */
 
 __attribute__((noreturn)) static void park (void)
@@ -240,10 +243,20 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
   g.y = g.h / 8;
   g.log = 0;
   g.logn = 0;
-  for (row = g.y; row < g.h; row++) {
-    for (col = 0; col < g.w; col++) {
-      *(volatile u32 *)(g.base + (u64)row * g.rb + (u64)col * 4) = 0;
+  /* The USB CDC status colour is a solid band at the top of the lower page, with the error text
+   * below it. FuxiUsbCompat.c derives the colour from the CDC phase (green = ACTIVE, yellow =
+   * PREPARING/WAITING, red = not started/failed) and stores it in a global BGRA word, so this file
+   * only reads that word: the padding budget cannot afford the phase logic here. With no USB
+   * archive the address is 0, the band disappears and the page stays black. */
+  {
+    u32 bg = QUD_BG ? *(volatile u32 *)QUD_BG : 0;
+    u32 band = g.y + (bg ? 64u : 0u);
+    for (row = g.y; row < g.h; row++) {
+      for (col = 0; col < g.w; col++) {
+        *(volatile u32 *)(g.base + (u64)row * g.rb + (u64)col * 4) = row < band ? bg : 0;
+      }
     }
+    if (bg) g.y = band;
   }
   g.y += 8;
   /* The board's live banner keeps showing this text after the next swap paints over the screen (BootProgress.c,

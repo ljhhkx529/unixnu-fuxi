@@ -94,6 +94,12 @@ extern void sheng_cpufreq_poll(void) __attribute__((weak_import));
 extern char boot_process_rows[10][120] __attribute__((weak_import));
 extern unsigned boot_ui_trace_role_rows(unsigned,char [][120],unsigned,unsigned) __attribute__((weak_import));
 extern char native_touch_rows[4][120] __attribute__((weak_import));
+extern char native_usb_status_row[10][64] __attribute__((weak_import));
+extern volatile unsigned native_usb_status_rows __attribute__((weak_import));
+extern volatile unsigned native_usb_status_color __attribute__((weak_import));
+/* Refreshes the rows and the phase colour from the driver status. It only formats and stores, so it
+ * is safe to call from this overlay pass even while the module's own thread owns the controller. */
+extern void fuxi_usb_refresh_bg(void) __attribute__((weak_import));
 extern volatile int native_fuxi_touch_pad __attribute__((weak_import));
 extern char native_cpufreq_row[120] __attribute__((weak_import));
 extern volatile uint32_t native_hid_input_events[8] __attribute__((weak_import));
@@ -993,6 +999,80 @@ static void crash_banner(unsigned now) {
     px_text(0,top+i*cell,r,cols,color,0xff0d1117);
   }
 }
+
+/* The 6x14 console font, enlarged by an integer zoom so the USB window reads from across a room.
+ * px_text cannot help here: its only scale is display.scale, which the diagnostic page shares. */
+static void usb_px_text(unsigned x0,unsigned top,const char *text,unsigned cols,uint32_t color,uint32_t background,unsigned zoom) {
+  unsigned len=(unsigned)strlen(text);
+  unsigned u=zoom*(unsigned)display.scale;
+  for(unsigned x=0;x<cols;++x) {
+    unsigned c=x<len?(unsigned char)text[x]:' ';if(c<32||c>126)c='?';
+    uint64_t glyph=font[c-32];
+    for(unsigned y=0;y<14;++y) {
+      unsigned bits=y<6?(unsigned)(glyph>>(32+y*5)):y<12?(unsigned)(glyph>>((y-6)*5)):0;
+      if(__atomic_load_n(&display.yield_requested,__ATOMIC_ACQUIRE))return;
+      for(unsigned dx=0;dx<6;++dx) {
+        uint32_t col=dx<5&&((bits>>dx)&1)?color:background;
+        for(unsigned sy=0;sy<u;++sy)
+          for(unsigned sx=0;sx<u;++sx)
+            *(volatile uint32_t *)(display.frame+(uintptr_t)(top+y*u+sy)*display.stride+(x0+(x*6+dx)*u+sx)*4)=col;
+      }
+    }
+  }
+}
+
+/* The USB CDC window in the bottom-right corner: a dark panel with a colour block on its left edge
+ * that carries the phase colour (green ACTIVE, yellow PREPARING, red otherwise), a title row and up
+ * to four status rows published by FuxiUsbCompat.c. It is drawn on every overlay pass, so unlike a
+ * one-shot panic-screen drawing it is repainted instead of being covered by the diagnostic panels.
+ * The glyphs are zoomed 2x on a 1x scanout and 1x on a 2x one, so the panel keeps the same
+ * physical size whatever scale the panel reports. */
+static void usb_status_window(void) {
+  if (!display.frame || !display.scale || !&native_usb_status_row) return;
+  // Pull the current phase/error rows before painting; a refused read keeps the previous copy.
+  if (&fuxi_usb_refresh_bg) fuxi_usb_refresh_bg();
+  unsigned rows = &native_usb_status_rows ? (unsigned)native_usb_status_rows : 0u;
+  if (rows < 1u) rows = 1u;
+  if (rows > 10u) rows = 10u;
+  // Flicker control: this panel is about 170k uncached stores, and the overlay runs every 30ms.
+  // Repaint only when the content actually changed, plus one repair pass in sixteen so an
+  // overlapping painter (crash_banner draws bottom-up) cannot leave a hole for long.
+  static uint32_t painted_sig;
+  static unsigned passes;
+  uint32_t sig = (&native_usb_status_color ? (uint32_t)native_usb_status_color : 0xffff0000u) * 131u + rows;
+  for (unsigned r = 0; r < rows; ++r) {
+    const char *p = native_usb_status_row[r];
+    for (unsigned i = 0; i < 32u && p[i]; ++i) sig = sig * 131u + (unsigned char)p[i];
+  }
+  passes++;
+  if (sig == painted_sig && (passes & 15u) != 0u) return;
+  painted_sig = sig;
+  unsigned zoom = display.scale >= 2 ? 1u : 2u;
+  unsigned cell = 14u * (unsigned)display.scale * zoom;
+  unsigned cols = 40u, block = 12u * (unsigned)display.scale * zoom;
+  unsigned w = cols * 6u * (unsigned)display.scale * zoom + block + 16u;
+  unsigned h = (rows + 1u) * cell + 20u;
+  if (display.width < w + 32u || display.height < h + 32u) return;
+  unsigned x0 = display.width - w - 20u, y0 = display.height - h - 20u;
+  uint32_t panel = 0xff0d1117u, edge = 0xff4a5364u;
+  uint32_t accent = &native_usb_status_color ? (uint32_t)native_usb_status_color : 0xffff0000u;
+  for (unsigned y = 0; y < h; ++y) {
+    if (__atomic_load_n(&display.yield_requested, __ATOMIC_ACQUIRE)) return;
+    for (unsigned x = 0; x < w; ++x) {
+      uint32_t c = (y < 2u || y >= h - 2u || x < 2u || x >= w - 2u) ? edge : panel;
+      // The colour block fills the panel's left edge so the state reads at a glance.
+      if (x >= 6u && x < block && y >= 6u && y < h - 6u) c = accent;
+      *(volatile uint32_t *)(display.frame + (uintptr_t)(y0 + y) * display.stride + (x0 + x) * 4) = c;
+    }
+  }
+  unsigned tx = x0 + block + 10u, ty = y0 + 10u;
+  usb_px_text(tx, ty, "USB CDC", cols, accent, panel, zoom);
+  for (unsigned r = 0; r < rows; ++r) {
+    if (!native_usb_status_row[r][0]) break;
+    usb_px_text(tx, ty + (r + 1u) * cell, native_usb_status_row[r], cols, 0xffe8eef6u, panel, zoom);
+  }
+}
+
 static void touch_overlay_locked(void);
 static void touch_overlay(void) {
   // sheng-banner=0 switches every on-screen diagnostic painting off once the system owns the display (the UFS log carries the same rows):
@@ -1007,6 +1087,7 @@ static void touch_overlay(void) {
   ext_overlay_locked();
   crash_banner(seconds());
   if(&native_touch_stage_req && native_touch_stage_req && (!&native_fuxi_touch_pad || native_fuxi_touch_pad))touch_overlay_locked();
+  usb_status_window();
   __atomic_store_n(&render_busy,0,__ATOMIC_RELEASE);
 }
 static void touch_overlay_locked(void) {
