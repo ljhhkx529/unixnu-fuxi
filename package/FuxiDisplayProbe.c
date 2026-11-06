@@ -69,3 +69,14 @@ void fuxi_gpu_addon_report(void) {
            native_gpu_addon_error, native_gpu_addon_stage, native_gpu_addon_status,
            native_gpu_addon2_stage, native_gpu_addon2_status, native_gpu_addon3_stage, native_gpu_addon3_status);
 }
+
+/* The GPU power probe publishes its progress in these counters (package/FuxiGpuPowerProbe.cpp); its rows
+ * go to the boot-progress page, not the serial log, so a stall there is otherwise invisible. */
+extern volatile uint32_t native_gpu_power_stage;
+extern volatile uint32_t native_gpu_power_result;
+extern volatile uint32_t native_gpu_perf_vote[2];
+void fuxi_gpu_power_report(void) {
+    printf("fuxi-gpu-power: stage %x result %x vote %u/%u\n",
+           native_gpu_power_stage, native_gpu_power_result,
+           native_gpu_perf_vote[0], native_gpu_perf_vote[1]);
+}

@@ -519,10 +519,12 @@ extern void native_keystore_probe(void);
 extern void native_touch_probe(void);
 extern "C" void sheng_gpu_power_probe(void);
 extern "C" void fuxi_gpu_addon_report(void);
+extern "C" void fuxi_gpu_power_report(void);
 void native_legacy_display_late_probe(void) {
     native_keystore_probe();
     native_touch_probe();
     fuxi_gpu_addon_report();
+    fuxi_gpu_power_report();
     IOService *display=pendingLegacyDisplay;if(!display)return;pendingLegacyDisplay=nullptr;
     native_legacy_surface_status=OSKextLoadKextWithIdentifier("com.apple.iokit.IOSurface");
     OSDictionary *matching=IOService::nameMatching("IOCoreSurfaceRoot");

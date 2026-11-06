@@ -54,6 +54,7 @@
 #include <kern/thread.h>
 #include <pexpert/pexpert.h>
 #include <string.h>
+extern int printf(const char *format, ...);   /* the serial log; the probe's own rows go to the boot page */
 extern "C" {
 #include "GpuPowerBoard.h"
 }
@@ -1423,8 +1424,11 @@ void ipiSelfTest() {
 void startHeartbeatThread();
 void startGpuDcvs();
 void gpuStart() {
+    printf("fuxi-gpu: gpuStart body\n");
     char row[64];
     uint32_t *c = native_gpu_cp;
+    printf("fuxi-gpu: gpuStart link bringup %d buffers %d smmu %d\n",
+           NativeAdrenoGpuContextBringup ? 1 : 0, NativeAdrenoGpuContextBuffers ? 1 : 0, gSmmuMap ? 1 : 0);
     if (!NativeAdrenoGpuContextBringup || !NativeAdrenoGpuContextBuffers || !gSmmuMap) {setRow(6, "Q nolink"); return;}
     // 1. The GPU's own context bank and buffers (arm-smmu-qcom: the GPU always gets bank 0; DT iommus SIDs 0 and 1).
     NativeAdrenoGmuContextReport &q = native_gpu_context;
@@ -1441,6 +1445,11 @@ void gpuStart() {
     if (ctx) return;
     gpuSetActlr();
     c[0] = 1;
+    // These are static objects whose constructors clear them; this archive is force-loaded, so they may reach
+    // here with whatever the image held (a data abort on the release of gGpuMaps[0]). Clear them first.
+    printf("fuxi-gpu: gpuStart maps before reset %d\n", gGpuMaps[0] ? 1 : 0);
+    for (unsigned i = 0; i < 5; ++i) { gGpuMaps[i] = nullptr; gGpuCpu[i] = nullptr; }
+    printf("fuxi-gpu: gpuStart maps reset %d\n", gGpuMaps[0] ? 1 : 0);
     if (NativeAdrenoGpuContextBuffers(gGpuBuffers)) {setRow(7, "C1 buffers refused"); return;}
     for (unsigned i = 0; i < 5; ++i) {
         IODeviceMemory *m = IODeviceMemory::withRange(gGpuBuffers[i].physical, gGpuBuffers[i].bytes);
@@ -1765,6 +1774,7 @@ void heartbeat() {
 }
 
 void gpuOn() {
+    printf("fuxi-gpu: gpuOn entered\n");
     char row[64];
     ShengGmuIo &io = gColdDevice.io;
     uint32_t *g = native_gpu_gx;
@@ -1818,13 +1828,15 @@ void gpuOn() {
                    native_gpu_perf_vote[0], native_gpu_perf_vote[1]);
     setRow(5, row);
     native_gpu_power_stage = gx ? 0x87 : 0x8f;
-    if (gx && mode() >= 9) gpuStart();
+    printf("fuxi-gpu: gpuOn done, gx %u vote %u/%x\n", gx, g[0], g[1]);
+    if (gx && mode() >= 9) { printf("fuxi-gpu: gpuStart entered\n"); gpuStart(); printf("fuxi-gpu: gpuStart returned\n"); }
     if (gHeartbeatThread) for (;;) IOSleep(60000);
     heartbeat();
 }
 void gmuColdStart(const gpb_result &r) {
     char row[64];
     native_gpu_power_stage = 0x71;
+    printf("fuxi-gpu: cold start entered, mode %u\n", mode());
     if (!ShengGmuColdStart || !ShengGmuBindMmio || !NativeAdrenoGmuContextPayloads || !native_adreno_firmware_image ||
         !&native_adreno_firmware_image_size || native_adreno_firmware_image_size < 4) {
         setRow(7, "S nolink");
@@ -1833,7 +1845,8 @@ void gmuColdStart(const gpb_result &r) {
     for (unsigned w = 0; w < 5; ++w) {
         IODeviceMemory *memory = IODeviceMemory::withRange(kColdPhys[w], kColdLen[w]);
         if (memory) {
-            gColdMaps[w] = OSSharedPtr<IOMemoryMap>(memory->map(kIOMapAnywhere | kIOMapInhibitCache), OSNoRetain);
+            gColdMaps[w] = nullptr;   // gColdMaps reset: same static-constructor problem as gGpuMaps
+        gColdMaps[w] = OSSharedPtr<IOMemoryMap>(memory->map(kIOMapAnywhere | kIOMapInhibitCache), OSNoRetain);
             memory->release();
         }
         if (!gColdMaps[w]) {setRow(7, "S nomap window"); return;}
@@ -1873,6 +1886,10 @@ void gmuColdStart(const gpb_result &r) {
     native_gpu_power_stage = 0x72;
     const ShengGmuStatus status = ShengGmuColdStart(&d, &gColdConfig, &gStartup, &limits, &gColdResult);
     native_gpu_power_stage = status ? 0x7f : 0x77;
+    printf("fuxi-gpu: cold start %s (status %u), load phase %u fw_init %x hfi %x ready %u%u\n",
+           status ? "failed" : "ok", (unsigned)status, gColdResult.load.phase,
+           gColdResult.load.firmware_init_result, gColdResult.load.hfi_status,
+           gColdResult.load.firmware_ready_observed, gColdResult.load.hfi_ready_observed);
     readGmuState(after);
     const ShengGmuResult &l = gColdResult.load;
     const AdrenoHfiStartupResult &p = gColdResult.protocol;
