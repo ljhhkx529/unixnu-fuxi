@@ -425,16 +425,10 @@ static void draw(unsigned now) {
   snprintf(b,sizeof(b),"OBS pulse-worker=%u anchor=%u bind=%u result=%u depth=%u base=%llx (0=bound 1=invalid 2=UI owned)",
     __atomic_load_n(&pulse_worker_status,__ATOMIC_ACQUIRE),__atomic_load_n(&pulse.ready,__ATOMIC_ACQUIRE),
     bind_count,bind_result,bind_depth,(uint64_t)bind_base);
-  if(&native_touch_stage_req && native_touch_stage_req && &native_touch_rows) {
-    // Touch replaces the TIMER/OBS rows (42-43) while it is requested: its summary row and the HID report counters.
-    line(42,native_touch_rows[0],0xff00ffcc);
-    if(&native_hid_input_events) {
-      snprintf(b,sizeof(b),"TOUCH HID started=%u driver=%u touch-reports=%u result=%d key-reports=%u | pad dots=%u",
-        native_hid_input_events[2],native_hid_input_events[4],native_hid_input_events[6],native_hid_input_results[6],
-        native_hid_input_events[5],touch_dots);
-      line(43,b,0xff00ffcc);
-    }
-  } else line(43,b,0xffaaaaaa);
+  /* The touch report is off: the two rows it used to take (42 and 43) come from the probe's own rows and
+   * from the HID counters, which were bring-up diagnostics. The panel keeps the TIMER/OBS row instead, and
+   * the touch probe still runs (fuxi-touch=4, fuxi-touch-hid=1); only its page lines are gone. */
+  line(43,b,0xffaaaaaa);
   if(&native_ufs_verify_ticks && &native_ufs_read_ticks) {
     uint64_t freq;__asm__ volatile("mrs %0,cntfrq_el0":"=r"(freq));if(!freq)freq=1;
     uint64_t vt=__atomic_load_n(&native_ufs_verify_ticks,__ATOMIC_RELAXED),rt=__atomic_load_n(&native_ufs_read_ticks,__ATOMIC_RELAXED);

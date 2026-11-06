@@ -167,8 +167,10 @@ size_mib = 192
 loader = "firmware"
 title = "UniXNU"
 panic_screen = true
-# 无条件在绿/蓝/品红三色底部画黄色带（测试打印功能）。
-paint_yellow = true
+# The yellow band was a bring-up probe: it painted a strip once AppleImage4 had registered its API, to
+# show from the panel that the boot reached stage 4 (Data mount complete). The chain is established now,
+# so it is off; the same progress is in the serial log and the boot-progress page.
+paint_yellow = false
 # -v, serial=3, debug=0x14e and kt_fixed_zones=120 as on UniXNU-sheng and the other SM8550 ports. sheng-pmgr=2 publishes
 # the original ApplePMGRNub that AMFI waits for (kits/fuxi/ShengPlatformPower.cpp, as UniXNU-sheng); without it AMFI panics
 # with "AMFI: No PMGR?" a few seconds into bsd_init. sheng-smp=1 and armcpu-spi-ipi=1 start the seven secondary cores as on
@@ -223,7 +225,14 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                "sheng-gpu-metal=1",
                "sheng-gpu-dcvs=1",
                "sheng-fb-gpu=1",
-               "sheng-gpu-addon=1"]
+               "sheng-gpu-addon=1",
+               # Jobs that cannot run here, with unixnu-fuxi-old s list. liveactivitiesd is the one that
+               # matters for rendering: its SessionCore crashes with SIGTRAP in SessionSyncEngine's Swift
+               # copy path about five seconds before the render server stops, and disabling it restores
+               # the render loop (BUILD-PROGRESS.md, the single-variable run). The other four need hardware
+               # this board has no driver for: a SIM and CommCenter, Bluetooth, and the identity/location
+               # services that depend on them.
+               "sheng-disable-jobs=com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.bluetoothd,com.apple.liveactivitiesd"]
 # Signed-text fixups (from unixnu-fuxi-old board.toml), travelled in /chosen/text-fixups.
 text_fixups = ["BTAudioHALPlugin,38bec,ffc300d1f44f01a9,000080d2c0035fd6"]
 
