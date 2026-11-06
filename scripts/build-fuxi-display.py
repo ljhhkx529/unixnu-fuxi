@@ -339,10 +339,37 @@ def main():
     bindings_obj = bindings_object(table)
     print(f'bound {len(table)} original symbols after checking each against the candidate')
 
+    # The A740 GPU power path: GMU/clock/DCVS. It needs the Adreno740 headers and the board facts in
+    # package/GpuPowerBoard.h, and it is the same probe unixnu-fuxi-old starts from its display probe.
+    gpu_power = ROOT / 'kits/fuxi/FuxiGpuPowerProbe.cpp'
+    if not gpu_power.is_file():
+        sys.exit(f'{gpu_power} missing: the fuxi device repository owns this board probe')
+    legacy_obj_gpu = OUT / 'FuxiGpuPowerProbe.o'
+    subprocess.run(command(cxx, gpu_power, legacy_obj_gpu,
+                           CXX_FLAGS + ['-I', gop, '-I', OUT, '-I', ROOT / 'kits/fuxi',
+                                        '-I', ROOT / 'drivers/Adreno740', '-I', ROOT / 'build/fuxi-gmu',
+                                        '-I', ROOT / 'kits/ArmSmmu4K', '-I', ROOT / 'kits/AdrenoPM4',
+                                        '-I', ROOT / 'kits/AdrenoFirmware',
+                                        # The Adreno740 header declares one of these parameters as a pointer
+                                        # where this board's copy passes the fixed buffer; the types agree.
+                                        '-Wno-array-parameter']),
+                   cwd=cxx['directory'], check=True, timeout=240)
+    print(f'compiled {gpu_power.relative_to(ROOT)}')
+
+    # The GPU role the A740 user client asks for; see package/FuxiGpuRole.c.
+    gpu_role = ROOT / 'kits/fuxi/FuxiGpuRole.c'
+    if not gpu_role.is_file():
+        sys.exit(f'{gpu_role} missing: the fuxi device repository owns this board glue')
+    gpu_role_obj = OUT / 'FuxiGpuRole.o'
+    subprocess.run(command(record(OBJ / 'osfmk/DEVELOPMENT/startup.o.json'), gpu_role, gpu_role_obj,
+                           ['-Wall', '-Wextra', '-Werror', '-mgeneral-regs-only', '-Wno-unused-parameter']),
+                   cwd=record(OBJ / 'osfmk/DEVELOPMENT/startup.o.json')['directory'], check=True, timeout=180)
+    print(f'compiled {gpu_role.relative_to(ROOT)}')
+
     archive = OUT / 'libNativeLegacyDisplay.late.a'
     archive.unlink(missing_ok=True)
     ar = ['xcrun', 'ar'] if shutil.which('xcrun') else [shutil.which('llvm-ar') or 'ar']
-    subprocess.run([*ar, 'rcs', str(archive), str(obj_late), str(probe_obj), str(legacy_obj), str(bindings_obj), str(presenter_late)],
+    subprocess.run([*ar, 'rcs', str(archive), str(obj_late), str(probe_obj), str(legacy_obj), str(bindings_obj), str(presenter_late), str(gpu_role_obj), str(legacy_obj_gpu)],
                    check=True, timeout=60)
     # The kernel script checks the archive against a report of the exact sources it was built from, so a
     # changed driver cannot slip into the link unnoticed (build-xnu-4k-baseline.sh PY_LEGACY_DISPLAY).

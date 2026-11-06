@@ -22,10 +22,6 @@ unsigned boot_ui_trace_ready;
 char boot_ui_trace_rows[14][120];
 
 // Adreno counters BootProgress reads directly.
-volatile uint32_t native_adreno_audit_attr;
-volatile uint64_t native_adreno_audit_ticks;
-volatile uint32_t native_adreno_coherence[8];
-volatile uint32_t native_adreno_wc_distrusted;
 
 // cpufreq / GOP counters.
 volatile uint32_t native_cpufreq_stage;

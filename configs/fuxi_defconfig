@@ -41,7 +41,8 @@ CONFIG_XNU_OWNER_CACHE_VOLUME_UUID="8846FE78-2910-4297-AF97-D59BB6F8FC16"
 CONFIG_XNU_OWNER_CRYPTEX_FILES=n
 CONFIG_XNU_OWNER_UNION_SYSTEMOS=y
 # The SoC fragment enables the Adreno driver; it is not selected for fuxi yet.
-# CONFIG_XNU_NATIVE_ADRENO is not set
+# The A740 GPU driver and its Metal plugin (unixnu-fuxi-old enables the same switch).
+CONFIG_XNU_NATIVE_ADRENO=y
 # Without this the BCM2837 target maps PLATFORM_PANIC_LOG_PADDR (0x3c0fc000, RAM on a Raspberry Pi 3) in PE_create_console,
 # reads it and zeroes 16 KiB there. On SM8550 no RAM or device tree node covers that address. With it the region comes
 # from the device tree, and the ADT has no /pram node, so no panic region is mapped.

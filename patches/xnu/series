@@ -4,5 +4,9 @@ zzyf-sheng-amp.patch
 fuxi-touch-probe.patch
 fuxi-keystore-probe.patch
 fuxi-display-load-status.patch
+fuxi-gpu-role.patch
 zzzc-boot-log.patch
 offline-owner-systemos-release-launchd.patch
+
+# The GPU user client and the panel backlight need no board patch: the OS series already carries
+# zzw-native-adreno-sandbox-grant.patch and zzwb-native-sandbox-grant-set-properties.patch.

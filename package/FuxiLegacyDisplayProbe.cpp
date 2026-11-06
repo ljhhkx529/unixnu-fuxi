@@ -517,6 +517,7 @@ void native_legacy_display_late_probe(void);
 // so they are added here as they land rather than stubbed.
 extern void native_keystore_probe(void);
 extern void native_touch_probe(void);
+extern "C" void sheng_gpu_power_probe(void);
 void native_legacy_display_late_probe(void) {
     native_keystore_probe();
     native_touch_probe();
@@ -573,6 +574,10 @@ void native_legacy_display_late_probe(void) {
                     if(attached){native_legacy_stage=5;started=display->start(nub);native_legacy_start_result=started;}
                     if(started && phase==4) {
                         activeLegacyDisplay=display;activeGOPNub=nub;native_legacy_stage=10;
+                        /* The A740 GMU/clock/DCVS probe (package/FuxiGpuPowerProbe.cpp) starts only now:
+                         * the display is published, so a render server can reach the GPU, and its thread
+                         * can no longer hold up the display's own late probe. */
+                        sheng_gpu_power_probe();
                         {
                             unsigned gpu=0;PE_parse_boot_argn("sheng-fb-gpu",&gpu,sizeof gpu);
                             if(gpu==1) {

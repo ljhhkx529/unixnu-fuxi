@@ -24,7 +24,10 @@ lba_bytes = 4096
 # AppleKeyStoreState is the owned AppleKeyStore, as on UniXNU-sheng: with sheng-aks=1 its user client
 # answers the state queries of the unchanged libaks/MobileKeyBag (no keybag, no passcode, nothing
 # locked), which is what lets keybagd skip /private/var/keybags/systembag.kb on a seed that has none.
-include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot", "QcomGeniSpi", "FuxiFtsTouch", "VirtioMmioBlock", "RamBlock", "VerifiedRoot", "AppleKeyStoreState", "GopFramebuffer"]
+include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot", "QcomGeniSpi", "FuxiFtsTouch", "VirtioMmioBlock", "RamBlock", "VerifiedRoot", "AppleKeyStoreState", "GopFramebuffer",
+           # The GPU: the A740 kernel driver and the Metal plugin the render server loads. Adreno740 also
+           # needs AdrenoPM4, AdrenoFirmware and ArmSmmu4K, which it pulls as dependencies.
+           "Adreno740", "AdrenoMetal"]
 
 [kernel]
 defconfig = "fuxi_defconfig"
@@ -36,6 +39,8 @@ patch_series = ["arch:patches/xnu/series", "soc:patches/xnu/series", "os:patches
 # ApplePMGRNub service), ShengHidInput's touch digitizer (force-loaded by fuxi_defconfig; the touch probe starts it), and
 # the touch archive that bsd_init calls into (patches/xnu/fuxi-touch-probe.patch). The order follows UniXNU-sheng.
 archives = [
+  # The GPU role headers reach the export tree before Adreno740 is compiled against it.
+  "build-fuxi-gpu-headers.py",
   "build-corecrypto-14.py",
   "build-corecrypto-14.py --namespace",
   "component:ArmDTPlatform",
@@ -59,6 +64,15 @@ archives = [
   "component:AppleKeyStoreState",
   "build-fuxi-keystore.py",
   "build-fuxi-display.py",
+  # The GPU inputs come from this board's own device tree and the pinned Adreno sources: the GMU
+  # registers and RSC/PDC sequence, then the OPP/bandwidth/BCM votes, then the command-db oracle.
+  # unixnu-fuxi-old builds the same three from the same pins.
+  "prepare-fuxi-gmu.py --dtb ../../../../../../uefi-fuxi/Platforms/Xiaomi/fuxiPkg/FdtBlob/sm8550-xiaomi-fuxi.dtb",
+  "prepare-fuxi-gmu-votes.py --dtb ../../../../../../uefi-fuxi/Platforms/Xiaomi/fuxiPkg/FdtBlob/sm8550-xiaomi-fuxi.dtb",
+  "prepare-fuxi-command-db-oracle.py",
+  "component:Adreno740",
+  "build-adreno740-kits.py",
+  "build-adreno740-accelerator.py",
 ]
 
 # Prelink the patched kernel against the original iPadOS 17.7.11 kernelcache, as unixnu-fuxi-old does.
@@ -200,7 +214,16 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                # out of the prelinked collection, as old does.
                "offline-mobile-graphics-load=1",
                "offline-mobile-graphics-client=1",
-               "offline-apfs-load=1"]
+               "offline-apfs-load=1",
+               # The GPU, with unixnu-fuxi-old s arguments. sheng-gpu-power selects the GMU/clock/DCVS
+               # probe (9 = the fuxi value), sheng-gpu-metal lets the render server reach the A740 through
+               # the Metal plugin, and sheng-fb-gpu hands frames to the GPU presenter instead of copying
+               # them on the CPU.
+               "sheng-gpu-power=9",
+               "sheng-gpu-metal=1",
+               "sheng-gpu-dcvs=1",
+               "sheng-fb-gpu=1",
+               "sheng-gpu-addon=1"]
 # Signed-text fixups (from unixnu-fuxi-old board.toml), travelled in /chosen/text-fixups.
 text_fixups = ["BTAudioHALPlugin,38bec,ffc300d1f44f01a9,000080d2c0035fd6"]
 

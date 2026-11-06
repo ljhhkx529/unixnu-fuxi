@@ -1,0 +1,17 @@
+diff --git a/bsd/sys/resource_private.h b/bsd/sys/resource_private.h
+index 23b002e..a5aa087 100644
+--- a/bsd/sys/resource_private.h
++++ b/bsd/sys/resource_private.h
+@@ -120,6 +120,12 @@ __END_DECLS
+ 
+ /* Additional private parameters to getpriority()/setpriority( */
+ 
++/* The GPU role a process runs under, which the A740 user client reads to pick the foreground or the
++ * background priority the render server set on it. iPadOS sets these through PRIO_DARWIN_GPU; this tree
++ * carries no role assignment, so task_get_gpu_role() below reports none and every client takes the
++ * foreground value. The numbers keep the range free above PRIO_DARWIN_GAME_MODE. */
++#define PRIO_DARWIN_GPU_BACKGROUND 8
++#define PRIO_DARWIN_GPU_UTILITY    9
+ #define PRIO_DARWIN_GAME_MODE   7               /* Second argument is a PID */
+ 
+ #define PRIO_DARWIN_GAME_MODE_OFF   0x0
