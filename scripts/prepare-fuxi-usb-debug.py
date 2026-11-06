@@ -170,7 +170,8 @@ static void diag_checkpoint(unsigned int checkpoint)
     source = path.read_text()
     source = replace_once(source,
         "'_bzero', '_memcpy', '_memset'}",
-        "'_bzero', '_memcpy', '_memset', '_fuxi_usb_probe_step'}")
+        "'_bzero', '_memcpy', '_memset', '_fuxi_usb_probe_step',"
+        " '_qcom_reset_prepare_bootloader', '_qcom_reset_to_bootloader'}")
     # Every refusal and every entry is traced: a bring-up that returns before its first logical probe
     # (a refused acquire, an already-set usb_busy) would otherwise leave no evidence at all.
     path.write_text(source)

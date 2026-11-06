@@ -9,16 +9,6 @@ import sys
 
 root = Path(__file__).resolve().parents[1]
 module = root / '.cache/fuxi-qud-module'
-# Only the iOS 17 fuxi archive opts into the post-drain hook.
-shutil.copy2(root / 'package/BootResetCore.h', module / 'kernel/BootResetCore.h')
-board_header = module / 'soc/FuxiSm8550.h'
-if 'FUXI_PANIC_FASTBOOT' not in board_header.read_text():
-    with board_header.open('a') as stream:
-        stream.write('\n#define FUXI_PANIC_FASTBOOT 1\n')
-if 'fuxi_panic_fastboot(void)' not in (module / 'kernel/QcomXnuUsbDebug.c').read_text():
-    subprocess.run(['patch', '-p1', '--batch', '--forward', '-i',
-                    str(Path(__file__).with_name('fuxi-usb-panic-fastboot.patch'))],
-                   cwd=module, check=True)
 out = root / '.cache/fuxi-qud-build'
 records = root / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837'
 # The module's host tests bind AF_UNIX sockets, which macOS caps near 104 bytes. The
@@ -94,6 +84,19 @@ run([sys.executable, module / 'tests/check.py', '--target-clang', llvm / 'clang'
 matches = list(records.glob('**/pe_kprintf.o.json'))
 if len(matches) != 1:
     raise SystemExit('missing or ambiguous actual PE compile record')
+# Only the iOS 17 fuxi archive opts into the post-drain hook, and only once the module is staged:
+# the header the module's panic path includes is copied next to it, and the request/commit calls stay
+# thin because package/QcomReset.c owns every register and every firmware call.
+shutil.copy2(root / 'kits/fuxi/BootResetCore.h', module / 'kernel/BootResetCore.h')
+board_header = module / 'soc/FuxiSm8550.h'
+if 'FUXI_PANIC_FASTBOOT' not in board_header.read_text():
+    with board_header.open('a') as stream:
+        stream.write('\n#define FUXI_PANIC_FASTBOOT 1\n')
+if 'fuxi_panic_fastboot(void)' not in (module / 'kernel/QcomXnuUsbDebug.c').read_text():
+    subprocess.run(['patch', '-p1', '--batch', '--forward', '-i',
+                    str(Path(__file__).with_name('fuxi-usb-panic-fastboot.patch'))],
+                   cwd=module, check=True)
+
 run([sys.executable, module / 'scripts/build.py', '--compile-record', matches[0],
      '--soc', 'soc/FuxiSm8550.h', '--ar', llvm / 'llvm-ar', '--nm', llvm / 'llvm-nm', '--output', out])
 
@@ -118,7 +121,7 @@ def compile_compat(source, obj):
         elif not a.startswith('-W'):
             command.append(a)
         i += 1
-    command += ['-I', str(module / 'include')]
+    command += ['-I', str(module / 'include'), '-I', str(source.parent)]
     subprocess.run(command, cwd=rec['directory'], check=True, timeout=90)
     return obj
 
@@ -126,6 +129,11 @@ def compile_compat(source, obj):
 compat_o = out / 'FuxiUsbCompat.o'
 compile_compat(root / 'kits/fuxi/FuxiUsbCompat.c', compat_o)
 subprocess.run([str(llvm / 'llvm-ar'), 'q', str(out / 'libQcomXnuUsbDebug.a'), str(compat_o)], check=True)
+# The reset layer is separate from the transport on purpose: a control channel asks it for a mode and
+# never touches a register, so a second entry point (UART, another client) needs no new backend.
+reset_o = out / 'QcomReset.o'
+compile_compat(root / 'kits/fuxi/QcomReset.c', reset_o)
+subprocess.run([str(llvm / 'llvm-ar'), 'q', str(out / 'libQcomXnuUsbDebug.a'), str(reset_o)], check=True)
 run([sys.executable, module / 'tests/check_xnu.py', '--xnu', root / '.cache/xnu-work',
      '--records', records, '--archive', out / 'libQcomXnuUsbDebug.a', '--nm', llvm / 'llvm-nm',
      '--output', xnu_check])
