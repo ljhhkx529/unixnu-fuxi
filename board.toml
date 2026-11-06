@@ -182,7 +182,10 @@ paint_yellow = false
 # validation add native-ufs-probe=10 (GPT geometry) or native-ufs-probe=12 (full startRoot + media report) temporarily.
 kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zones=120",
                "sheng-pmgr=2", "sheng-smp=1", "armcpu-spi-ipi=1", "armcpu-self-ipi=1",
-               "native-ufs-root=1", "fuxi-touch=4", "fuxi-touch-hid=1", "fuxi-touch-panic=2",
+               "native-ufs-root=1", "fuxi-touch=4", "fuxi-touch-hid=1", # fuxi-touch-panic=2 panicked the kernel after the first lift so its four diagnostic rows could be read
+               # from the panic screen while no display driver ran. The panel shows the picture now and the
+               # rows are in the serial log, so the probe reports without panicking: 0.
+               "fuxi-touch-panic=0",
                # -enable_kprintf_spam is gone: unixnu-fuxi-old does not set it, and the console drops
                # lines under that volume (QCOM USB LOSS contention climbing), which hid the first UFS
                # error behind thousands of repeats.
