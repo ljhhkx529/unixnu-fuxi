@@ -24,7 +24,7 @@ lba_bytes = 4096
 # AppleKeyStoreState is the owned AppleKeyStore, as on UniXNU-sheng: with sheng-aks=1 its user client
 # answers the state queries of the unchanged libaks/MobileKeyBag (no keybag, no passcode, nothing
 # locked), which is what lets keybagd skip /private/var/keybags/systembag.kb on a seed that has none.
-include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot", "QcomGeniSpi", "FuxiFtsTouch", "VirtioMmioBlock", "RamBlock", "VerifiedRoot", "AppleKeyStoreState"]
+include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot", "QcomGeniSpi", "FuxiFtsTouch", "VirtioMmioBlock", "RamBlock", "VerifiedRoot", "AppleKeyStoreState", "GopFramebuffer"]
 
 [kernel]
 defconfig = "fuxi_defconfig"
@@ -58,6 +58,7 @@ archives = [
   "build-fuxi-usb-debug.py",
   "component:AppleKeyStoreState",
   "build-fuxi-keystore.py",
+  "build-fuxi-display.py",
 ]
 
 # Prelink the patched kernel against the original iPadOS 17.7.11 kernelcache, as unixnu-fuxi-old does.
