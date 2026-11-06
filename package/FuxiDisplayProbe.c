@@ -49,3 +49,23 @@ __attribute__((weak)) uint32_t native_ufs_dpu_map(unsigned slot, const uint64_t 
 }
 
 __attribute__((weak)) volatile uint32_t native_ufs_dpu_state = 0;
+
+/* The GPU addon the loader places after the trust caches. DarwinBoot reads kernel.macho.gpuaddon and writes
+ * its address and length into /chosen/memory-map/GpuAddon; this reports what the kernel actually sees, so a
+ * missing handover is distinguishable from a refused addon. */
+extern int native_ram_block_gpu_addon(const unsigned char **data, unsigned long long *bytes);
+extern int printf(const char *format, ...);
+extern volatile int native_gpu_addon_stage, native_gpu_addon_status;
+extern volatile int native_gpu_addon2_stage, native_gpu_addon2_status;
+extern volatile int native_gpu_addon3_stage, native_gpu_addon3_status;
+extern volatile int native_gpu_addon_files, native_gpu_addon_written;
+extern volatile int native_gpu_addon_same, native_gpu_addon_failed, native_gpu_addon_error;
+void fuxi_gpu_addon_report(void) {
+    const unsigned char *data = 0;
+    unsigned long long bytes = 0;
+    int found = native_ram_block_gpu_addon(&data, &bytes);
+    printf("fuxi-gpu-addon: handover %d, bytes %llu, install %d/%d/%d err %d, mount %d/%d %d/%d %d/%d\n",
+           found, bytes, native_gpu_addon_files, native_gpu_addon_written, native_gpu_addon_same,
+           native_gpu_addon_error, native_gpu_addon_stage, native_gpu_addon_status,
+           native_gpu_addon2_stage, native_gpu_addon2_status, native_gpu_addon3_stage, native_gpu_addon3_status);
+}
