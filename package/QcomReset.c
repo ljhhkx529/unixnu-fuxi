@@ -14,7 +14,6 @@
 #include <kern/debug.h>
 #include <pexpert/pexpert.h>
 #include <arm/machine_routines.h>
-#include <IOKit/IOPlatformExpert.h>
 
 #include "QcomReset.h"
 #include "BootResetCore.h"
@@ -134,11 +133,10 @@ qcom_reset_result_t qcom_reset_request(qcom_reset_mode_t mode)
             __atomic_store_n(&g_state, QCOM_STATE_COMMITTING, __ATOMIC_RELEASE);
             return QCOM_RESET_BUSY;
         }
-        if (!PE_halt_restart) {
-            __atomic_store_n(&g_state, QCOM_STATE_FAILED, __ATOMIC_RELEASE);
-            return QCOM_RESET_NOT_READY;
-        }
-        PE_halt_restart(0);
+        /* Not PE_halt_restart: that path unmounts the root volume first, which never completes on this
+         * UFS driver. The firmware reset is the same one the bootloader mode ends with. */
+        qcom_reset_firmware();
+        __atomic_store_n(&g_state, QCOM_STATE_FAILED, __ATOMIC_RELEASE);
         return QCOM_RESET_FAILED;
 
     case QCOM_RESET_RECOVERY:
