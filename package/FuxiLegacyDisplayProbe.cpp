@@ -459,6 +459,19 @@ __attribute__((noreturn,noinline)) void native_legacy_backend_guard(unsigned slo
       (unsigned)native_legacy_transfer_status,native_legacy_transfer_bytes,native_legacy_retirement_calls,
       native_legacy_prepare_reason,native_legacy_prepare_attempts);
 }
+// The provider the original start() demands. AppleARMIODevice lives in the prelinked AppleARMPlatform and
+// exports no C++ symbols, so it is reached through its registered metaclass instead of a constructor.
+static IOService *createLegacyNub(void) {
+    const OSSymbol *name=OSSymbol::withCString("AppleARMIODevice");
+    const OSMetaClass *meta=name?OSMetaClass::getMetaClassWithName(name):nullptr;
+    OSSafeReleaseNULL(name);
+    IOService *instance=meta?static_cast<IOService *>(const_cast<OSMetaClass *>(meta)->alloc()):nullptr;
+    printf("fuxi-display: AppleARMIODevice metaclass %s, instance %s\n", meta?"found":"missing", instance?"ok":"none");
+    if(!instance)return nullptr;
+    if(!instance->init()){instance->release();printf("fuxi-display: AppleARMIODevice init failed\n");return nullptr;}
+    return instance;
+}
+
 void native_legacy_display_probe(void);
 void native_legacy_display_probe(void) {
     // The registration path and optional original-userclient inspection both
@@ -521,8 +534,11 @@ void native_legacy_display_late_probe(void) {
         // A real firmware framebuffer resource, with addresses and extent
         // obtained from the actual GOP handoff. It has no invented compatible,
         // display list, panel timing, GPU/fence completion or vendor registers.
-        // A plain service: an IOPlatformDevice expects the platform expert as its provider (compareName calls it), not the resources.
-        native_legacy_stage=4;IOService *nub=new IOService;
+        // The original IOMobileFramebufferLegacy::start accepts only an AppleARMIODevice provider, so the nub
+        // is an instance of that class rather than a plain IOService: its metaclass is registered by the
+        // prelinked AppleARMPlatform and the class is allocated through it. A plain IOService (sheng) and an
+        // IOPlatformDevice (old) both stop at "provider was not AppleARMIODevice".
+        native_legacy_stage=4;IOService *nub=createLegacyNub();
         native_legacy_nub=(uintptr_t)nub;bool nubAttached=false,nubStarted=false,attached=false,started=false;
         IORegistryEntry *displayTreeParent=nullptr;bool dtAttached=false;
         IOService *parent=IOService::getResourceService();
