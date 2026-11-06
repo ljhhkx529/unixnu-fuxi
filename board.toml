@@ -116,8 +116,13 @@ paint_yellow = true
 kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zones=120",
                "sheng-pmgr=2", "sheng-smp=1", "armcpu-spi-ipi=1", "armcpu-self-ipi=1",
                "native-ufs-root=1", "fuxi-touch=4", "fuxi-touch-hid=1", "fuxi-touch-panic=2",
+               # -enable_kprintf_spam is gone: unixnu-fuxi-old does not set it, and the console drops
+               # lines under that volume (QCOM USB LOSS contention climbing), which hid the first UFS
+               # error behind thousands of repeats.
                "sheng-disable-watchdogd=1", "qcom-usb-debug=1", "qcom-usb-ctl=1", "fuxi-panic-fastboot=30",
-               "-enable_kprintf_spam"]
+               # Content follows unixnu-fuxi-old one switch at a time: sheng-aks brings up Apple
+               # KeyStore, which AMFI consults before it accepts the adhoc-signed System volume.
+               "sheng-aks=1"]
 # Signed-text fixups (from unixnu-fuxi-old board.toml), travelled in /chosen/text-fixups.
 text_fixups = ["BTAudioHALPlugin,38bec,ffc300d1f44f01a9,000080d2c0035fd6"]
 
