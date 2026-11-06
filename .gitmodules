@@ -6,4 +6,4 @@
 	url = https://github.com/ljhhkx529/NativeUFS-fuxi.git
 [submodule "drivers/QcomXnuUsbDebug"]
 	path = drivers/QcomXnuUsbDebug
-	url = https://github.com/xiaoleGun/QcomXnuUsbDebug.git
+	url = https://github.com/ljhhkx529/QcomXnuUsbDebug.git

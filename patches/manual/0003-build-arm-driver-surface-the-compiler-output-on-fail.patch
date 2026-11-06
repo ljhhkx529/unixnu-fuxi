@@ -1,0 +1,24 @@
+From 47d90242f06b75aa21c6e703f325114bbf60873f Mon Sep 17 00:00:00 2001
+From: ljhhkx529 <ljhzyx520@gmail.com>
+Date: Thu, 5 Nov 2026 20:36:06 +0800
+Subject: [PATCH 3/4] build-arm-driver: surface the compiler output on failure
+
+A failed archive build printed only the exit status, which hides the first error behind tens of
+thousands of characters of command line. Print the head and tail of the captured output instead.
+---
+ scripts/build-arm-driver.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/scripts/build-arm-driver.py b/scripts/build-arm-driver.py
+index b027a9b..99a1230 100644
+--- a/scripts/build-arm-driver.py
++++ b/scripts/build-arm-driver.py
+@@ -108,7 +108,7 @@ if component == 'NativeAdreno':
+ result = subprocess.run(command, cwd=record['directory'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+ (out / 'compile.log').write_text(result.stdout)
+ if result.returncode:
+-    raise SystemExit(result.stdout[-3500:])
++    raise SystemExit(result.stdout if len(result.stdout) <= 10000 else result.stdout[:6500] + '\n... full diagnostics in compile.log ...\n' + result.stdout[-3500:])
+ check_object(destination.read_bytes(), component)
+ archive = out / ('lib' + identifier + '.a')
+ archive.unlink(missing_ok=True)

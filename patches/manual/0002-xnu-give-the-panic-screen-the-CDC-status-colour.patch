@@ -1,0 +1,112 @@
+From 984c0b8a161f28cf6773086e288784a714b6cf61 Mon Sep 17 00:00:00 2001
+From: ljhhkx529 <ljhzyx520@gmail.com>
+Date: Thu, 5 Nov 2026 20:36:06 +0800
+Subject: [PATCH 2/4] xnu: give the panic screen the CDC status colour
+
+patch-xnu-entry-probe.py resolves _native_usb_panic_bg next to the other symbols and passes it as
+QUD_BG. The panic screen fills the lower page with that colour, so a refused or active CDC bring-up
+is visible on a photograph without spending padding on the phase logic.
+
+The frame-pointer walk is removed: it competed with the colour for the same padding budget, and the
+panic message already names the faulting call.
+---
+ scripts/patch-xnu-entry-probe.py | 13 +++++++++++
+ scripts/xnu-panic-screen.c       | 39 ++++++++++++++++----------------
+ 2 files changed, 32 insertions(+), 20 deletions(-)
+
+diff --git a/scripts/patch-xnu-entry-probe.py b/scripts/patch-xnu-entry-probe.py
+index 4d98917..15dc317 100644
+--- a/scripts/patch-xnu-entry-probe.py
++++ b/scripts/patch-xnu-entry-probe.py
+@@ -293,6 +293,19 @@ def assemble_c(source, va, workdir, symbols):
+         if not any(base <= text and text + 256 <= base + size for base, size, _, _ in SEGMENTS):
+             raise SystemExit('Invalid _boot_progress_panic_text')
+         definitions.append(f'-DPANIC_TEXT={text:#x}UL')
++    # Optional: the QcomXnuUsbDebug status provider. Kernels without the USB archive get 0 (status row skipped).
++    qud = symbols.get('_qcom_usb_debug_get_status')
++    if qud is not None:
++        if not any(base <= qud and qud + 4 <= base + size for base, size, _, _ in SEGMENTS):
++            raise SystemExit('Invalid _qcom_usb_debug_get_status')
++        definitions.append(f'-DQUD_STATUS={qud:#x}UL')
++    # The page background colour the USB adapter derives from the CDC phase. Computing it in the
++    # adapter keeps the colour logic out of the panic screen's padding budget.
++    bg = symbols.get('_native_usb_panic_bg')
++    if bg is not None:
++        if not any(base <= bg and bg + 4 <= base + size for base, size, _, _ in SEGMENTS):
++            raise SystemExit('Invalid _native_usb_panic_bg')
++        definitions.append(f'-DQUD_BG={bg:#x}UL')
+     subprocess.run([clang, '--target=aarch64-none-elf', '-ffreestanding', '-fno-builtin', '-fno-stack-protector',
+                     '-mgeneral-regs-only', '-fno-pic', '-mcmodel=tiny', '-Oz', f'-DVINFO={VINFO_VA:#x}UL',
+                     *definitions, f'-I{font_dir}', '-c', source, '-o', obj], check=True)
+diff --git a/scripts/xnu-panic-screen.c b/scripts/xnu-panic-screen.c
+index 188a2c8..e7992dc 100644
+--- a/scripts/xnu-panic-screen.c
++++ b/scripts/xnu-panic-screen.c
+@@ -38,6 +38,9 @@ struct ctx {
+ #ifndef PANIC_TEXT
+ #define PANIC_TEXT 0UL
+ #endif
++#ifndef QUD_BG
++#define QUD_BG 0UL
++#endif
+ #define PANIC_TEXT_BYTES 2048   /* boot_progress_panic_text: a data abort's message with every register, then the frames */
+ 
+ __attribute__((noreturn)) static void park (void)
+@@ -239,11 +242,20 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main
+   g.x = 0;
+   g.y = g.h / 8;
+   g.log = 0;
+-  g.logn = 0;
+-  for (row = g.y; row < g.h; row++) {
+-    for (col = 0; col < g.w; col++) {
+-      *(volatile u32 *)(g.base + (u64)row * g.rb + (u64)col * 4) = 0;
++  /* The USB CDC status colour is a solid band at the top of the lower page, with the error text
++   * below it. FuxiUsbCompat.c derives the colour from the CDC phase (green = ACTIVE, yellow =
++   * PREPARING/WAITING, red = not started/failed) and stores it in a global word, so this file only
++   * reads that word: the padding budget cannot afford the phase logic here. With no USB archive the
++   * address is 0, the band disappears and the page stays black. */
++  {
++    u32 bg = QUD_BG ? *(volatile u32 *)QUD_BG : 0;
++    u32 band = g.y + (bg ? 40u : 0u);
++    for (row = g.y; row < g.h; row++) {
++      for (col = 0; col < g.w; col++) {
++        *(volatile u32 *)(g.base + (u64)row * g.rb + (u64)col * 4) = row < band ? bg : 0;
++      }
+     }
++    if (bg) g.y = band + 8;
+   }
+   g.y += 8;
+   /* The board's live banner keeps showing this text after the next swap paints over the screen (BootProgress.c,
+@@ -252,22 +264,8 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main
+     g.log = (u8 *)PANIC_TEXT;
+   }
+   format (&g, fmt, args);
+-  /* The return addresses up the frame pointer chain: the exception entry links the panic's frames to the code that faulted, so this
+-   * names the callers the message leaves out. Stops at a pointer outside the kernel's range, a misaligned one or one that does not
+-   * move up the stack. */
+-  {
+-    const u64 *fp = (const u64 *)__builtin_frame_address (0);
+-    text (&g, "\nframes");
+-    for (unsigned i = 0; i < 24; i++) {
+-      const u64 at = (u64)fp;
+-      if (at < 0xfffffff000000000UL || (at & 15)) break;
+-      const u64 next = fp[0], lr = fp[1] & 0x0000007fffffffffUL;   /* the return address without its pointer authentication bits */
+-      put (&g, ' ');
+-      number (&g, lr | 0xffffff8000000000UL, 16, 16, 1);
+-      if (next <= at) break;
+-      fp = (const u64 *)next;
+-    }
+-  }
++  /* No frame-pointer walk: the USB CDC status colour shares this padding budget, and the panic
++   * message above already names the faulting call. */
+   g.log = 0;
+   __asm__ volatile ("dsb sy");
+   /* Resolved from this candidate's symbols by the patcher, never fixed addresses.
+@@ -275,6 +273,7 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main
+   (void)MAX_MEM;
+   hex (&g, "\npages=", *(volatile const u32 *)PAGE_TOTAL);
+   hex (&g, "\nfree=", *(volatile const u32 *)PAGE_FREE);
++
+   /* The raw argument slots are not dumped: the formatted message above already carries them (room for the PANIC_TEXT copy). */
+   mark[0] = 0xC0FFEE11u;
+   mark[1] = 0x5CEEDA7Au;
