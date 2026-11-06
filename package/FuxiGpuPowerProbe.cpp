@@ -54,7 +54,8 @@
 #include <kern/thread.h>
 #include <pexpert/pexpert.h>
 #include <string.h>
-extern int printf(const char *format, ...);   /* the serial log; the probe's own rows go to the boot page */
+extern int printf(const char *format, ...);
+extern "C" bool native_adreno_fences(uint32_t *submitted, uint32_t *retired);   /* NativeAdrenoPublish.cpp */   /* the serial log; the probe's own rows go to the boot page */
 extern "C" {
 #include "GpuPowerBoard.h"
 }
@@ -1429,7 +1430,7 @@ void gpuStart() {
     uint32_t *c = native_gpu_cp;
     printf("fuxi-gpu: gpuStart link bringup %d buffers %d smmu %d\n",
            NativeAdrenoGpuContextBringup ? 1 : 0, NativeAdrenoGpuContextBuffers ? 1 : 0, gSmmuMap ? 1 : 0);
-    if (!NativeAdrenoGpuContextBringup || !NativeAdrenoGpuContextBuffers || !gSmmuMap) {setRow(6, "Q nolink"); return;}
+    if (!NativeAdrenoGpuContextBringup || !NativeAdrenoGpuContextBuffers || !gSmmuMap) {setRow(6, "Q nolink"); { printf("fuxi-gpu: gpuStart exit %u cp %u\n", __LINE__, c[0]); return; }}
     // 1. The GPU's own context bank and buffers (arm-smmu-qcom: the GPU always gets bank 0; DT iommus SIDs 0 and 1).
     NativeAdrenoGmuContextReport &q = native_gpu_context;
     // The BO pool (one contiguous block, sheng-gpu-pool MiB, default 1536) is taken inside the bring-up, before memory fragments. int-159:
@@ -1442,7 +1443,7 @@ void gpuStart() {
     snprintf(row, sizeof row, "Q s%u st%x k%u/%u p%ue%u r%uv%u n%u", q.step, unsigned(ctx), q.program_status, q.route_status,
              q.program_phase, q.program_enabled, q.route_phase, q.routes_verified, q.spans);
     setRow(6, row);
-    if (ctx) return;
+    if (ctx) { printf("fuxi-gpu: gpuStart ctx refuse %x cp %u\n", unsigned(ctx), c[0]); return; }
     gpuSetActlr();
     c[0] = 1;
     // These are static objects whose constructors clear them; this archive is force-loaded, so they may reach
@@ -1450,24 +1451,28 @@ void gpuStart() {
     printf("fuxi-gpu: gpuStart maps before reset %d\n", gGpuMaps[0] ? 1 : 0);
     for (unsigned i = 0; i < 5; ++i) { gGpuMaps[i] = nullptr; gGpuCpu[i] = nullptr; }
     printf("fuxi-gpu: gpuStart maps reset %d\n", gGpuMaps[0] ? 1 : 0);
-    if (NativeAdrenoGpuContextBuffers(gGpuBuffers)) {setRow(7, "C1 buffers refused"); return;}
+    printf("fuxi-gpu: gpuStart buffers call begin\n");
+    const IOReturn bufrc = NativeAdrenoGpuContextBuffers(gGpuBuffers);
+    printf("fuxi-gpu: gpuStart buffers call done %x, first bo phys %llx bytes %llu\n", unsigned(bufrc),
+           (unsigned long long)gGpuBuffers[0].physical, (unsigned long long)gGpuBuffers[0].bytes);
+    if (bufrc) {setRow(7, "C1 buffers refused"); { printf("fuxi-gpu: gpuStart exit %u cp %u\n", __LINE__, c[0]); return; }}
     for (unsigned i = 0; i < 5; ++i) {
         IODeviceMemory *m = IODeviceMemory::withRange(gGpuBuffers[i].physical, gGpuBuffers[i].bytes);
         if (m) {
             gGpuMaps[i] = OSSharedPtr<IOMemoryMap>(m->map(kIOMapAnywhere | kIOMapWriteCombineCache), OSNoRetain);
             m->release();
         }
-        if (!gGpuMaps[i]) {setRow(7, "C1 nomap buffer"); return;}
+        if (!gGpuMaps[i]) {setRow(7, "C1 nomap buffer"); { printf("fuxi-gpu: gpuStart exit %u cp %u\n", __LINE__, c[0]); return; }}
         gGpuCpu[i] = reinterpret_cast<volatile uint8_t *>(gGpuMaps[i]->getVirtualAddress());
     }
     // 2. SQE: adreno_fw_create_bo copies the firmware without its first dword.
     c[0] = 2;
     const uint64_t sqe = &native_adreno_sqe_firmware_image_size ? native_adreno_sqe_firmware_image_size : 0;
-    if (sqe < 8 || sqe - 4 > gGpuBuffers[0].bytes) {setRow(7, "C2 no sqe image"); return;}
+    if (sqe < 8 || sqe - 4 > gGpuBuffers[0].bytes) {setRow(7, "C2 no sqe image"); { printf("fuxi-gpu: gpuStart exit %u cp %u\n", __LINE__, c[0]); return; }}
     for (uint64_t i = 4; i < sqe; ++i) gGpuCpu[0][i - 4] = native_adreno_sqe_firmware_image[i];
     __asm__ volatile("dsb sy" ::: "memory");
     for (uint64_t i = 4; i < sqe; ++i) if (gGpuCpu[0][i - 4] != native_adreno_sqe_firmware_image[i]) {c[1] = uint32_t(i); break;}
-    if (c[1]) {snprintf(row, sizeof row, "C2 sqe readback differs at %x", c[1]); setRow(7, row); return;}
+    if (c[1]) {snprintf(row, sizeof row, "C2 sqe readback differs at %x", c[1]); setRow(7, row); { printf("fuxi-gpu: gpuStart exit %u cp %u\n", __LINE__, c[0]); return; }}
     // 3. hw_init (a6xx_gpu.c), A740 branches only. OOB GPU_SET is already held (mode 8).
     c[0] = 3;
     gpuWr(A740_GBIF_HALT, 0); (void)gpuRd(A740_GBIF_HALT);
@@ -1528,7 +1533,7 @@ void gpuStart() {
     native_adreno_fence_phys = gGpuBuffers[2].physical;   // the page the CP writes its timestamps to, for the UFS log
     const IOReturn attached = gRing.attach(&rio, &cache, const_cast<uint8_t *>(gGpuCpu[1]), gGpuBuffers[1].bytes,
         gGpuBuffers[1].iova, const_cast<uint8_t *>(gGpuCpu[2]), gGpuBuffers[2].bytes, gGpuBuffers[2].iova);
-    if (attached) {snprintf(row, sizeof row, "C4 ring attach %x", unsigned(attached)); setRow(7, row); return;}
+    if (attached) {snprintf(row, sizeof row, "C4 ring attach %x", unsigned(attached)); setRow(7, row); { printf("fuxi-gpu: gpuStart exit %u cp %u\n", __LINE__, c[0]); return; }}
     gpuWr64(A740_CP_BV_RB_RPTR_ADDR, gGpuBuffers[2].iova + 8);   // rbmemptr(bv_rptr)
     gpuWr(A740_CP_SQE_CNTL, 1);
     // 5. a7xx_patch_pwrup_reglist (preemption list only; IFPC is off) and a7xx_cp_init through the ring.
@@ -1536,27 +1541,27 @@ void gpuStart() {
     size_t written = 0;
     const IOReturn list = NativeAdrenoPwrupList::buildA740(ringRead, nullptr, const_cast<uint8_t *>(gGpuCpu[3]),
         gGpuBuffers[3].bytes, &written);
-    if (list) {snprintf(row, sizeof row, "C5 pwrup list %x", unsigned(list)); setRow(7, row); return;}
+    if (list) {snprintf(row, sizeof row, "C5 pwrup list %x", unsigned(list)); setRow(7, row); { printf("fuxi-gpu: gpuStart exit %u cp %u\n", __LINE__, c[0]); return; }}
     __asm__ volatile("dsb sy" ::: "memory");
     const NativeAdrenoCpInitConfig config{gGpuBuffers[0].iova, gGpuBuffers[3].iova, 1};   // base written above, before SQE_CNTL
     uint32_t fence = 0;
     c[2] = uint32_t(gCpInit.run(&rio, &gRing, &config, &fence));
-    if (c[2]) {cpRow("ref"); return;}
+    if (c[2]) { printf("fuxi-gpu: gpuStart cp ref %u\n", c[0]); cpRow("ref"); return;}
     c[0] = 6;
     cpRow("sent");
     const NativeAdrenoRingClock clock{nullptr, ringNow, ringIdle};
     c[3] = gRing.wait(fence, &clock, 200000, &c[4]);
-    if (c[3]) {cpRow(c[3] == NativeAdrenoRingFenceTimeout ? "to" : "flt"); return;}
+    if (c[3]) { printf("fuxi-gpu: gpuStart cp %s %u\n", c[3] == NativeAdrenoRingFenceTimeout ? "to" : "flt", c[0]); cpRow(c[3] == NativeAdrenoRingFenceTimeout ? "to" : "flt"); return;}
     // 6. First real command: CP_MEM_WRITE (opcode 0x3d: address lo/hi, data) into the scratch page, then its fence.
     c[0] = 7;
     volatile uint32_t *scratch = reinterpret_cast<volatile uint32_t *>(gGpuCpu[4]);
     scratch[0] = 0;
     __asm__ volatile("dsb sy" ::: "memory");
     uint32_t words[4] = {};
-    if (AdrenoPM4Type7(0x3d, 3, &words[0]) != AdrenoPM4Success) {cpRow("pm4"); return;}
+    if (AdrenoPM4Type7(0x3d, 3, &words[0]) != AdrenoPM4Success) { printf("fuxi-gpu: gpuStart cp pm4 %u\n", c[0]); cpRow("pm4"); return;}
     words[1] = uint32_t(gGpuBuffers[4].iova); words[2] = uint32_t(gGpuBuffers[4].iova >> 32); words[3] = 0x5e9a740;
     c[5] = uint32_t(gRing.submit(words, 4, &fence));
-    if (c[5]) {cpRow("wref"); return;}
+    if (c[5]) { printf("fuxi-gpu: gpuStart cp wref %u\n", c[0]); cpRow("wref"); return;}
     c[6] = gRing.wait(fence, &clock, 200000, &c[4]);
     c[7] = scratch[0];
     c[0] = c[6] ? 8 : (c[7] == 0x5e9a740 ? 10 : 9);
@@ -1829,7 +1834,17 @@ void gpuOn() {
     setRow(5, row);
     native_gpu_power_stage = gx ? 0x87 : 0x8f;
     printf("fuxi-gpu: gpuOn done, gx %u vote %u/%x\n", gx, g[0], g[1]);
-    if (gx && mode() >= 9) { printf("fuxi-gpu: gpuStart entered\n"); gpuStart(); printf("fuxi-gpu: gpuStart returned\n"); }
+    if (gx && mode() >= 9) {
+        printf("fuxi-gpu: gpuStart entered\n");
+        gpuStart();
+        printf("fuxi-gpu: gpuStart returned\n");
+        {
+            uint32_t s = 0, r2 = 0;
+            const bool live = native_adreno_fences(&s, &r2);
+            printf("fuxi-gpu: gpuStart fence %s submitted %u retired %u stage %x\n",
+                   live ? "live" : "absent", s, r2, native_gpu_power_stage);
+        }
+    }
     if (gHeartbeatThread) for (;;) IOSleep(60000);
     heartbeat();
 }
