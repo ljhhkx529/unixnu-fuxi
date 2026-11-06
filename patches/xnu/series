@@ -3,5 +3,6 @@
 zzyf-sheng-amp.patch
 fuxi-touch-probe.patch
 fuxi-keystore-probe.patch
+fuxi-display-load-status.patch
 zzzc-boot-log.patch
 offline-owner-systemos-release-launchd.patch

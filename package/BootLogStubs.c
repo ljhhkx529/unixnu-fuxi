@@ -17,7 +17,6 @@
 struct native_adreno_client_record { char name[20]; uint32_t opens, refused, closes, slot, peak_mib, last_refusal; };
 struct native_adreno_asker_record { char name[20]; uint32_t reads; };
 
-volatile uint64_t native_gop_wait_stats[7];
 volatile uint32_t native_adreno_fence_wait[8] __attribute__((weak));
 volatile uint32_t native_adreno_stall[29] __attribute__((weak));
 volatile uint32_t native_adreno_stall_mem[59] __attribute__((weak));
@@ -68,10 +67,5 @@ unsigned boot_ui_trace_role_rows(unsigned role, char rows[][120], unsigned count
 { (void)role; (void)rows; (void)count; (void)mode; return 0; }
 unsigned boot_ui_trace_hot_rows(char rows[][120], unsigned count)
 { (void)rows; (void)count; return 0; }
-unsigned native_legacy_properties_now(char *out, unsigned cap) { (void)out; (void)cap; return 0; }
-unsigned native_legacy_clients_dump(char *out, unsigned cap) { (void)out; (void)cap; return 0; }
-unsigned native_legacy_swap_timeline(char *out, unsigned cap) { (void)out; (void)cap; return 0; }
-unsigned native_legacy_prepare_report(char *out, unsigned cap) { (void)out; (void)cap; return 0; }
-unsigned native_legacy_state_words(char *out, unsigned cap) { (void)out; (void)cap; return 0; }
 int boot_reset_probe(char *out, unsigned cap) { (void)out; (void)cap; return -1; }
 int boot_reset_bootloader(char *out, unsigned cap) { (void)out; (void)cap; return -1; }

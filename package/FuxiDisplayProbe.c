@@ -1,46 +1,43 @@
 /* SPDX-License-Identifier: BSD-2-Clause-Patent
  * Board backends the display driver of GopFramebuffer calls into, for the fuxi bring-up.
  *
- * UniXNU-sheng supplies these from package/LegacyDisplayProbe.cpp, a 596-line probe that also publishes
- * the display, keeps its own swap rings and reads the panel timing. This board is not there yet: the
- * driver object compiles and its 358-entry vtable matches the original, so this file exists to let the
- * link close with the smallest honest behaviour, and each hook becomes real as its own step lands.
+ * Most of what this driver calls is bound straight to the original family: package/
+ * FuxiLegacyDisplayProbe.cpp publishes the display and owns the swap rings, and build-fuxi-display.py
+ * records thirteen further bindings (the surface getters, the vsync sender, the refresh-properties body
+ * and the class constructor, destructor, metaclass and vtable) after checking each address against the
+ * candidate. Nothing here duplicates those.
  *
- *   native_legacy_vsync_notify   The platform subclass that raises the vblank. fuxi has no panel
- *                                vblank source wired yet (no DPU scanout, no TE line), so the driver's
- *                                own timer keeps the queue moving and this stays a no-op. It is called
- *                                with the driver's lock held, so it must never sleep or allocate.
- *   native_legacy_vsync_observed Counters only, taken from sheng's probe so the diagnostic rows read
- *                                the same numbers.
- *   native_ufs_dpu_map           Weak stubs, byte for byte from unixnu-fuxi-old package/
- *   native_ufs_dpu_state         FuxiDpuScanoutStubs.c: the NativeUfs backend of this board does not
- *                                expose the direct-DPU scanout path, so it stays disabled rather than
- *                                pretending to map pages.
+ * What is left are the two subsystems fuxi has no driver for yet. Both are weak, so a real
+ * implementation takes them over without touching this file.
+ *
+ *   native_adreno_fences   Adreno740's GPU fence counters. The driver asks whether a hand-off is still
+ *                          outstanding; answering false keeps every frame on the CPU copy path, which is
+ *                          correct while there is no GPU driver to complete them.
+ *   native_ufs_dpu_*       The direct-DPU scanout path. Verbatim from unixnu-fuxi-old package/
+ *                          FuxiDpuScanoutStubs.c: this board's NativeUfs backend does not expose it, so
+ *                          it stays disabled rather than pretending to map pages.
  */
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
-/* Nothing raises the vblank yet; the driver's timer interleaves instead. */
-void native_legacy_vsync_notify(void *display, uint64_t timestamp, uint64_t continuousTime,
-                                uint64_t interval) {
-    (void)display;
-    (void)timestamp;
-    (void)continuousTime;
-    (void)interval;
-}
+/* native_legacy_vsync_notify is not defined here: it binds to the original family's own sender, which
+ * scripts/build-fuxi-display.py records with the other twelve bindings after checking each address
+ * against the candidate. A second definition here would shadow the original code. */
 
 /* Event counters and the last interval the driver reported, as sheng's probe keeps them. */
 /* Kept for the diagnostic step that reads them; nothing formats them yet, so they stay private and
  * the file needs no kernel string routines (they clash with stdint under the C compile record). */
-static volatile uint64_t vsyncEvents[6];
-static volatile unsigned vsyncHz;
-__attribute__((unused)) static uint64_t vsyncEventsRead(unsigned event) {
-    return event < 6 ? vsyncEvents[event] : 0;
-}
 
-void native_legacy_vsync_observed(unsigned event, unsigned hz) {
-    if (event < 6) vsyncEvents[event] = vsyncEvents[event] + 1;
-    vsyncHz = hz;
+
+/* The GPU fence counters of Adreno740, which is not ported yet. The driver declares this weak_import and
+ * asks whether a GPU hand-off is still outstanding: answering false keeps every frame on the CPU copy
+ * path, which is the correct behaviour while there is no GPU driver to complete them. Unused today
+ * because sheng-fb-gpu is off; it becomes a real query when Adreno740 lands. */
+__attribute__((weak)) bool native_adreno_fences(uint32_t *submitted, uint32_t *retired) {
+    (void)submitted;
+    (void)retired;
+    return false;
 }
 
 /* Verbatim from unixnu-fuxi-old package/FuxiDpuScanoutStubs.c. */

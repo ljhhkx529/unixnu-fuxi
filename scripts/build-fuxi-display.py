@@ -11,14 +11,19 @@ established named. That is how UniXNU-sheng and unixnu-fuxi-old both do it.
 This step builds the driver object only. Publishing the display and claiming the desktop come later,
 one verifiable step at a time.
 """
+import hashlib
 import json
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+NL = chr(10)
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / 'build/fuxi-display'
+# The kernel script of the shared tree links the display archive from build/native-legacy-display/, a
+# path unixnu-fuxi-old also uses. Keeping it there means CONFIG_XNU_NATIVE_LEGACY_DISPLAY needs no
+# change to that shared script.
+OUT = ROOT / 'build/native-legacy-display'
 OBJ = ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837'
 AUDIT = ROOT / 'build/display-analysis/mobile-graphics-legacy-abi.json'
 CXX_FLAGS = ['-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter', '-Wno-unnecessary-virtual-specifier',
@@ -83,6 +88,31 @@ public:
  IOReturn setPowerState(unsigned long,IOService *) override;
 '''
 
+# Bindings of the original family: names this driver calls, and the exact original addresses they must
+# reach. unixnu-fuxi-old ships the same table for the same kernelcache (pinned by [kernel.prelink]
+# kernelcache_sha256), and every entry below is checked against the candidate before it is used, so a
+# different IPSW stops here instead of binding a wrong address.
+ORIGINAL_CTOR = 0xfffffff0057865cc
+ORIGINAL_DTOR = 0xfffffff005786618
+ORIGINAL_METACLASS = 0xfffffff006b35940
+# The original IOSurface getters, read through the real swap requests: name, address, field, 64-bit.
+ORIGINAL_SURFACE = [
+    ('descriptor', 0xfffffff004b9ead0, 48, True),
+    ('width', 0xfffffff004b9ebbc, 88, True),
+    ('height', 0xfffffff004b9ebc4, 96, True),
+    ('stride', 0xfffffff004b9ebd4, 104, True),
+    ('allocation', 0xfffffff004b9ebfc, 144, True),
+    ('format', 0xfffffff004b9ebac, 128, False),
+    ('planes', 0xfffffff004b9ebf4, 152, False),
+]
+# The original display-refresh notification sender (self, timestamp, continuous host time, interval):
+# it sends the six-word vsync message to every client queued at +5592. The platform subclass that calls
+# it on each panel vblank is not part of this port.
+ORIGINAL_VSYNC_NOTIFY = 0xfffffff005796720
+ORIGINAL_HEAD_VSYNC = bytes.fromhex('ff0302d1fd7b07a9fdc30191a0831ff8')
+# Slot 301's own body: fills the six words setDisplayRefreshProperties publishes as IOMFBDisplayRefresh.
+ORIGINAL_SET_REFRESH = 0xfffffff00579ebb8
+
 KNOWN = {
     184: ' virtual bool isMainDisplay();',
     188: ' virtual IOReturn getDotPitch(uint32_t *);',
@@ -96,6 +126,16 @@ KNOWN = {
     354: ' virtual int applyStateRequest(OriginalLegacyStateRequest *,bool);',
     337: ' virtual IOReturn collectCompletionReports(uint32_t,void *,uint32_t *,uint32_t)=0;',
 }
+
+
+def objcopy(*arguments):
+    """llvm-objcopy of the same LLVM the archive builders use."""
+    for candidate in ('/opt/homebrew/opt/llvm/bin/llvm-objcopy', '/usr/local/opt/llvm/bin/llvm-objcopy',
+                      shutil.which('llvm-objcopy')):
+        if candidate and Path(candidate).is_file():
+            subprocess.run([candidate, *map(str, arguments)], check=True, timeout=120)
+            return
+    sys.exit('llvm-objcopy missing: brew install llvm')
 
 
 def record(path):
@@ -138,6 +178,105 @@ def generate_header(audit):
     return text
 
 
+def candidate_path():
+    """The prelink candidate the audit qualified, from the device repository or the tree."""
+    for directory in (ROOT / 'build/xnu-prelink', ROOT.parent.parent / 'unixnu-fuxi/build/xnu-prelink'):
+        if directory.is_dir():
+            names = sorted(directory.glob('native-owner-*-candidate.macho'))
+            if names:
+                return names[-1]
+    sys.exit('no prelink candidate: run scripts/stage-prelink-candidate.py after the kernel step')
+
+
+def bindings(audit):
+    """Symbol -> original address, each one checked against the candidate before it is used."""
+    sys.path.insert(0, str(ROOT / 'kits/XnuPrelink'))
+    from native_prelink import backed_offset, macho
+
+    candidate = candidate_path()
+    blob = candidate.read_bytes()
+    image = macho(blob)
+
+    def read(va, count):
+        at = backed_offset(image['segments'], va, count, len(blob))
+        return blob[at:at + count]
+
+    import struct
+    table = {
+        '__ZN25IOMobileFramebufferLegacyC2EPK11OSMetaClass': ORIGINAL_CTOR,
+        '__ZN25IOMobileFramebufferLegacyD2Ev': ORIGINAL_DTOR,
+        '__ZN25IOMobileFramebufferLegacy10gMetaClassE': ORIGINAL_METACLASS,
+        '__ZTV25IOMobileFramebufferLegacy': int(audit['legacy_vptr'], 16) - 16,
+    }
+    for name, address, field, wide in ORIGINAL_SURFACE:
+        expected = (0xf9400000 if wide else 0xb9400000) | ((field // (8 if wide else 4)) << 10)
+        if read(address, 8) != struct.pack('<2I', expected, 0xd65f03c0):
+            sys.exit(f'the original surface getter {name} is not at {address:#x} in this kernelcache')
+        table['_native_legacy_surface_' + name] = address
+    if read(ORIGINAL_VSYNC_NOTIFY, 16) != ORIGINAL_HEAD_VSYNC:
+        sys.exit(f'the original vsync sender is not at {ORIGINAL_VSYNC_NOTIFY:#x} in this kernelcache')
+    table['_native_legacy_vsync_notify'] = ORIGINAL_VSYNC_NOTIFY
+    table['_native_legacy_set_refresh_properties'] = ORIGINAL_SET_REFRESH
+    return table
+
+
+def bindings_object(table):
+    """Assemble the bindings the way unixnu-fuxi-old does: one .set per name, no code."""
+    source = OUT / 'original-bindings.S'
+    source.write_text(''.join(f'.globl {name}' + NL + f'.set {name}, {address:#x}' + NL
+                              for name, address in sorted(table.items())))
+    sdk = subprocess.run(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'],
+                         capture_output=True, text=True, check=True).stdout.strip()
+    obj = OUT / 'original-bindings.o'
+    subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-isysroot', sdk,
+                    '-c', str(source), '-o', str(obj)], check=True, timeout=120)
+    return obj
+
+
+def vtable_bindings(obj, audit):
+    """Bind every original entry the compiled vtable still points at, from the audit's addresses.
+
+    The declaration names 358 original entries; the driver overrides the qualified ones and leaves the
+    rest to the original implementation. The compiler therefore emits references to
+    IOMobileFramebufferLegacy::opaqueNNN, and each one is bound to the address the audit recorded for
+    that slot, exactly as unixnu-fuxi-old does. Reading the vtable back also proves the object cannot
+    overrun the original layout: nothing may be relocated past entry 357.
+    """
+    sys.path.insert(0, str(ROOT / 'kits/XnuPrelink'))
+    from native_prelink import macho
+
+    import struct
+    raw = obj.read_bytes()
+    image = macho(raw)
+    command = next(p for c, p, _ in image['commands'] if c == 2)
+    symbols_at, count, strings, _ = struct.unpack_from('<4I', raw, command + 8)
+    symbols = []
+    for index in range(count):
+        name_at, kind, _, _, va = struct.unpack_from('<IBBHQ', raw, symbols_at + index * 16)
+        end = raw.index(bytes([0]), strings + name_at)
+        symbols.append((raw[strings + name_at:end].decode(), va, kind))
+    vtable = next(va for name, va, _ in symbols if name == '__ZTV19NativeLegacyDisplay')
+    relocations = {}
+    for segment in image['segments']:
+        for section in segment['sections']:
+            if section['va'] <= vtable < section['va'] + section['size']:
+                start, count = struct.unpack_from('<2I', raw, section['command_offset'] + 56)
+                for index in range(count):
+                    offset, bits = struct.unpack_from('<2I', raw, start + index * 8)
+                    if bits >> 27 & 1 and bits >> 28 == 0 and bits >> 25 & 3 == 3:
+                        relocations[section['va'] + offset] = symbols[bits & 0xffffff][0]
+    if vtable + 16 + 358 * 8 in relocations:
+        sys.exit('the compiled vtable runs past the 358 entries of the original instance')
+    compiled = [relocations.get(vtable + 16 + index * 8) for index in range(358)]
+    if not all(compiled):
+        sys.exit('the compiled vtable is missing original entries')
+    table = {}
+    for index, name in enumerate(compiled):
+        if name.startswith(('__ZN25IOMobileFramebufferLegacy', '__ZNK25IOMobileFramebufferLegacy')):
+            table[name] = int(audit['methods'][index]['address'], 16)
+    return table
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     if not AUDIT.is_file():
@@ -157,6 +296,11 @@ def main():
     subprocess.run(command(cxx, source, obj, CXX_FLAGS + ['-I', gop, '-I', OUT]),
                    cwd=cxx['directory'], check=True, timeout=240)
     print(f'compiled {source.relative_to(ROOT)}')
+    # The probe runs the driver's static constructor itself, after OSMetaClass preModLoad, so the section
+    # is dropped and the symbol globalised the way sheng and unixnu-fuxi-old stage this object.
+    obj_late = OUT / 'NativeLegacyDisplay.late.o'
+    objcopy('--remove-section=__DATA,__mod_init_func',
+            '--globalize-symbol=__GLOBAL__sub_I_NativeLegacyDisplay.cpp', obj, obj_late)
     # The board backends the driver calls into. They live next to the other fuxi glue, and each hook
     # becomes real as its own step lands; see package/FuxiDisplayProbe.c.
     probe = ROOT / 'kits/fuxi/FuxiDisplayProbe.c'
@@ -169,10 +313,46 @@ def main():
                    cwd=c['directory'], check=True, timeout=180)
     print(f'compiled {probe.relative_to(ROOT)}')
 
-    archive = OUT / 'libFuxiDisplay.a'
+    # The presenter publishes the boot framebuffer as a Metal-capable display and takes the frames the
+    # display driver offers it (sheng-fb-gpu=1). Its static constructor is staged the way sheng stages it.
+    presenter = gop / 'NativeGOPPresenter.cpp'
+    presenter_obj = OUT / 'NativeGOPresenter.o'
+    subprocess.run(command(cxx, presenter, presenter_obj, CXX_FLAGS + ['-I', gop]),
+                   cwd=cxx['directory'], check=True, timeout=240)
+    presenter_late = OUT / 'NativeGOPPresenter.late.o'
+    objcopy('--remove-section=__DATA,__mod_init_func',
+            '--globalize-symbol=__GLOBAL__sub_I_NativeGOPPresenter.cpp', presenter_obj, presenter_late)
+    print(f'compiled {presenter.relative_to(ROOT)} (late init staged)')
+
+    # The board probe: it publishes the display, keeps the swap rings and hands frames to the presenter.
+    # Ported from UniXNU-sheng package/LegacyDisplayProbe.cpp; see package/FuxiLegacyDisplayProbe.cpp.
+    legacy_probe = ROOT / 'kits/fuxi/FuxiLegacyDisplayProbe.cpp'
+    if not legacy_probe.is_file():
+        sys.exit(f'{legacy_probe} missing: the fuxi device repository owns this board probe')
+    legacy_obj = OUT / 'FuxiLegacyDisplayProbe.o'
+    subprocess.run(command(cxx, legacy_probe, legacy_obj, CXX_FLAGS + ['-I', gop, '-I', OUT]),
+                   cwd=cxx['directory'], check=True, timeout=240)
+    print(f'compiled {legacy_probe.relative_to(ROOT)}')
+
+    table = bindings(audit)
+    table.update(vtable_bindings(obj, audit))
+    bindings_obj = bindings_object(table)
+    print(f'bound {len(table)} original symbols after checking each against the candidate')
+
+    archive = OUT / 'libNativeLegacyDisplay.late.a'
     archive.unlink(missing_ok=True)
     ar = ['xcrun', 'ar'] if shutil.which('xcrun') else [shutil.which('llvm-ar') or 'ar']
-    subprocess.run([*ar, 'rcs', str(archive), str(obj), str(probe_obj)], check=True, timeout=60)
+    subprocess.run([*ar, 'rcs', str(archive), str(obj_late), str(probe_obj), str(legacy_obj), str(bindings_obj), str(presenter_late)],
+                   check=True, timeout=60)
+    # The kernel script checks the archive against a report of the exact sources it was built from, so a
+    # changed driver cannot slip into the link unnoticed (build-xnu-4k-baseline.sh PY_LEGACY_DISPLAY).
+    report = {
+        'archive_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
+        'source_sha256': {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
+                          for path in (source, legacy_probe, presenter, probe, gop / 'NativeLegacyRequest.h',
+                                       gop / 'NativeGOPWire.h', gop / 'NativeHalfCodes.h')},
+    }
+    (OUT / 'build-report.json').write_text(json.dumps(report, indent=2) + NL)
     print(f'display archive: {archive.relative_to(ROOT)}')
 
 

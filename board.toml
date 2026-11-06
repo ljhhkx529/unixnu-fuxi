@@ -183,7 +183,24 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                # The owned AppleKeyStore probe (package/FuxiKeyStoreProbe.cpp) only runs with this set;
                # sheng passes the same switch. Without it MobileKeyBag has nothing to talk to and dies
                # on the missing systembag.kb.
-               "offline-key-events=1"]
+               "offline-key-events=1",
+               # The legacy display chain, with unixnu-fuxi-old s arguments for this board. The probe
+               # publishes the display only at phase 4, and each of the other switches turns on one
+               # qualified part of it: the GOP framebuffer handover, the registration and PM observations,
+               # the swap validation and transfer path, and the CPU-present report.
+               "offline-legacy-phase=4",
+               "offline-legacy-register=1",
+               "offline-legacy-gop=1",
+               "offline-legacy-pm=1",
+               "offline-legacy-validate=1",
+               "offline-legacy-transfer=1",
+               "offline-legacy-cpu-present=1",
+               "offline-legacy-unit-scale=2",
+               # Load the original IOMobileGraphicsFamily client support and the mobile-graphics kexts
+               # out of the prelinked collection, as old does.
+               "offline-mobile-graphics-load=1",
+               "offline-mobile-graphics-client=1",
+               "offline-apfs-load=1"]
 # Signed-text fixups (from unixnu-fuxi-old board.toml), travelled in /chosen/text-fixups.
 text_fixups = ["BTAudioHALPlugin,38bec,ffc300d1f44f01a9,000080d2c0035fd6"]
 

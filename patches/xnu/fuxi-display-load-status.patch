@@ -1,0 +1,13 @@
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -553,6 +553,10 @@
+ 	}
+ 	native_mobile_graphics_load_status = OSKextLoadKextWithIdentifier("com.apple.iokit.IOMobileGraphicsFamily");
+ 	native_mobile_graphics_probe_checkpoint();
++	/* The load result decides whether the display probe below runs at all, so report it: a failing
++	 * OSKextLoadKextWithIdentifier leaves no IOMobileFramebuffer for the probe to bind, and the
++	 * symptom is a boot with no display rows anywhere. */
++	printf("fuxi-display: IOMobileGraphicsFamily load status %d\n", native_mobile_graphics_load_status);
+ #if defined(XNU_NATIVE_LEGACY_DISPLAY) && XNU_NATIVE_LEGACY_DISPLAY
+ 	int legacy_register = 0;
+ 	if (native_mobile_graphics_load_status == 0 &&
