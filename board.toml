@@ -21,7 +21,10 @@ lba_bytes = 4096
 
 [components]
 # The template set, plus the GENI SPI engine and the FTM5 protocol of the touch controller.
-include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot", "QcomGeniSpi", "FuxiFtsTouch", "VirtioMmioBlock", "RamBlock", "VerifiedRoot"]
+# AppleKeyStoreState is the owned AppleKeyStore, as on UniXNU-sheng: with sheng-aks=1 its user client
+# answers the state queries of the unchanged libaks/MobileKeyBag (no keybag, no passcode, nothing
+# locked), which is what lets keybagd skip /private/var/keybags/systembag.kb on a seed that has none.
+include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot", "QcomGeniSpi", "FuxiFtsTouch", "VirtioMmioBlock", "RamBlock", "VerifiedRoot", "AppleKeyStoreState"]
 
 [kernel]
 defconfig = "fuxi_defconfig"
@@ -53,6 +56,8 @@ archives = [
   "build-fuxi-hid-input.py",
   "build-fuxi-touch.py",
   "build-fuxi-usb-debug.py",
+  "component:AppleKeyStoreState",
+  "build-fuxi-keystore.py",
 ]
 
 [device_tree]
@@ -122,7 +127,17 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                "sheng-disable-watchdogd=1", "qcom-usb-debug=1", "qcom-usb-ctl=1", "fuxi-panic-fastboot=30",
                # Content follows unixnu-fuxi-old one switch at a time: sheng-aks brings up Apple
                # KeyStore, which AMFI consults before it accepts the adhoc-signed System volume.
-               "sheng-aks=1"]
+               "sheng-aks=1",
+               # NativeUfs opens its read/write Data-store window only at 2 (storeMode()).
+               "sheng-data-persist=2",
+               # The partition's tail still holds a store written for the previous (220 GiB) seed; this seed
+               # does not match its header, so the overlay stays inactive and writes fall back to the
+               # read-only seed. This drops the old store once, as the boot menu's "Install and boot" does.
+               "sheng-data-reset=1",
+               # The owned AppleKeyStore probe (package/FuxiKeyStoreProbe.cpp) only runs with this set;
+               # sheng passes the same switch. Without it MobileKeyBag has nothing to talk to and dies
+               # on the missing systembag.kb.
+               "offline-key-events=1"]
 # Signed-text fixups (from unixnu-fuxi-old board.toml), travelled in /chosen/text-fixups.
 text_fixups = ["BTAudioHALPlugin,38bec,ffc300d1f44f01a9,000080d2c0035fd6"]
 

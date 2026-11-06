@@ -28,7 +28,12 @@ CONFIG_XNU_OWNER_BOOT_MANIFEST=y
 # Data mount enabled: sealed-root authentication passed, now mount the owner
 # Data volume. OWNER_DATA_MOUNT makes the payload step require --data-ramdisk.
 CONFIG_XNU_OWNER_DATA_MOUNT=y
-CONFIG_XNU_OWNER_DATA_VOLUME_UUID="E095FBF5-B5BA-43CE-ABD7-BF2618B0158C"
+# The Data seed this board boots is the 16 GiB owner-data fixture, whose volume UUID is
+# B2A023C5-CC73-45C1-A9E6-26AC8BDD2822. It cannot be the 220 GiB data.dbr that used to be passed:
+# NativeRamBlock sizes its persistent window as 1 + bitmap + pages over the whole Data volume, and a
+# 220 GiB volume inside a 220 GiB partition leaves no room, so the window was refused and every write
+# returned kIOReturnNotReady.
+CONFIG_XNU_OWNER_DATA_VOLUME_UUID="B2A023C5-CC73-45C1-A9E6-26AC8BDD2822"
 CONFIG_XNU_OWNER_CACHE_VOLUME_UUID="8846FE78-2910-4297-AF97-D59BB6F8FC16"
 CONFIG_XNU_OWNER_CRYPTEX_FILES=n
 CONFIG_XNU_OWNER_UNION_SYSTEMOS=y
@@ -47,4 +52,4 @@ CONFIG_XNU_NATIVE_USB_DEBUG=y
 # bsd_init calls native_touch_probe() (patches/xnu/fuxi-touch-probe.patch); scripts/build-fuxi-touch.py builds it. The
 # HID digitizer (scripts/build-fuxi-hid-input.py) is force-loaded: its objects carry the absolute IOHIDDevice bindings and
 # the metaclass registration that kits/fuxi/FuxiHidProbe.cpp runs after IOHIDFamily is loaded.
-CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/fuxi-touch/libFuxiTouch.a -Wl,-force_load,{tree}/build/sheng-hid-input/libShengHidInput.a {tree}/build/boot-log/libBootLog.a -Wl,-force_load,{tree}/.cache/fuxi-qud-build/libQcomXnuUsbDebug.a"
+CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/fuxi-touch/libFuxiTouch.a -Wl,-force_load,{tree}/build/sheng-hid-input/libShengHidInput.a {tree}/build/boot-log/libBootLog.a -Wl,-force_load,{tree}/.cache/fuxi-qud-build/libQcomXnuUsbDebug.a -Wl,-force_load,{tree}/build/fuxi-keystore/libFuxiKeyStore.a"
