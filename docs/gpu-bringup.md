@@ -906,3 +906,28 @@ The instruments now in the driver, all of which are kept:
 
 The next round should reconcile the probe with the decode — one of them is wrong about the amble packets, and until
 that is settled neither can be trusted for the packets after index 170.
+
+
+## Round 19: the probe was right, the stream changes between runs
+
+Counting every CP_SET_AMBLE the scan meets, addressed or not:
+
+    amble n 2
+
+Two packets, and both carry address 0 — they are the terminating pair at 194/198. The two with real addresses
+(0x26000, 0x2626c) that the round-16 decode showed are simply **not in this run's stream**. Decoding the current
+log again confirms the two views agree whenever they are applied to the same capture.
+
+So round 18's "the probe has a defect" was wrong too. What is true is that the render server's command stream
+differs from boot to boot: some submissions carry amble fetches with addresses, others do not.
+
+### What that means for the work
+
+The instrument is sound; the sample is variable. To answer whether the CP can fetch an amble body, the driver
+must be pointed at a capture that has one — which means keeping the history instead of a single slot. The
+submission record is one slot deep today (`native_adreno_ib_log[4]`, indexed by count), and the printed row is
+always the newest.
+
+The next useful instrument is therefore a **history of submissions by fence number**, with the amble addresses
+each one carried and whether they were reachable — so a boot that produces the interesting stream is not lost
+because a trivial one followed it.
