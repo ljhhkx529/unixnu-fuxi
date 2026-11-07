@@ -118,10 +118,12 @@ extern volatile unsigned int native_adreno_table_switches[8];
  * [1] its index, [2] the status, [3] how many were checked, [4]/[5] the ring's IOVA and bytes there. */
 /* The framed prologue as written into the ring (Adreno740 NativeAdrenoRing.cpp emitPrologue):
  * [0] words, [1] reset, [2] table, [3] stamps, then the words. */
+extern volatile unsigned int native_adreno_mark_log[32];
+extern volatile unsigned int native_adreno_mark_log_count;
 extern volatile unsigned int native_adreno_vm_check[8];
 /* The first 28 dwords of the client's newest IB (Adreno740 NativeAdrenoSubmit.cpp): [0] fence, [1]/[2] iova,
  * [3] bytes, then the words. */
-extern volatile unsigned int native_adreno_ib_log[4][4+28];
+extern volatile unsigned int native_adreno_ib_log[4][4+128];
 extern volatile unsigned int native_adreno_ib_log_count;
 extern volatile unsigned int native_adreno_ib_peek;
 extern volatile unsigned int native_adreno_prologue[96];
@@ -158,10 +160,30 @@ void fuxi_display_client_report(void) {
     }
     {
         struct FuxiMetalDiagFields *d = &native_adreno_metal_diag;
+        {
+            const unsigned total = native_adreno_mark_log_count;
+            printf("fuxi-metal: marklog %u:", total);
+            const unsigned from = total > 32 ? total - 32 : 0;
+            for (unsigned k = from; k < total; ++k) printf(" %x", native_adreno_mark_log[k & 31]);
+            printf("\n");
+        }
         printf("fuxi-metal: scanout marks %u:", d->marks_total);
         for (unsigned k = 0; k < 16; ++k) printf(" %x", d->marks[k]);
         printf("\n");
         printf("fuxi-metal: scanout text %s\n", d->report2[0] ? d->report2 : "(none)");
+    }
+    {
+        const unsigned total = native_adreno_ib_log_count;
+        if (total) {
+            volatile unsigned int *e = native_adreno_ib_log[(total - 1) & 3];
+            printf("fuxi-metal: client_ib fence %u iova %x%08x bytes %u peek %x\n",
+                   e[0], e[2], e[1], e[3], native_adreno_ib_peek);
+            for (unsigned k = 0; k < 128; k += 8) {
+                char ibl[160]; unsigned il = 0;
+                for (unsigned j = k; j < k + 8; ++j) il += (unsigned)snprintf(ibl + il, sizeof ibl - il, " %08x", e[4 + j]);
+                printf("fuxi-metal: ib+%03u%s\n", k, ibl);
+            }
+        }
     }
     {
         char methodLine[200]; unsigned used = 0;

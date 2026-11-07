@@ -478,3 +478,33 @@ That gap in `NativeAdrenoMetalPlugin.mm` `publish::deviceForPort`: the environme
 (`CA_DISABLE_FRAMEBUFFER_COMPRESSION`, and on arm64e the three EDR/headroom variables and three `writeTask`
 patches with markers 0x6E01..0x6E03), then the shader-cache directory scan that marks 0x6810+i or 0x68f2 and
 ends at 0x6802.
+
+
+## Round 7: the stuck submission, word for word
+
+Fence 9 is a 1000-byte Turnip IB at 0x100028000, readable (`peek 0`), and its first 128 dwords are an ordinary
+command stream:
+
+    70970001 00000003   CP_THREAD_CONTROL, payload 3 (BOTH, no SYNC)
+    70460001 00000019   EVENT_WRITE7 0x19 CCU invalidate color
+    70460001 00000018   EVENT_WRITE7 0x18 CCU invalidate depth
+    70460001 00000028   EVENT_WRITE7 0x28
+    70460001 00000033   EVENT_WRITE7 0x33
+    70268000            CP_WAIT_FOR_IDLE
+    … type-4 register writes to the ~0x8000 range and indirect setup …
+
+and `fence submitted 9 retired 8`: the command processor retires eight submissions and stops on this one.
+
+### The framed path is worse, not better
+
+With SYNC_THREADS gone the prologue is syntactically usable again, so the framed path was worth re-testing —
+the original device repository used it. It is not: with `plain_submit=0` the boot log stops at 833 lines where
+it otherwise reaches ~900, and the display reports never run at all. The system stops instead of merely the
+command processor. So the plain path stays.
+
+### One more thing the log shows
+
+    IOUC AGXDeviceUserClient failed MACF in process pid 29, mediaserverd
+
+mediaserverd is refused the accelerator by the sandbox. That is a separate client from the render server and
+does not explain fence 9, but it is the same shape of problem as the plugin's own grants and worth listing.

@@ -1657,8 +1657,9 @@ void gpuStart() {
     native_adreno_fence_phys = gGpuBuffers[2].physical;   // the page the CP writes its timestamps to, for the UFS log
     native_adreno_bv_ring = 1;   /* see docs/gpu-bringup.md: fuxi never programs the BV ring */
     native_adreno_no_thread_sync = 1;   /* SYNC_THREADS hangs this CP; the init's own payload has bit 27 only */
-    /* With SYNC_THREADS gone the framed prologue is usable, but the framed fence still waits on a BV timestamp
-     * that only runs if the BV thread does. Hand the client's IB straight to the ring instead. */
+    /* The framed path is unusable on this board even with SYNC_THREADS gone: with it the system stops reporting
+     * altogether (the boot log ends where the display reports would start), so the client's IB goes straight to
+     * the ring. */
     native_adreno_plain_submit = 1;
     const IOReturn attached = gRing.attach(&rio, &cache, const_cast<uint8_t *>(gGpuCpu[1]), gGpuBuffers[1].bytes,
         gGpuBuffers[1].iova, const_cast<uint8_t *>(gGpuCpu[2]), gGpuBuffers[2].bytes, gGpuBuffers[2].iova);
