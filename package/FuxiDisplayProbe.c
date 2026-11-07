@@ -42,6 +42,7 @@ __attribute__((weak)) volatile uint32_t native_ufs_dpu_state = 0;
  * missing handover is distinguishable from a refused addon. */
 extern int native_ram_block_gpu_addon(const unsigned char **data, unsigned long long *bytes);
 extern int printf(const char *format, ...);
+extern int snprintf(char *str, unsigned long size, const char *format, ...);
 extern volatile int native_gpu_addon_stage, native_gpu_addon_status;
 extern volatile int native_gpu_addon2_stage, native_gpu_addon2_status;
 extern volatile int native_gpu_addon3_stage, native_gpu_addon3_status;
@@ -97,11 +98,59 @@ extern struct FuxiMetalDiagFields native_adreno_metal_diag;
 /* Where a client's mount() stopped: [0] 1 no process space / 2 open refused / 3 scope refused, [1] its IOReturn,
  * [2] the range base's high half, [3] how many times (Adreno740 NativeAdrenoPublish.cpp). */
 extern volatile unsigned int native_adreno_mount_fail[4];
+/* Per-ABI-method calls and last status: [method][0] calls, [1] last status, [2] last input size, [3] last output size
+ * (Adreno740 NativeAdrenoPublish.cpp). */
+extern volatile unsigned int native_adreno_method_stats[20][4];
+/* The fence wait's own view: [0] fence value waited for polled outside the lock, [1] ring words read, [2] polls,
+ * [3] ??, [4] polls that saw the fence still pending (Adreno740 NativeAdrenoPublish.cpp). */
+extern volatile unsigned long long native_adreno_wait_outer[4];
+extern volatile unsigned int native_adreno_fence_wait[8];
+/* qcom_scm_set_gpu_smmu_aperture(0): [0] availability answer, [1] the call's x0 (0 or a negative SMC status). */
+extern volatile unsigned int native_adreno_cp_aperture[4];
+/* The fence event ring (Adreno740 NativeAdrenoSubmit.cpp): type 1 submit, 2 wait-enter, 3 wait-complete, 4 wait-timeout. */
+extern volatile unsigned int native_adreno_fence_events[32][4];
+extern volatile unsigned int native_adreno_fence_events_count;
+/* The CP stall snapshot Adreno740 keeps when a fence wait times out (NativeAdrenoSubmit.cpp): the ring words, the CP's
+ * own state and the last command it fetched. */
+extern volatile unsigned int native_adreno_stall[29];
 void fuxi_display_client_report(void) {
     struct FuxiMetalDiagFields *m = &native_adreno_metal_diag;
     printf("fuxi-metal: opens %u busy %u bad %u foreign %u/%u name_reads %u reader %s starter %s\n",
            m->opens, m->busy, m->bad, m->foreign_opens, m->foreign_type, m->name_reads,
            m->name_reader[0] ? m->name_reader : "(none)", m->starter[0][0] ? m->starter[0] : "(none)");
+    {
+        char line[240]; int n = 0;
+        for (unsigned i = 0; i < 20; ++i) {
+            if (!native_adreno_method_stats[i][0]) continue;
+            n += snprintf(line + n, sizeof line - n, " m%u=%u/%u/%x", i, native_adreno_method_stats[i][0],
+                          native_adreno_method_stats[i][1], native_adreno_method_stats[i][2]);
+            if (n > 200) break;
+        }
+        printf("fuxi-metal: methods%s\n", n ? line : " (none)");
+        {
+            const unsigned total = native_adreno_fence_events_count;
+            char line[260]; int n = 0;
+            const unsigned first = total > 12 ? total - 12 : 0;
+            for (unsigned i = first; i < total && n < 230; ++i) {
+                volatile unsigned int *e = native_adreno_fence_events[i & 31];
+                n += snprintf(line + n, sizeof line - n, " t%u/f%u", e[0], e[1]);
+            }
+            printf("fuxi-metal: fence_events count %u%s\n", total, n ? line : " (none)");
+        }
+        {
+            char line[300]; int n = 0;
+            for (unsigned i = 0; i < 29 && n < 270; ++i)
+                n += snprintf(line + n, sizeof line - n, " %x", native_adreno_stall[i]);
+            printf("fuxi-metal: stall%s\n", n ? line : " (none)");
+        }
+        printf("fuxi-metal: cp_aperture avail %x rc %x\n",
+               native_adreno_cp_aperture[0], native_adreno_cp_aperture[1]);
+        printf("fuxi-metal: wait_outer %llu/%llu/%llu/%llu fence_wait %u/%u/%u/%u %u/%u/%u/%u\n",
+               native_adreno_wait_outer[0], native_adreno_wait_outer[1], native_adreno_wait_outer[2],
+               native_adreno_wait_outer[3], native_adreno_fence_wait[0], native_adreno_fence_wait[1],
+               native_adreno_fence_wait[2], native_adreno_fence_wait[3], native_adreno_fence_wait[4],
+               native_adreno_fence_wait[5], native_adreno_fence_wait[6], native_adreno_fence_wait[7]);
+    }
     printf("fuxi-metal: mount_fail %u rc %x base %x count %u\n",
            native_adreno_mount_fail[0], native_adreno_mount_fail[1],
            native_adreno_mount_fail[2], native_adreno_mount_fail[3]);
