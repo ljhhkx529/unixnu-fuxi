@@ -107,6 +107,13 @@ extern volatile unsigned long long native_adreno_wait_outer[4];
 extern volatile unsigned int native_adreno_fence_wait[8];
 /* qcom_scm_set_gpu_smmu_aperture(0): [0] availability answer, [1] the call's x0 (0 or a negative SMC status). */
 extern volatile unsigned int native_adreno_cp_aperture[4];
+/* checkCpSwitch's steps (createVm, probeBuffer, submit, waitAll, readTtbr0; 0 pass, ffffffff not reached) and the
+ * table switching the driver settled on ([6] the setTableSwitching result, [7] the mode in use). */
+extern volatile unsigned int native_adreno_cp_check[6];
+/* The bank's image around the switch check: [0..7] before, [8..15] after, [16]/[17] the kit status of each,
+ * [18..20] a fault the switch left latched (FAR lo/hi, FSYNR0), [21] the status after clearing it. */
+extern volatile unsigned int native_adreno_cp_image[22];
+extern volatile unsigned int native_adreno_table_switches[8];
 /* The fence event ring (Adreno740 NativeAdrenoSubmit.cpp): type 1 submit, 2 wait-enter, 3 wait-complete, 4 wait-timeout. */
 extern volatile unsigned int native_adreno_fence_events[32][4];
 extern volatile unsigned int native_adreno_fence_events_count;
@@ -143,8 +150,23 @@ void fuxi_display_client_report(void) {
                 n += snprintf(line + n, sizeof line - n, " %x", native_adreno_stall[i]);
             printf("fuxi-metal: stall%s\n", n ? line : " (none)");
         }
-        printf("fuxi-metal: cp_aperture avail %x rc %x\n",
-               native_adreno_cp_aperture[0], native_adreno_cp_aperture[1]);
+        printf("fuxi-metal: cp_aperture avail %x rc %x check %x mode %u\n",
+               native_adreno_cp_aperture[0], native_adreno_cp_aperture[1],
+               native_adreno_cp_aperture[2], native_adreno_cp_aperture[3]);
+        printf("fuxi-metal: cp_image before %x %x %x %x %x %x %x %x kit %x\n",
+               native_adreno_cp_image[0], native_adreno_cp_image[1], native_adreno_cp_image[2],
+               native_adreno_cp_image[3], native_adreno_cp_image[4], native_adreno_cp_image[5],
+               native_adreno_cp_image[6], native_adreno_cp_image[7], native_adreno_cp_image[16]);
+        printf("fuxi-metal: cp_image after %x %x %x %x %x %x %x %x kit %x fault %x,%x,%x clr %x\n",
+               native_adreno_cp_image[8], native_adreno_cp_image[9], native_adreno_cp_image[10],
+               native_adreno_cp_image[11], native_adreno_cp_image[12], native_adreno_cp_image[13],
+               native_adreno_cp_image[14], native_adreno_cp_image[15], native_adreno_cp_image[17],
+               native_adreno_cp_image[18], native_adreno_cp_image[19], native_adreno_cp_image[20],
+               native_adreno_cp_image[21]);
+        printf("fuxi-metal: cp_check %x/%x/%x/%x/%x/%x switching %x/%x\n",
+               native_adreno_cp_check[0], native_adreno_cp_check[1], native_adreno_cp_check[2],
+               native_adreno_cp_check[3], native_adreno_cp_check[4], native_adreno_cp_check[5],
+               native_adreno_table_switches[6], native_adreno_table_switches[7]);
         printf("fuxi-metal: wait_outer %llu/%llu/%llu/%llu fence_wait %u/%u/%u/%u %u/%u/%u/%u\n",
                native_adreno_wait_outer[0], native_adreno_wait_outer[1], native_adreno_wait_outer[2],
                native_adreno_wait_outer[3], native_adreno_fence_wait[0], native_adreno_fence_wait[1],

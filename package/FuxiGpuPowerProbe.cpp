@@ -376,9 +376,9 @@ int ringIdle(void *) {
     }
     return 0;
 }
-OSSharedPtr<IOMemoryMap> gGpuMaps[5];
-volatile uint8_t *gGpuCpu[5];
-NativeAdrenoGpuBuffer gGpuBuffers[5];
+OSSharedPtr<IOMemoryMap> gGpuMaps[GpuBufferCount];
+volatile uint8_t *gGpuCpu[GpuBufferCount];
+NativeAdrenoGpuBuffer gGpuBuffers[GpuBufferCount];
 NativeAdrenoRing gRing;
 NativeAdrenoCpInit gCpInit;
 extern "C" {
@@ -1470,14 +1470,14 @@ void gpuStart() {
     // These are static objects whose constructors clear them; this archive is force-loaded, so they may reach
     // here with whatever the image held (a data abort on the release of gGpuMaps[0]). Clear them first.
     printf("fuxi-gpu: gpuStart maps before reset %d\n", gGpuMaps[0] ? 1 : 0);
-    for (unsigned i = 0; i < 5; ++i) { gGpuMaps[i] = nullptr; gGpuCpu[i] = nullptr; }
+    for (unsigned i = 0; i < GpuBufferCount; ++i) { gGpuMaps[i] = nullptr; gGpuCpu[i] = nullptr; }
     printf("fuxi-gpu: gpuStart maps reset %d\n", gGpuMaps[0] ? 1 : 0);
     printf("fuxi-gpu: gpuStart buffers call begin\n");
     const IOReturn bufrc = NativeAdrenoGpuContextBuffers(gGpuBuffers);
     printf("fuxi-gpu: gpuStart buffers call done %x, first bo phys %llx bytes %llu\n", unsigned(bufrc),
            (unsigned long long)gGpuBuffers[0].physical, (unsigned long long)gGpuBuffers[0].bytes);
     if (bufrc) {setRow(7, "C1 buffers refused"); { printf("fuxi-gpu: gpuStart exit %u cp %u\n", __LINE__, c[0]); return; }}
-    for (unsigned i = 0; i < 5; ++i) {
+    for (unsigned i = 0; i < GpuBufferCount; ++i) {
         IODeviceMemory *m = IODeviceMemory::withRange(gGpuBuffers[i].physical, gGpuBuffers[i].bytes);
         if (m) {
             gGpuMaps[i] = OSSharedPtr<IOMemoryMap>(m->map(kIOMapAnywhere | kIOMapWriteCombineCache), OSNoRetain);
