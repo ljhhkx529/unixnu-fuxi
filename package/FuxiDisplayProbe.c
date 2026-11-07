@@ -157,6 +157,11 @@ void fuxi_display_client_report(void) {
         printf("fuxi-metal: opens %u busy %u bad %u name_reads %u reader %s starter %s\n",
                d->opens, d->busy, d->bad, d->name_reads,
                d->name_reader[0] ? d->name_reader : "(none)", d->starter[0][0] ? d->starter[0] : "(none)");
+        printf("fuxi-metal: client calls %u last_sel %x last_st %x tunnel %u attach %x inflight %u\n",
+               d->calls, d->last_selector, d->last_status, d->tunnel_calls, d->attach_status, d->inflight);
+        printf("fuxi-metal: checks macf %x res %x type %x pass %x..%x probes %u mb %u/%u\n",
+               d->chk_macf, d->chk_res, d->chk_type, d->type_pass_lo, d->type_pass_hi, d->probes,
+               d->mb_calls, d->mb_maps);
     }
     {
         struct FuxiMetalDiagFields *d = &native_adreno_metal_diag;

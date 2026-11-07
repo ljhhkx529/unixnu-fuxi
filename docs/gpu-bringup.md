@@ -558,3 +558,35 @@ neither writes a marker before it does its work.
 
 That is the single most valuable marker to add next: one immediately before `removeHalfImported` and one
 immediately before `native_bridge_metal_open`, so the next boot names the call instead of the range.
+
+
+## Round 8: the client that reaches the accelerator is refused by the sandbox
+
+Two facts from this boot, both new:
+
+    fuxi-metal: opens 3 busy 0 bad 0 name_reads 2 reader mediaserverd starter (none)
+    IOUC AGXDeviceUserClient failed MACF in process pid 29, mediaserverd
+
+The only process naming our accelerator is **mediaserverd**, and the sandbox refuses it (`AGXDeviceUserClient
+failed MACF`). The render server's own plugin still stops after marker `0x6a3b`.
+
+So there are two separate client problems, not one:
+
+| client | state |
+| --- | --- |
+| backboardd (the plugin) | enters device creation, stops at `0x6a3b` |
+| mediaserverd | reaches the accelerator and is refused by MACF |
+
+`MACF` refusals are a grant problem: the owner-trust bundle the payload passes with
+`--owner-trust-cache` is what admits a process, and mediaserverd is evidently not in it.
+
+### The plugin rebuild is blocked by the toolchain, not by the code
+
+Markers were added around `removeHalfImported()` and `native_bridge_metal_open()` in
+`NativeAdrenoMetalPlugin.mm` (0x6B10..0x6B13), but `build-adreno-metal-plugin.py` cannot run here:
+
+    error: no such command: '+1.98.0'
+
+that is the bridge's Rust build asking for a toolchain this machine does not have. `--no-replay` gets past the
+host-Turnip step, not past that. The plugin sources are therefore edited and staged but **not built**, and the
+image in use still carries the previous bundle.
