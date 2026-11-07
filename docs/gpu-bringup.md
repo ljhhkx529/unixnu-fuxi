@@ -541,3 +541,20 @@ Two independent gaps are now measured, not guessed:
    `native_bridge_metal_open`;
 2. one client submission (fence 9/10, a 1000-byte IB with an ordinary Turnip command stream) is queued and
    never retired.
+
+
+### The plugin is not crashing, it is stopping
+
+With the ordered marker log (`native_adreno_mark_log`, the diagnostic slots are indexed by value and lose the
+order) a publish-mode boot records exactly three markers in the render server:
+
+    6800  entered   6801 Turnip found   6a3b the diagnostic word
+
+No panic, no crash report, no further marker — and the next one it would write is either `0x6E01` (the arm64e
+framebuffer patch group) or `0x6810+i`/`0x68f2` (the shader-cache scan). Between `0x6a3b` and those there are
+only `setenv`/`CFPreferencesSetAppValue` calls, then per cache directory `mkdir`, `access`,
+`removeHalfImported()` and `native_bridge_metal_open()`. One of those two last calls is where it stops, and
+neither writes a marker before it does its work.
+
+That is the single most valuable marker to add next: one immediately before `removeHalfImported` and one
+immediately before `native_bridge_metal_open`, so the next boot names the call instead of the range.
