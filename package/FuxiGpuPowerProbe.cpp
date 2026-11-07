@@ -1681,7 +1681,9 @@ void gpuStart() {
      * before it finishes at all (fence live 0, marks 0). See docs/gpu-bringup.md. */
     native_adreno_no_thread_sync = 1;   /* SYNC_THREADS hangs this CP; the init's own payload has bit 27 only */
     native_adreno_bv_to_br = 1;   /* the BV thread has no runnable ring here, and naming it stops the CP */
-    native_adreno_drop_empty_ib = 1;   /* the binning pass never fills its buffer; skip the jump into it */
+    /* native_adreno_drop_empty_ib stays 0: decoding the stream showed those indirect buffers are filled by the
+     * command processor itself (CP_MEM_WRITE then CP_INDIRECT_BUFFER), so they are empty at submit time by
+     * design and rewriting them to NOP destroys the idiom. See docs/gpu-bringup.md. */
     /* The framed path is unusable on this board even with SYNC_THREADS gone: with it the system stops reporting
      * altogether (the boot log ends where the display reports would start), so the client's IB goes straight to
      * the ring. */

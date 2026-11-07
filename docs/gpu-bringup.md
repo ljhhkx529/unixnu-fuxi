@@ -806,3 +806,48 @@ The remaining honest options, in the order they should be tried:
 2. **Build Turnip without the binning pass**, so the stream is one this port has evidence for (BR only, no
    binning buffers) end to end.
 3. Keep hunting the BV ring's enable, which two attempts have now failed at.
+
+
+## Round 16: the stream decoded, and one of this port's own conclusions was wrong
+
+The whole 250-dword stream, decoded with Mesa's own opcode table (`adreno_pm4.xml`) instead of by hand:
+
+    0   CP_THREAD_CONTROL   {1}
+    2   CP_EVENT_WRITE      {0x19} {0x18} {0x28} {0x33}       CCU invalidates
+    10  CP_WAIT_FOR_IDLE
+    …   ~100 type-4 register writes (0x8000..0xb600 range: RB, SP, TP, VPC, GRAS, UCHE, CP)
+    140 CP_COND_REG_EXEC    {0x54000000, 6}                    a conditional block
+    169 CP_SET_DRAW_STATE   {0x40000, 0, 0}                    an indirect state block
+    173 CP_BV_BR_COUNT_OPS  {2, 1}
+    176 CP_THREAD_CONTROL   {0x8000001}                        BR only
+    178 CP_SET_AMBLE       {0x26000, 1, 0x10009b}
+    182 CP_THREAD_CONTROL   {2}                                BV
+    184 CP_SET_AMBLE       {0x2626c, 1, 0x100095}
+    188 CP_THREAD_CONTROL   {3}                                both
+    190 CP_REG_TEST        {0x82000000, 0x18, 0x10}
+    194 CP_SET_AMBLE       {0, 0, 0}
+    202 CP_THREAD_CONTROL   {0x8000001}
+    204 CP_MEM_WRITE       {0x27000, 1, 0, 0}
+    209 CP_INDIRECT_BUFFER {0x27008, 1, …}                     ← filled by the CP itself
+    214 CP_MEM_WRITE       {0x27010, 1, 0, 0}
+    219 CP_INDIRECT_BUFFER {0x27018, 1, …}
+    224 CP_REG_TO_MEM      {0x40080980, 0x27008, 1}
+    233 CP_WAIT_FOR_IDLE
+    234 CP_REG_TO_MEM      {0x40080980, 0x27018, 1}
+    243 CP_EVENT_WRITE      {0x21} {0x20} {0x31}
+    249 CP_WAIT_MEM_WRITES
+
+That decode **overturns rounds 12 and 13**: the indirect buffers at 0x27008/0x27018 are not "never filled because the
+binning pass is missing" — the stream writes their contents itself with CP_MEM_WRITE two packets earlier and then
+jumps through them, which is why they read as zeros when the driver looks *before* the command processor has run.
+Rewriting them to CP_NOP was this port breaking a correct idiom, and it is reverted.
+
+### What the decode points at instead
+
+The packets that make the command processor read memory this port has not verified are
+**CP_SET_DRAW_STATE {0x40000, …}** and the three **CP_SET_AMBLE** calls (0x26000, 0x2626c). Those are Turnip's
+preamble/amble mechanism: small command buffers the CP fetches by address. If one of those addresses is not
+mapped in the table the CP is using, the symptom is exactly what this board shows.
+
+That is the next thing to read: what lives at those addresses from the driver's side, the same way the hit-rate of
+`peekWords` answered it for the main IB.
