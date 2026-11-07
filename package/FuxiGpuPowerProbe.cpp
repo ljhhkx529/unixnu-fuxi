@@ -1267,16 +1267,19 @@ void bvRingProbe() {
            (unsigned long long)((uint64_t(gpuRd(0x00801)) << 32) | gpuRd(0x00800)), gpuRd(0x00802),
            (unsigned long long)((uint64_t(gpuRd(0x00805)) << 32) | gpuRd(0x00804)),
            gpuRd(0x00807), gpuRd(0x00806));
-    /* Read-only sweep of the whole BV window: whichever register holds the ring base will show either the
-     * ring's IOVA or a value the CP wrote. Nothing here writes. */
-    for (unsigned base = 0x0a60; base < 0x0ac0; base += 16) {
-        char line[200]; int n = 0;
-        for (unsigned i = 0; i < 16; ++i) {
-            const uint32_t v = gpuRd(base + i);
-            n += snprintf(line + n, sizeof line - n, " %x", v);
-        }
-        printf("fuxi-gpu: bv %03x%s\n", base, line);
+    /* Write-probe the BV block: put a distinctive value in, read it back, restore what was there. Every
+     * register is put back before the next one is touched, so a wrong guess cannot leave the block enabled
+     * pointing at nothing. This is how CP_BV_RB_BASE gets located without a register map. */
+    gpuWr(A740_CP_PROTECT_CNTL, 0);
+    for (unsigned reg = 0x0a40; reg <= 0x0a60; ++reg) {
+        const uint32_t was = gpuRd(reg);
+        gpuWr(reg, 0x5a5a0000u | reg);
+        const uint32_t now = gpuRd(reg);
+        gpuWr(reg, was);
+        printf("fuxi-gpu: bvreg %03x was %x now %x %s\n", reg, was, now,
+               now == (0x5a5a0000u | reg) ? "WRITABLE" : "-");
     }
+    gpuWr(A740_CP_PROTECT_CNTL, (1u << 0) | (1u << 1) | (1u << 3));
 }
 void publishAndWrapperTest(bool rounds) {
     char row[64];

@@ -127,18 +127,32 @@ The chain is proved end to end except for one packet:
 - the BV ring it names is unprogrammed (BASE reads as the sentinel), and two attempts to program it failed
   because its BASE/CNTL/RPTR_ADDR positions are not where BR's mirror them
 
+## Write-probing the BV block
+
+With protection off, each register in the window takes a distinctive value, is read back, and is restored
+before the next one is touched:
+
+| range | result |
+| --- | --- |
+| 0xa40..0xa4f | **all writable**, value reads back unchanged; 0xa48 held 0x20000000 beforehand |
+| 0xa50..0xa5f | read the 0xdeafbead sentinel, reject writes |
+| 0xa60 | sentinel, rejects writes |
+| 0xa62 | writable, masked to 12 bits — behaved as a control word (it holds 0x20c, BR's value) |
+| 0xa66 | writable, masked to 20 bits — the BV rptr (held 0x4e, BR's value) |
+| 0xa67..0xa70 | read back 0, writes dropped |
+
+So the BV control block is 0xa40..0xa4f plus the rptr at 0xa66, and it is **not** a +0x260 mirror of BR.
+0xa48 holding 0x20000000 is the only base-like value found; it is the strongest candidate for a BV ring
+base (or for the address the CP uses for the BV side).
+
 ## Next step
 
-Two candidates, in order of cost:
-
-1. **Locate BV's BASE by writing a distinctive value across 0xa60..0xa80 with protection off and reading it
-   back** — a write-probe rather than a read-probe. 0xa62 accepting a write already proves the block is
-   there; one of its neighbours holds the base.
-2. **Drop CP_THREAD_CONTROL from the submissions this port builds** and see whether the client's IB still
-   renders. The driver already wraps each client IB in its own INDIRECT_BUFFER packets, so a single-thread
-   submission is expressible; whether Turnip's IBs survive without BR/BV synchronisation is the open question.
-
-Either is one boot to answer.
+1. **Write the BR ring's base and control into 0xa48 and 0xa42** (the two most register-like positions in the
+   writable window) and re-run the plain+`CP_THREAD_CONTROL` test. 0xa48 previously held 0x20000000, a value
+   of the right shape for a ring base.
+2. In parallel, **dump the client's own IB** from `native_adreno_ring_log` to see whether Turnip's commands
+   contain CP_THREAD_CONTROL at all. If they do not, the fix is to keep client submissions on the plain path
+   (`submitFramed` -> `submit`) and the framed machinery can stay unused until the thread control is solved.
 
 If the BV window turns out not to be the answer, the alternative is to stop emitting CP_THREAD_CONTROL at
 all, which client IBs would also have to honour.
