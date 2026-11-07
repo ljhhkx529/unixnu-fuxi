@@ -100,12 +100,45 @@ BV ring's BASE/CNTL. The test still fails, so zeroing the stale BV write pointer
 Conclusion: the BV ring cannot be programmed from this port until the a740 register map places its BASE and
 CNTL. The guess (0xa80/0xa82, mirroring BR's 0x800/0x802) is wrong.
 
+## The BV block, located by reading
+
+A read-only sweep of 0xa60..0xac0 found BV's rptr at **0xa66 holding 0x4e**, the same value as BR's rptr at
+0x806 — the BV thread does consume the same ring, so the two blocks line up. Writing through the opened
+protection window then gave:
+
+    bv programmed base deafbead cntl 20c rptr_addr 0
+
+**0xa62 takes the control word** (reads back 0x20c, the BR value), so BV's CNTL is there. **0xa60 reads back
+the 0xdeafbead sentinel and 0xa64 does not take a write**, so BV's BASE and RPTR_ADDR are not at the mirrored
+offsets. The board's own BV rptr address write goes to 0xa98, which is where the header puts
+CP_BV_RB_RPTR_ADDR, so the BV block is not a straight +0x260 mirror of BR.
+
+Scanning a740_sqe.fw for these offsets as immediates finds nothing (the firmware addresses them base+offset),
+so the register map cannot be recovered from the blob this way.
+
+## Where this leaves the fix
+
+The chain is proved end to end except for one packet:
+
+- every client mounts, allocates, maps and submits; the only failure is that the fence never retires
+- a plain submission retires fences; the same submission with one CP_THREAD_CONTROL added does not
+- so CP_THREAD_CONTROL is the packet this command processor refuses, and the framed prologue, the framed
+  fence and client IBs all carry it
+- the BV ring it names is unprogrammed (BASE reads as the sentinel), and two attempts to program it failed
+  because its BASE/CNTL/RPTR_ADDR positions are not where BR's mirror them
+
 ## Next step
 
-Find the a740 positions of CP_BV_RB_BASE and CP_BV_RB_CNTL (the SQE firmware dump the port already keeps,
-`a740_sqe.fw` disassembly, or an Adreno register database), program them with protection off as above, and
-re-run the plain+`CP_THREAD_CONTROL` test. 0xa87 for the BV write pointer is one candidate confirmed by a
-successful write.
+Two candidates, in order of cost:
+
+1. **Locate BV's BASE by writing a distinctive value across 0xa60..0xa80 with protection off and reading it
+   back** — a write-probe rather than a read-probe. 0xa62 accepting a write already proves the block is
+   there; one of its neighbours holds the base.
+2. **Drop CP_THREAD_CONTROL from the submissions this port builds** and see whether the client's IB still
+   renders. The driver already wraps each client IB in its own INDIRECT_BUFFER packets, so a single-thread
+   submission is expressible; whether Turnip's IBs survive without BR/BV synchronisation is the open question.
+
+Either is one boot to answer.
 
 If the BV window turns out not to be the answer, the alternative is to stop emitting CP_THREAD_CONTROL at
 all, which client IBs would also have to honour.

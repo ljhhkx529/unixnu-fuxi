@@ -1267,9 +1267,16 @@ void bvRingProbe() {
            (unsigned long long)((uint64_t(gpuRd(0x00801)) << 32) | gpuRd(0x00800)), gpuRd(0x00802),
            (unsigned long long)((uint64_t(gpuRd(0x00805)) << 32) | gpuRd(0x00804)),
            gpuRd(0x00807), gpuRd(0x00806));
-    printf("fuxi-gpu: ring bv a80 %x a81 %x a82 %x a87 %x a98 %x a99 %x ad0 %x\n",
-           gpuRd(0x00a80), gpuRd(0x00a81), gpuRd(0x00a82), gpuRd(0x00a87), gpuRd(0x00a98),
-           gpuRd(0x00a99), gpuRd(0x00ad0));
+    /* Read-only sweep of the whole BV window: whichever register holds the ring base will show either the
+     * ring's IOVA or a value the CP wrote. Nothing here writes. */
+    for (unsigned base = 0x0a60; base < 0x0ac0; base += 16) {
+        char line[200]; int n = 0;
+        for (unsigned i = 0; i < 16; ++i) {
+            const uint32_t v = gpuRd(base + i);
+            n += snprintf(line + n, sizeof line - n, " %x", v);
+        }
+        printf("fuxi-gpu: bv %03x%s\n", base, line);
+    }
 }
 void publishAndWrapperTest(bool rounds) {
     char row[64];
@@ -1652,11 +1659,17 @@ void gpuStart() {
     if (native_adreno_bv_ring) {
         /* 0xa80..0xa87 lies inside the last (infinite) span of the CP's protect table, so writes there are
          * dropped. Protection is a control word, not a range edit: turn it off, program the ring, turn it back. */
+        /* The BV block mirrors BR's: BR is BASE 0x800, CNTL 0x802, RPTR_ADDR 0x804, RPTR 0x806, WPTR 0x807,
+         * and a read sweep put BV's rptr at 0xa66 holding the same 0x4e as BR's, so BV sits at 0xa60. */
         gpuWr(A740_CP_PROTECT_CNTL, 0);
-        gpuWr64(0x00a80, gGpuBuffers[1].iova);
-        gpuWr(0x00a82, gpuRd(0x00802));
-        gpuWr(0x00a87, 0);
+        gpuWr64(0x00a60, gGpuBuffers[1].iova);
+        gpuWr(0x00a62, gpuRd(0x00802));
+        gpuWr64(0x00a64, gGpuBuffers[2].iova);
+        gpuWr(0x00a67, 0);
         gpuWr(A740_CP_PROTECT_CNTL, (1u << 0) | (1u << 1) | (1u << 3));
+        printf("fuxi-gpu: bv programmed base %llx cntl %x rptr_addr %llx\n",
+               (unsigned long long)((uint64_t(gpuRd(0x00a61)) << 32) | gpuRd(0x00a60)), gpuRd(0x00a62),
+               (unsigned long long)((uint64_t(gpuRd(0x00a65)) << 32) | gpuRd(0x00a64)));
     }
     gpuWr(A740_CP_SQE_CNTL, 1);
     // 5. a7xx_patch_pwrup_reglist (preemption list only; IFPC is off) and a7xx_cp_init through the ring.
