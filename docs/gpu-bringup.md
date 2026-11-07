@@ -775,3 +775,34 @@ evidence yet for what actually enables that thread.
 
 `native_adreno_bv_ring` is therefore back to 0, and the driver keeps the corrected offsets behind that knob with a
 comment saying they stop the bring-up — so the next attempt does not start from the invented 0xa80 again.
+
+
+## Round 15: the rewrite is really in memory, and the stall is still there
+
+Round 11's rewrite left one doubt — whether the patched words actually reached the buffer or only the driver's
+copy. Reading them back after the write settles it:
+
+    bv_patch ok 1 last_bytes 1000 refused 0 back 10001
+
+`back` packs the first two words the peek now returns: header `0x70970001` and payload **1**, not 3. The client's
+first CP_THREAD_CONTROL says BR only in memory, and the fence still does not retire.
+
+So, measured rather than assumed, this port has ruled out, on the client's own stream:
+
+- the thread the packet names (rewritten, read back, unchanged result),
+- the three empty second-level buffers (rewritten to CP_NOP, unchanged result),
+- SYNC_THREADS, secure mode, write-combining and page-table switching (each fixed earlier and still fixed).
+
+What remains inside those 1000 bytes is Turnip's own state setup: a long run of type-4 register writes in the
+0x8000 range and packets this port's decoder has no name for (opcode 0x55 with three payload words, 0x39, 0x47,
+and `70928000`, opcode 0x12 with no payload).
+
+### Where that leaves the work
+
+The remaining honest options, in the order they should be tried:
+
+1. **Name the packets.** Decode the whole stream with the PM4 kit instead of by hand, so the packet the
+   command processor stops on is identified rather than inferred from what it is not.
+2. **Build Turnip without the binning pass**, so the stream is one this port has evidence for (BR only, no
+   binning buffers) end to end.
+3. Keep hunting the BV ring's enable, which two attempts have now failed at.

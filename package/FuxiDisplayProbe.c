@@ -201,8 +201,9 @@ void fuxi_display_client_report(void) {
     printf("fuxi-metal: ib_ind sample st %x cached %x dram %x\n",
            native_adreno_ib_ind[13], native_adreno_ib_ind[14], native_adreno_ib_ind[15]);
     printf("fuxi-metal: empty_ib dropped %u last %x\n", native_adreno_empty_ib[0], native_adreno_empty_ib[1]);
-    printf("fuxi-metal: bv_patch ok %u last_bytes %u refused %u\n",
-           native_adreno_bv_patched[0], native_adreno_bv_patched[1], native_adreno_bv_patched[2]);
+    printf("fuxi-metal: bv_patch ok %u last_bytes %u refused %u back %x\n",
+           native_adreno_bv_patched[0], native_adreno_bv_patched[1], native_adreno_bv_patched[2],
+           native_adreno_bv_patched[3]);
     {
         char methodLine[200]; unsigned used = 0;
         for (unsigned k = 0; k < 20; ++k) {
