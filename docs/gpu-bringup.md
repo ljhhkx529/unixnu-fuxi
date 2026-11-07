@@ -874,3 +874,35 @@ about the *first* buffer only, and the packets that actually make the CP fetch b
 
 That is the next thing to fix, and it is cheap: record every buffer of a submission, not just the first, then run
 the same decode over each.
+
+
+## Round 18: a submission here is one buffer, so the blind spot was imaginary
+
+Recording every buffer of the newest submission, not just the first:
+
+    ib_bufs 1
+      b0 addr 100028000 bytes 16384 peek ... head 70970001 3 70460001 19 70460001 18
+
+**One buffer.** The 16 KiB BO starts with the same three packets as always, and there is no second IB, so round 17's
+worry — that the interesting packets live in a later buffer — does not apply to this client on this board.
+
+That makes one thing harder to explain rather than easier: the round-16 decode of this same buffer showed two
+`CP_SET_AMBLE` packets with real addresses (0x26000/0x2626c), while the amble probe that scans the same words
+records none. The probe and the decode disagree about the same data, which means the probe has a defect, not the
+stream.
+
+### Practical state
+
+The instruments now in the driver, all of which are kept:
+
+| instrument | what it answers |
+| --- | --- |
+| `native_adreno_ib_log` (256 words) | what the client's IB says |
+| `native_adreno_ib_bufs` | how many buffers a submission carries, and each one's head |
+| `native_adreno_ib_ind`, `_amble` | whether the CP's second-level fetches are reachable |
+| `native_adreno_bv_patched`, `_empty_ib` | whether a rewrite landed, read back |
+| `native_adreno_mark_log` | the plugin's progress in order |
+| `native_adreno_dram_write32` (board) | writing into a buffer the kernel has no mapping for |
+
+The next round should reconcile the probe with the decode — one of them is wrong about the amble packets, and until
+that is settled neither can be trusted for the packets after index 170.

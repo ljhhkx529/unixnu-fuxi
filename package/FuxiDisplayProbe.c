@@ -129,6 +129,9 @@ extern volatile unsigned int native_adreno_ib_peek;
 extern volatile unsigned int native_adreno_bv_patched[4];
 extern volatile unsigned int native_adreno_ib_ind[16];
 extern volatile unsigned int native_adreno_empty_ib[4];
+extern volatile unsigned int native_adreno_amble[16];
+extern volatile unsigned int native_adreno_ib_bufs[8][10];
+extern volatile unsigned int native_adreno_ib_bufs_count;
 extern volatile unsigned int native_adreno_prologue[96];
 extern volatile unsigned int native_adreno_prologue_info[4];
 /* The fence event ring (Adreno740 NativeAdrenoSubmit.cpp): type 1 submit, 2 wait-enter, 3 wait-complete, 4 wait-timeout. */
@@ -200,6 +203,17 @@ void fuxi_display_client_report(void) {
            native_adreno_ib_ind[12]);
     printf("fuxi-metal: ib_ind sample st %x cached %x dram %x\n",
            native_adreno_ib_ind[13], native_adreno_ib_ind[14], native_adreno_ib_ind[15]);
+    printf("fuxi-metal: ib_bufs %u\n", native_adreno_ib_bufs_count);
+    for (unsigned b = 0; b < native_adreno_ib_bufs_count && b < 8; ++b)
+        printf("fuxi-metal:   b%u addr %x%08x bytes %u peek %x head %x %x %x %x %x %x %x\n", b,
+               native_adreno_ib_bufs[b][1], native_adreno_ib_bufs[b][0], native_adreno_ib_bufs[b][2],
+               native_adreno_ib_bufs[b][9], native_adreno_ib_bufs[b][3], native_adreno_ib_bufs[b][4],
+               native_adreno_ib_bufs[b][5], native_adreno_ib_bufs[b][6], native_adreno_ib_bufs[b][7],
+               native_adreno_ib_bufs[b][8]);
+    printf("fuxi-metal: amble n %u peek %x addr %x%08x words %x %x %x %x %x %x %x %x\n",
+           native_adreno_amble[0], native_adreno_amble[1], native_adreno_amble[3], native_adreno_amble[2],
+           native_adreno_amble[4], native_adreno_amble[5], native_adreno_amble[6], native_adreno_amble[7],
+           native_adreno_amble[8], native_adreno_amble[9], native_adreno_amble[10], native_adreno_amble[11]);
     printf("fuxi-metal: empty_ib dropped %u last %x\n", native_adreno_empty_ib[0], native_adreno_empty_ib[1]);
     printf("fuxi-metal: bv_patch ok %u last_bytes %u refused %u back %x\n",
            native_adreno_bv_patched[0], native_adreno_bv_patched[1], native_adreno_bv_patched[2],
