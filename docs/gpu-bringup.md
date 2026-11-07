@@ -631,3 +631,28 @@ Two routes, and the first is far cheaper:
 2. Program the BV ring for real. The write-probe found its window (`0xa40`..`0xa4f` writable, control word at
    `0xa62`, rptr at `0xa66`) but no BASE, and programming everything found did not make thread control work —
    consistent with the thread also needing a GMU-side setup this port never does.
+
+
+## Round 10: Turnip's no-binning option does not change this stream
+
+`TU_DEBUG=nobin` is the runtime's own no-binning switch (its CI uses `TU_DEBUG = "gmem,nobin"`), so the plugin
+now sets it before opening the device:
+
+    setenv("TU_DEBUG", "nobin", 1);
+
+The stream the render server submits is **unchanged**: same 1000 bytes, same first packet `70970001 00000003`.
+So this command stream is not a draw that binning shaped — it is the runtime's fixed device-open sequence,
+emitted before any binning decision exists. The option cannot help there.
+
+### What that leaves
+
+The only lever left that does not depend on the runtime is to **change the packet in the driver**, which is
+possible because the driver already reads these buffers successfully (`peek 0`, real words):
+
+- add a write side to `NativeAdrenoVm` beside `peekWords`, and
+- in `NativeAdrenoSubmit::submit`, when a board asks for it, rewrite every CP_THREAD_CONTROL in the client's IB
+  so it never selects the BV thread (`payload 3 -> 1`, `payload 2 -> 1`), then submit.
+
+That is board-specific and blunt, and it will not run the binning pass — but it is the decisive experiment:
+if fences start retiring once no packet names BV, the diagnosis is proven end to end and the remaining work is
+turning that into a correct no-binning path rather than a rewrite.
