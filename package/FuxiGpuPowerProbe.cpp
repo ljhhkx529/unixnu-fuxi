@@ -1206,6 +1206,21 @@ void perfctrSramProbe() {
     }
     printf("fuxi-gpu: perfctr_sram status before %x after %x polls %u\n", before, after, polls);
 }
+// One framed submission carrying a single no-op packet (CP_WAIT_FOR_IDLE): the prologue, the fence, nothing
+// else. If its fence retires, the framed prologue is sound and whatever stops the command processor is in
+// the client's own IB; if it does not, the prologue itself is where it stops.
+void framedSubmitProbe() {
+    uint32_t w[1] = {};
+    if (AdrenoPM4Type7(0x26, 0, w) != AdrenoPM4Success) { printf("fuxi-gpu: framed pm4 failed\n"); return; }
+    const NativeAdrenoRingClock clk{nullptr, ringNow, ringIdle};
+    uint32_t fence = 0;
+    const IOReturn s = gRing.submitFramed(w, 1, &fence);
+    printf("fuxi-gpu: framed submit %x fence %u\n", unsigned(s), fence);
+    if (s) return;
+    uint32_t seen = 0;
+    const uint32_t r = gRing.wait(fence, &clk, 200000, &seen);
+    printf("fuxi-gpu: framed wait %x seen %x\n", r, seen);
+}
 void publishAndWrapperTest(bool rounds) {
     char row[64];
     if (!native_adreno_publish || !native_adreno_published_service || !native_adreno_publish_stats) {setRow(5, "P nolink"); return;}
@@ -1220,6 +1235,7 @@ void publishAndWrapperTest(bool rounds) {
     const IOReturn timer = gTimer.attach(&gTimerIo, NativeAdrenoTimeCp);
     {unsigned wc = 1; PE_parse_boot_argn("sheng-gpu-wc", &wc, sizeof wc); native_adreno_wc_enabled = wc ? 1 : 0;}
     perfctrSramProbe();
+    framedSubmitProbe();
     openCpAperture();
     // The GPU's input address size. A user connection's window is (1 << ias) - GpuClientVaStart, and the driver refuses a
     // zero window with kIOReturnNoResources, so a hardcoded 32 left every Metal client unable to mount.
