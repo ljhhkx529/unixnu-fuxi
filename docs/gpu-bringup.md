@@ -750,3 +750,28 @@ concurrent binning, the BV thread never runs, and its results never appear.
 2. **Build Turnip from source with the binning pass removed**, so the streams it emits never depend on BV. The
    Mesa tree is present (`out/.../tree/.cache/mesa-work`), `build-turnip-darwin.py` builds the iOS dylib, and the
    plugin now rebuilds — so this is a build-hours problem, not an unknown.
+
+
+## Round 14: the BV offsets in this port were invented, and the real ones kill the bring-up
+
+`NativeAdrenoRing::program()` was writing the BV ring at **0x0a80/0x0a81/0x0a82/0x0a87** — offsets this port
+guessed. The write probe of round 6 had already shown that whole range reads the 0xdeafbead sentinel and takes
+no writes: nothing lives there. So the BV ring was never programmed at all, by either path.
+
+The real block mirrors BR at **+0x260** (BR: BASE 0x800, CNTL 0x802, RPTR 0x806, WPTR 0x807; the probe found BV's
+control word at 0xa62 holding BR's own 0x20c, and its rptr at 0xa66 holding BR's 0x4e). Those CP registers are
+per-pipe on a7xx, so the writes now select PIPE_BV through `CP_APERTURE_CNTL_HOST` first.
+
+Result: the bring-up does not finish at all.
+
+    fuxi-gpu: gpuStart buffers call done 0, first bo phys 8d6b01000 bytes 77824
+    … nothing further …
+    fence live 0 submitted 0 retired 0
+    marklog 0:
+
+Writing 0xa60 with the BV pipe selected stops the command processor during the very first `program()`, before a
+single submission exists. So the BV block is not simply readable/writable the way BR's is, and this port has no
+evidence yet for what actually enables that thread.
+
+`native_adreno_bv_ring` is therefore back to 0, and the driver keeps the corrected offsets behind that knob with a
+comment saying they stop the bring-up — so the next attempt does not start from the invented 0xa80 again.

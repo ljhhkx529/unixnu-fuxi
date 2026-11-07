@@ -1677,7 +1677,8 @@ void gpuStart() {
     const NativeAdrenoRingIo rio{nullptr, ringWrite, ringRead, ringBarrier, nullptr, nullptr};
     const NativeAdrenoRingCache cache{nullptr, ringPublish, ringAcquire};
     native_adreno_fence_phys = gGpuBuffers[2].physical;   // the page the CP writes its timestamps to, for the UFS log
-    native_adreno_bv_ring = 1;   /* see docs/gpu-bringup.md: fuxi never programs the BV ring */
+    /* native_adreno_bv_ring stays 0: programming a BV ring at 0xa60 with PIPE_BV selected stops the bring-up
+     * before it finishes at all (fence live 0, marks 0). See docs/gpu-bringup.md. */
     native_adreno_no_thread_sync = 1;   /* SYNC_THREADS hangs this CP; the init's own payload has bit 27 only */
     native_adreno_bv_to_br = 1;   /* the BV thread has no runnable ring here, and naming it stops the CP */
     native_adreno_drop_empty_ib = 1;   /* the binning pass never fills its buffer; skip the jump into it */
