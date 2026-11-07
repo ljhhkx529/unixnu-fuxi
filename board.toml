@@ -229,6 +229,9 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                # +0x7b8, so the write path is not established yet; see the note in the commit.
                "sheng-gpu-power=9",
           "sheng-gpu-zap=0",
+          "fuxi-probe-prologue=1",
+          "fuxi-probe-fence=4",
+          "fuxi-probe-tctrl=0",
                "sheng-gpu-metal=1",
                "sheng-gpu-dcvs=1",
                "sheng-fb-gpu=1",

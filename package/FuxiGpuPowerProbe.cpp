@@ -1211,27 +1211,53 @@ void perfctrSramProbe() {
 // the client's own IB; if it does not, the prologue itself is where it stops.
 extern "C" volatile uint32_t native_adreno_reset_bits;
 extern "C" volatile uint32_t native_adreno_thread_ctrl;
+extern "C" volatile uint32_t native_adreno_prologue_level;
+extern "C" volatile uint32_t native_adreno_no_bv;
+extern "C" volatile uint32_t native_adreno_fence_level;
 void framedSubmitProbe() {
+    /* One framed submission per boot, which is all a stopped command processor allows: a refused submission
+     * leaves it stopped, so every later one only queues. The two boot arguments choose how much prologue and
+     * which fence shape this boot's single test uses. */
+    const NativeAdrenoRingClock clk{nullptr, ringNow, ringIdle};
+    unsigned prologue = 0, fence = 0, tctrl = 0x80000001u;
+    PE_parse_boot_argn("fuxi-probe-prologue", &prologue, sizeof prologue);
+    PE_parse_boot_argn("fuxi-probe-fence", &fence, sizeof fence);
+    PE_parse_boot_argn("fuxi-probe-tctrl", &tctrl, sizeof tctrl);
+    native_adreno_prologue_level = prologue;
+    native_adreno_fence_level = fence;
+    native_adreno_thread_ctrl = tctrl;
     uint32_t w[1] = {};
     if (AdrenoPM4Type7(0x26, 0, w) != AdrenoPM4Success) { printf("fuxi-gpu: framed pm4 failed\n"); return; }
-    const NativeAdrenoRingClock clk{nullptr, ringNow, ringIdle};
-    /* The prologue's first CP_THREAD_CONTROL is the one packet a plain submission never emits, so it is the
-     * first candidate when the framed path stalls. Swept over every thread selection it can name, in one boot:
-     * sync BR (the shipping value), sync both, both, BR alone, none. */
-    static const uint32_t ctrls[] = {0x80000001u, 0x80000003u, 0x3u, 0x1u, 0x0u};
-    for (unsigned i = 0; i < sizeof ctrls / sizeof ctrls[0]; ++i) {
-        native_adreno_thread_ctrl = ctrls[i];
-        native_adreno_reset_bits = 0xf;
-        gRing.requestContextReset();
-        uint32_t fence = 0;
-        const IOReturn s = gRing.submitFramed(w, 1, &fence);
-        if (s) { printf("fuxi-gpu: thread ctrl %x submit %x\n", ctrls[i], unsigned(s)); continue; }
-        uint32_t seen = 0;
-        const uint32_t r = gRing.wait(fence, &clk, 100000, &seen);
-        printf("fuxi-gpu: thread ctrl %x fence %u wait %x seen %x\n", ctrls[i], fence, r, seen);
+    /* The plain path retires a fence; the framed one does not, and the only packet it adds at the minimal
+     * setting is CP_THREAD_CONTROL. Sending that packet through the plain path settles whether it is the
+     * packet or the framing. Run first, while the ring is still clean. */
+    {
+        uint32_t body[3] = {};
+        uint32_t h = 0;
+        if (AdrenoPM4Type7(0x17, 1, &h) == AdrenoPM4Success && AdrenoPM4Type7(0x26, 0, &body[2]) == AdrenoPM4Success) {
+            body[0] = h;
+            body[1] = 0;
+            uint32_t f = 0;
+            const IOReturn ps = gRing.submit(body, 3, &f);
+            if (ps) printf("fuxi-gpu: plain+tctrl submit %x\n", unsigned(ps));
+            else {
+                uint32_t sv = 0;
+                const uint32_t pr = gRing.wait(f, &clk, 100000, &sv);
+                printf("fuxi-gpu: plain+tctrl seq %u wait %x seen %x\n", f, pr, sv);
+            }
+        }
     }
+    printf("fuxi-gpu: probe ring current %u poisoned %u\n", gRing.current() ? 1 : 0, gRing.poisoned() ? 1 : 0);
+    uint32_t value = 0;
+    const IOReturn s = gRing.submitFramed(w, 1, &value);
+    if (s) { printf("fuxi-gpu: probe prologue %u fence %u submit %x\n", prologue, fence, unsigned(s)); return; }
+    uint32_t seen = 0;
+    const uint32_t r = gRing.wait(value, &clk, 100000, &seen);
+    printf("fuxi-gpu: probe prologue %u fence %u tctrl %x seq %u wait %x seen %x\n",
+           prologue, fence, tctrl, value, r, seen);
+    native_adreno_prologue_level = 0;
+    native_adreno_fence_level = 0;
     native_adreno_thread_ctrl = 0;
-    native_adreno_reset_bits = 0xf;
 }
 void publishAndWrapperTest(bool rounds) {
     char row[64];
