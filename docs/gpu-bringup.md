@@ -63,11 +63,36 @@ Nothing in this port programs the BV ring — `gpuStart` writes `CP_BV_APRIV_CNT
 that names a thread whose ring is not running is the obvious candidate, and it explains why sheng works
 with the same driver code: its board programs what fuxi's does not.
 
+## The BV ring, measured
+
+Register dump next to the working BR ring:
+
+    ring br  base 200000  cntl 20c  rptr_addr 300000  wptr 4e  rptr 4e
+    ring bv  a80 0  a81 0  a82 0  a87 2  a98 300008  a99 0  ad0 f
+
+The BR ring is fully programmed and has consumed its writes. The BV ring has only its rptr address
+(0xa98) and its APRIV control (0xad0) written; **its base and control read back 0**, and its write pointer
+holds a stale 2. So the BV thread has no ring, which is consistent with every CP_THREAD_CONTROL stopping
+the command processor.
+
+Two attempts to program it both read back 0 afterwards:
+
+1. from `NativeAdrenoRing::program()`, beside the BR register writes — wiped by the CP init that follows
+2. from the board probe, after the CP init, next to the existing `CP_BV_RB_RPTR_ADDR` write — no effect
+
+The second result points at **`CP_PROTECT_CNTL`**: the port programs `A740_CP_PROTECT_CNTL` (0x84f) during
+hw_init, so a register outside the protected list is not writable by design. `CP_BV_APRIV_CNTL` (0xad0) does
+take, so the BV block is not wholly protected — 0xa80..0xa87 specifically is.
+
 ## Next step
 
-Program the BV ring in `gpuStart`, mirroring the BR ring that already works (`CP_BV_RB_BASE`,
-`CP_BV_RB_CNTL`, and its write pointer through `CP_BV_RB_WPTR`), then re-run the plain+`CP_THREAD_CONTROL`
-test — the cheapest decisive check, because it needs no client and no framed path.
+Open the protected register window for the BV ring (`CP_PROTECT_REG_n` covering 0xa80..0xa87, or the
+equivalent range), program `CP_BV_RB_BASE`/`CP_BV_RB_CNTL`/`CP_BV_RB_WPTR`, and re-run the
+plain+`CP_THREAD_CONTROL` test — still the cheapest decisive check, because it needs no client and no
+framed path.
+
+If the BV window turns out not to be the answer, the alternative is to stop emitting CP_THREAD_CONTROL at
+all, which client IBs would also have to honour.
 
 ## Open question
 

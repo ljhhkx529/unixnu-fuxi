@@ -1214,6 +1214,7 @@ extern "C" volatile uint32_t native_adreno_thread_ctrl;
 extern "C" volatile uint32_t native_adreno_prologue_level;
 extern "C" volatile uint32_t native_adreno_no_bv;
 extern "C" volatile uint32_t native_adreno_fence_level;
+extern "C" volatile uint32_t native_adreno_bv_ring;
 void framedSubmitProbe() {
     /* One framed submission per boot, which is all a stopped command processor allows: a refused submission
      * leaves it stopped, so every later one only queues. The two boot arguments choose how much prologue and
@@ -1259,6 +1260,17 @@ void framedSubmitProbe() {
     native_adreno_fence_level = 0;
     native_adreno_thread_ctrl = 0;
 }
+// The BV ring's registers next to the BR ring's: the BR ring is programmed and works, the BV ring only has
+// its rptr address and APRIV written. Read-only, so a wrong guess about their offsets cannot change anything.
+void bvRingProbe() {
+    printf("fuxi-gpu: ring br base %llx cntl %x rptr_addr %llx wptr %x rptr %x\n",
+           (unsigned long long)((uint64_t(gpuRd(0x00801)) << 32) | gpuRd(0x00800)), gpuRd(0x00802),
+           (unsigned long long)((uint64_t(gpuRd(0x00805)) << 32) | gpuRd(0x00804)),
+           gpuRd(0x00807), gpuRd(0x00806));
+    printf("fuxi-gpu: ring bv a80 %x a81 %x a82 %x a87 %x a98 %x a99 %x ad0 %x\n",
+           gpuRd(0x00a80), gpuRd(0x00a81), gpuRd(0x00a82), gpuRd(0x00a87), gpuRd(0x00a98),
+           gpuRd(0x00a99), gpuRd(0x00ad0));
+}
 void publishAndWrapperTest(bool rounds) {
     char row[64];
     if (!native_adreno_publish || !native_adreno_published_service || !native_adreno_publish_stats) {setRow(5, "P nolink"); return;}
@@ -1273,6 +1285,7 @@ void publishAndWrapperTest(bool rounds) {
     const IOReturn timer = gTimer.attach(&gTimerIo, NativeAdrenoTimeCp);
     {unsigned wc = 1; PE_parse_boot_argn("sheng-gpu-wc", &wc, sizeof wc); native_adreno_wc_enabled = wc ? 1 : 0;}
     perfctrSramProbe();
+    bvRingProbe();
     framedSubmitProbe();
     openCpAperture();
     // The GPU's input address size. A user connection's window is (1 << ias) - GpuClientVaStart, and the driver refuses a
@@ -1628,10 +1641,19 @@ void gpuStart() {
     const NativeAdrenoRingIo rio{nullptr, ringWrite, ringRead, ringBarrier, nullptr, nullptr};
     const NativeAdrenoRingCache cache{nullptr, ringPublish, ringAcquire};
     native_adreno_fence_phys = gGpuBuffers[2].physical;   // the page the CP writes its timestamps to, for the UFS log
+    native_adreno_bv_ring = 1;   /* see docs/gpu-bringup.md: fuxi never programs the BV ring */
     const IOReturn attached = gRing.attach(&rio, &cache, const_cast<uint8_t *>(gGpuCpu[1]), gGpuBuffers[1].bytes,
         gGpuBuffers[1].iova, const_cast<uint8_t *>(gGpuCpu[2]), gGpuBuffers[2].bytes, gGpuBuffers[2].iova);
     if (attached) {snprintf(row, sizeof row, "C4 ring attach %x", unsigned(attached)); setRow(7, row); { printf("fuxi-gpu: gpuStart exit %u cp %u\n", __LINE__, c[0]); return; }}
     gpuWr64(A740_CP_BV_RB_RPTR_ADDR, gGpuBuffers[2].iova + 8);   // rbmemptr(bv_rptr)
+    /* BV ring: base/cntl/wptr, mirroring the BR ring. Written here, after the CP init, because the init
+     * rewrites CP_RB_* and would otherwise leave the BV ring with no ring at all -- which is what makes every
+     * CP_THREAD_CONTROL stop the command processor. See docs/gpu-bringup.md. */
+    if (native_adreno_bv_ring) {
+        gpuWr64(0x00a80, gGpuBuffers[1].iova);
+        gpuWr(0x00a82, gpuRd(0x00802));
+        gpuWr(0x00a87, 0);
+    }
     gpuWr(A740_CP_SQE_CNTL, 1);
     // 5. a7xx_patch_pwrup_reglist (preemption list only; IFPC is off) and a7xx_cp_init through the ring.
     c[0] = 5;
