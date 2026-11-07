@@ -127,6 +127,7 @@ extern volatile unsigned int native_adreno_ib_log[4][4+256];
 extern volatile unsigned int native_adreno_ib_log_count;
 extern volatile unsigned int native_adreno_ib_peek;
 extern volatile unsigned int native_adreno_bv_patched[4];
+extern volatile unsigned int native_adreno_ib_ind[16];
 extern volatile unsigned int native_adreno_prologue[96];
 extern volatile unsigned int native_adreno_prologue_info[4];
 /* The fence event ring (Adreno740 NativeAdrenoSubmit.cpp): type 1 submit, 2 wait-enter, 3 wait-complete, 4 wait-timeout. */
@@ -191,6 +192,13 @@ void fuxi_display_client_report(void) {
             }
         }
     }
+    printf("fuxi-metal: ib_ind n %u peek %x addr %x%08x size %u words %x %x %x %x %x %x %x %x\n",
+           native_adreno_ib_ind[0], native_adreno_ib_ind[1], native_adreno_ib_ind[3], native_adreno_ib_ind[2],
+           native_adreno_ib_ind[4], native_adreno_ib_ind[5], native_adreno_ib_ind[6], native_adreno_ib_ind[7],
+           native_adreno_ib_ind[8], native_adreno_ib_ind[9], native_adreno_ib_ind[10], native_adreno_ib_ind[11],
+           native_adreno_ib_ind[12]);
+    printf("fuxi-metal: ib_ind sample st %x cached %x dram %x\n",
+           native_adreno_ib_ind[13], native_adreno_ib_ind[14], native_adreno_ib_ind[15]);
     printf("fuxi-metal: bv_patch ok %u last_bytes %u refused %u\n",
            native_adreno_bv_patched[0], native_adreno_bv_patched[1], native_adreno_bv_patched[2]);
     {

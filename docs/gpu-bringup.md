@@ -686,3 +686,30 @@ check: whether the memory those packets point at is mapped in the table the CP i
 
 The write machinery is worth keeping either way: it is the first time this port could repair a client's command
 stream instead of only observing it.
+
+
+## Round 12: the indirect buffer the CP jumps into is empty
+
+The stream's `703d0004 00027000 00000001 …` decodes to CP_INDIRECT_BUFFER with address
+`0x00027000 | (1 << 32)` = **0x100027000**, four pages below the main IB at 0x100028000. The driver now scans
+for those packets and reads their target:
+
+    ib_ind n 3 peek 0 addr 100027000 size 0 words 0 0 0 0 0 0 0 0
+    ib_ind sample st 0 cached 0 dram 0
+
+The peek succeeds (the address **is** mapped), and the cacheable view and DRAM agree word for word: the buffer
+is genuinely all zeros. A zero word is not a PM4 header, so the command processor reads it, finds nothing it can
+execute, and stops — with no fault and no progress, exactly the behaviour this board has shown from the start.
+
+So this was never a visibility problem like the main IB had (that one was fixed by `sheng-gpu-wc=0`); the
+second-level buffer really is empty at the moment it is submitted.
+
+### What that means
+
+An indirect buffer needs someone to fill it. With the BV thread dead, the most likely writer is gone: a binning
+pass produces exactly this kind of control/visibility buffer, and this port never runs one. That reading makes
+the whole picture consistent — the stream is built for concurrent binning, the BV thread never runs, its output
+buffer stays zero, and the command processor stops reading it.
+
+Either the BV thread has to run (which needs a BV ring this port has never programmed), or the runtime has to be
+made to emit a stream that does not depend on it.
