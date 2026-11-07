@@ -339,3 +339,30 @@ command processor reads here.
 The submission path works now. What is missing is a process opening the GPU presenter and the display handing
 it frames, plus the last fence (`submitted 11 retired 10`) and SpringBoard's BoMap refusals
 (`m3 4/2 kIOReturnBusy`).
+
+
+### The presenter exists and nobody opens it
+
+    fuxi-display: handoff presenter 1        the GPU hand-off presenter is created, attached and started
+    adrenoprobed                             never appears in the log
+    gop offers 0 done 0
+
+The addon installs `org.blu-sharky.adrenoprobed.plist` over /System/Library/LaunchDaemons through the bindfs
+union (the mount reports stage 5, so both the sealed entry and the owner's are visible by lookup), but launchd
+never starts the job. The union merges lookups; whether it merges the directory listing launchd scans is the
+open question.
+
+Until a process opens the presenter, the display keeps its CPU copy — that is by design
+(`NativeGOPPresenter::offer` needs `gpuClient`).
+
+### Round 2 summary
+
+| change | state |
+| --- | --- |
+| `sheng-gpu-wc=0` | required on this board: write-combined client BO maps do not reach the memory the CP reads |
+| `sheng-gpu-single-table=1` | required: the CP cannot switch page tables from the ring |
+| `native_adreno_plain_submit` | enabled by the probe |
+| `native_adreno_no_thread_sync` | kept: SYNC_THREADS hangs this CP |
+| client IB | 932-byte Turnip IB with real packets, first is CP_THREAD_CONTROL(3) |
+| plugin test | reaches step 34 with error 0 |
+| display | still the CPU copy; the presenter has no client |
