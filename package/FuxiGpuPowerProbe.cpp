@@ -1230,24 +1230,26 @@ void framedSubmitProbe() {
     native_adreno_thread_ctrl = tctrl;
     uint32_t w[1] = {};
     if (AdrenoPM4Type7(0x26, 0, w) != AdrenoPM4Success) { printf("fuxi-gpu: framed pm4 failed\n"); return; }
-    /* The plain path retires a fence; the framed one does not, and the only packet it adds at the minimal
-     * setting is CP_THREAD_CONTROL. Sending that packet through the plain path settles whether it is the
-     * packet or the framing. Run first, while the ring is still clean. */
-    {
-        uint32_t body[3] = {};
-        uint32_t h = 0;
-        if (AdrenoPM4Type7(0x17, 1, &h) == AdrenoPM4Success && AdrenoPM4Type7(0x26, 0, &body[2]) == AdrenoPM4Success) {
-            body[0] = h;
-            body[1] = tctrl;   /* the payload this boot's test uses, from fuxi-probe-tctrl */
-            uint32_t f = 0;
-            const IOReturn ps = gRing.submit(body, 3, &f);
-            if (ps) printf("fuxi-gpu: plain+tctrl submit %x\n", unsigned(ps));
-            else {
-                uint32_t sv = 0;
-                const uint32_t pr = gRing.wait(f, &clk, 100000, &sv);
-                printf("fuxi-gpu: plain+tctrl seq %u wait %x seen %x\n", f, pr, sv);
-            }
-        }
+    /* The plain path retires a fence; the framed one does not, and the packet it adds is CP_THREAD_CONTROL.
+     * Two orders, one boot apart: the packet first (as a client IB has it) and the packet second, after the
+     * scratch write every working submission starts with. */
+    for (unsigned order = 0; order < 2; ++order) {
+        uint32_t body[8] = {};
+        uint32_t tc = 0, scratch = 0, noop = 0;
+        if (AdrenoPM4Type7(0x17, 1, &tc) != AdrenoPM4Success) continue;
+        if (AdrenoPM4Type4(0x885, 1, &scratch) != AdrenoPM4Success) continue;
+        if (AdrenoPM4Type7(0x26, 0, &noop) != AdrenoPM4Success) continue;
+        size_t n = 0;
+        if (order == 0) { body[n++] = tc; body[n++] = tctrl; body[n++] = scratch; body[n++] = 0; }
+        else { body[n++] = scratch; body[n++] = 0; body[n++] = tc; body[n++] = tctrl; }
+        body[n++] = noop;
+        uint32_t f = 0;
+        const IOReturn ps = gRing.submit(body, n, &f);
+        if (ps) { printf("fuxi-gpu: plain+tctrl order %u submit %x\n", order, unsigned(ps)); return; }
+        uint32_t sv = 0;
+        const uint32_t pr = gRing.wait(f, &clk, 100000, &sv);
+        printf("fuxi-gpu: plain+tctrl order %u seq %u wait %x seen %x\n", order, f, pr, sv);
+        if (!pr && sv == f) return;   /* this order works; no point testing the other */
     }
     printf("fuxi-gpu: probe ring current %u poisoned %u\n", gRing.current() ? 1 : 0, gRing.poisoned() ? 1 : 0);
     uint32_t value = 0;

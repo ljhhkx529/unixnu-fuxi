@@ -179,16 +179,32 @@ That leaves two readings:
 Both are testable without touching the driver: put the packet **second** in the submission (after a scratch
 write) and see whether the fence retires, then compare with it first.
 
+## Order does not matter either
+
+    plain+tctrl order 0 seq 7 wait 1 seen 6     (thread control first, as a client IB has it)
+    plain+tctrl order 1 seq 8 wait 1 seen 6     (thread control second, after a scratch write)
+
+So CP_THREAD_CONTROL is refused in any position, with any payload, and whether or not the BV window is
+programmed. It is the packet itself.
+
+## The way to render without it
+
+Everything else on this board works: the GMU starts, the CP retires the fences of submissions that do not
+carry this packet, the clients mount, allocate, map and submit. The one missing piece is that Turnip's IBs
+carry CP_THREAD_CONTROL because a context needs to say which threads run.
+
+The driver already walks every client IB when it wraps it in INDIRECT_BUFFER packets, so it can drop that
+packet on the way past — a board-level filter, off by default, that rewrites the submission so this CP
+accepts it. That is the shortest route to a rendering GPU and it needs no register archaeology.
+
 ## Next step
 
-One boot each, both read-only on the driver side:
+Add a filtered-submission mode in the driver: when a board asks for it, copy the client's IB into the ring
+walking its packets, drop CP_THREAD_CONTROL (0x17), and submit the rest through the plain path. Then check
+whether the fence retires and whether the presenter starts accepting frames (`gop offers` above zero).
 
-1. **Put CP_THREAD_CONTROL second** in the plain submission, after a CP_SCRATCH type-4 write (the packet every
-   working submission already starts with). If the fence retires, the packet is fine and its position is what
-   matters; if not, the packet itself is refused.
-2. **Compare against `CP_RB_CNTL`** (0x20c on this board) with the a7xx bit that enables the thread group. The
-   vendor KGSL module in the fuxi-firmware repository is the source for that bit, and its ringbuffer init path
-   is now located at `gen7_ringbuffer_init` (0x8eb50) for whoever picks this up.
+If the client's IB survives the drop, the GPU renders. If the CP then stops on something else in the IB, the
+next packet it stops on is the next thing to look at, and the same filter is the tool for it.
 
 If the BV window turns out not to be the answer, the alternative is to stop emitting CP_THREAD_CONTROL at
 all, which client IBs would also have to honour.
