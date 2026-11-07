@@ -309,3 +309,33 @@ what is broken**, and nothing can be concluded about the IB's content until it i
 
 That matters because the two remaining explanations — "Turnip's IB carries SYNC_THREADS" and "the CP cannot
 read the IB at all" — are still both open, and only a working read tells them apart.
+
+
+## Round 2: the write-combining mapping was hiding the client's IB
+
+`peek` of the client's IB reported kIOReturnSuccess and the words were all zero, so the mapping existed and
+the buffer really read as zero. The submission was 48 bytes — exactly the twelve dwords the plugin writes —
+so the data was written and never became visible. Turning write-combining off (`sheng-gpu-wc=0`) changes
+everything:
+
+    before:  client_ib iova 100000000 bytes 48   ib+00 00000000 ...
+    after:   client_ib iova 100027000 bytes 932  ib+00 70970001 00000003 70460001 00000019 ...
+
+A 932-byte Turnip IB with real packets, whose first is CP_THREAD_CONTROL with payload 3 (BOTH, **no SYNC
+bit**) — so Turnip's own IB was never the problem. And the plugin's own test goes from step 11 to
+
+    report backboard s34 e0
+
+step 34, no error, where every earlier run stopped at 11.
+
+So this board must serve client BO CPU maps write-back; write-combined views do not reach the memory the
+command processor reads here.
+
+## What is left for the objective
+
+    gop offers 0 done 0        the presenter still has no client, so no frame is offered to the GPU
+    sheng-fb: copy  31         the display still copies on the CPU
+
+The submission path works now. What is missing is a process opening the GPU presenter and the display handing
+it frames, plus the last fence (`submitted 11 retired 10`) and SpringBoard's BoMap refusals
+(`m3 4/2 kIOReturnBusy`).

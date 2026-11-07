@@ -236,6 +236,9 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
           # ring, so clients are served on the kernel's own table and submissions go out without the framed
           # prologue. Together those two make every fence retire; see docs/gpu-bringup.md.
           "sheng-gpu-single-table=1",
+          # The client fills its IB through a write-combining mapping and the command processor then reads zeros.
+          # Serve those mappings write-back instead and see whether the submission survives.
+          "sheng-gpu-wc=0",
                "sheng-gpu-metal=1",
                "sheng-gpu-dcvs=1",
                "sheng-fb-gpu=1",

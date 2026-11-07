@@ -123,6 +123,7 @@ extern volatile unsigned int native_adreno_vm_check[8];
  * [3] bytes, then the words. */
 extern volatile unsigned int native_adreno_ib_log[4][4+28];
 extern volatile unsigned int native_adreno_ib_log_count;
+extern volatile unsigned int native_adreno_ib_peek;
 extern volatile unsigned int native_adreno_prologue[96];
 extern volatile unsigned int native_adreno_prologue_info[4];
 /* The fence event ring (Adreno740 NativeAdrenoSubmit.cpp): type 1 submit, 2 wait-enter, 3 wait-complete, 4 wait-timeout. */
@@ -186,7 +187,8 @@ void fuxi_display_client_report(void) {
             const unsigned total = native_adreno_ib_log_count;
             if (total) {
                 volatile unsigned int *e = native_adreno_ib_log[(total - 1) & 3];
-                printf("fuxi-metal: client_ib fence %u iova %x%08x bytes %u\n", e[0], e[2], e[1], e[3]);
+                printf("fuxi-metal: client_ib fence %u iova %x%08x bytes %u peek %x\n", e[0], e[2], e[1], e[3],
+                       native_adreno_ib_peek);
                 for (unsigned i = 0; i < 28; i += 8) {
                     char line[160]; int m = 0;
                     for (unsigned j = i; j < i + 8 && j < 28; ++j)
