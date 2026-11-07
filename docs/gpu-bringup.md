@@ -851,3 +851,26 @@ mapped in the table the CP is using, the symptom is exactly what this board show
 
 That is the next thing to read: what lives at those addresses from the driver's side, the same way the hit-rate of
 `peekWords` answered it for the main IB.
+
+
+## Round 17: CP_SET_AMBLE named, and a blind spot in this port's own instruments
+
+`CP_SET_AMBLE` is opcode **0x55** — the packet the decode could not name. Its first two payload words are the
+command buffer the CP jumps to, and in the decoded stream those were `{0x26000, 1, 0x10009b}` and
+`{0x2626c, 1, 0x100095}`: addresses in the client's own space, which is exactly the kind of fetch that stops this
+command processor when it lands on memory the CP cannot reach.
+
+The driver now records what those addresses hold. It reads none of them:
+
+    amble n 0        (after skipping the terminating amble, which carries address 0)
+    amble n 1 peek e00002c2 addr 0    (before skipping: only the empty terminator is in this buffer)
+
+### The blind spot
+
+Every instrument this port has built — the IB log, the indirect-buffer scan, the thread-control rewrite, the amble
+probe — reads **`buffers[0]`**, the first buffer of a submission. Turnip submits several: a preamble, the draw
+state, the amble bodies. So the decoded stream of round 16 and the empty amble count of this round are statements
+about the *first* buffer only, and the packets that actually make the CP fetch by address may live in a later one.
+
+That is the next thing to fix, and it is cheap: record every buffer of a submission, not just the first, then run
+the same decode over each.
