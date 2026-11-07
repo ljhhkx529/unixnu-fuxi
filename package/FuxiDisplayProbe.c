@@ -119,6 +119,10 @@ extern volatile unsigned int native_adreno_table_switches[8];
 /* The framed prologue as written into the ring (Adreno740 NativeAdrenoRing.cpp emitPrologue):
  * [0] words, [1] reset, [2] table, [3] stamps, then the words. */
 extern volatile unsigned int native_adreno_vm_check[8];
+/* The first 28 dwords of the client's newest IB (Adreno740 NativeAdrenoSubmit.cpp): [0] fence, [1]/[2] iova,
+ * [3] bytes, then the words. */
+extern volatile unsigned int native_adreno_ib_log[4][4+28];
+extern volatile unsigned int native_adreno_ib_log_count;
 extern volatile unsigned int native_adreno_prologue[96];
 extern volatile unsigned int native_adreno_prologue_info[4];
 /* The fence event ring (Adreno740 NativeAdrenoSubmit.cpp): type 1 submit, 2 wait-enter, 3 wait-complete, 4 wait-timeout. */
@@ -172,6 +176,19 @@ void fuxi_display_client_report(void) {
                native_adreno_cp_image[21]);
         /* [0] CP_SMMU_TABLE_UPDATE packets the ring emitted, [2]/[3] VMs created/destroyed, [4]/[5] live now/peak,
          * [6] the last table error, [7] createVm's step (0 on success). */
+        {
+            const unsigned total = native_adreno_ib_log_count;
+            if (total) {
+                volatile unsigned int *e = native_adreno_ib_log[(total - 1) & 3];
+                printf("fuxi-metal: client_ib fence %u iova %x%08x bytes %u\n", e[0], e[2], e[1], e[3]);
+                for (unsigned i = 0; i < 28; i += 8) {
+                    char line[160]; int m = 0;
+                    for (unsigned j = i; j < i + 8 && j < 28; ++j)
+                        m += snprintf(line + m, sizeof line - m, " %08x", e[4 + j]);
+                    printf("fuxi-metal:   ib+%02u%s\n", i, line);
+                }
+            }
+        }
         {
             const unsigned n = native_adreno_prologue_info[0];
             printf("fuxi-metal: prologue words %u reset %u table %u stamps %u\n",

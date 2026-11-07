@@ -197,14 +197,29 @@ The driver already walks every client IB when it wraps it in INDIRECT_BUFFER pac
 packet on the way past — a board-level filter, off by default, that rewrites the submission so this CP
 accepts it. That is the shortest route to a rendering GPU and it needs no register archaeology.
 
+## The client's IB reads as zeros
+
+Dumping the driver's own record of the client's newest IB (`native_adreno_ib_log`, the first 28 dwords as the
+kernel maps them):
+
+    client_ib fence 13 iova 100000000 bytes 48
+      ib+00 00000000 00000000 ... (all 28 zero)
+
+Two readings: the client submitted an all-zero IB (unlikely — Turnip writes real commands), or the kernel
+cannot read that IOVA (peekWords answers zeros silently). The second is likelier: the buffer lives in the
+client's own address space at 0x100000000, which the kernel VM does not map, so this dump says nothing about
+the content. It does say the kernel cannot peer into a client IB, which is itself worth remembering.
+
+So the client-IB theory is **not** established, and the controlled result stands on its own: a submission
+this port builds itself, carrying one CP_THREAD_CONTROL and nothing else, does not retire a fence.
+
 ## Next step
 
-Add a filtered-submission mode in the driver: when a board asks for it, copy the client's IB into the ring
-walking its packets, drop CP_THREAD_CONTROL (0x17), and submit the rest through the plain path. Then check
-whether the fence retires and whether the presenter starts accepting frames (`gop offers` above zero).
-
-If the client's IB survives the drop, the GPU renders. If the CP then stops on something else in the IB, the
-next packet it stops on is the next thing to look at, and the same filter is the tool for it.
+1. **Make the kernel able to read a client IB** — map the client's BO into the kernel VM (or use the BO's CPU
+   mapping) — so the dump shows real words. Without that, nothing can be said about what Turnip sends.
+2. **Re-check the controlled result against `CP_RB_CNTL`**: 0x20c on this board. The a7xx bit that enables the
+   thread group is the one fact still missing, and the vendor KGSL module in the fuxi-firmware repository is
+   where to read it (`gen7_ringbuffer_init` at 0x8eb50 is its ring setup).
 
 If the BV window turns out not to be the answer, the alternative is to stop emitting CP_THREAD_CONTROL at
 all, which client IBs would also have to honour.
