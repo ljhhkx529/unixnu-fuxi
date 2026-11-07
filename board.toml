@@ -228,7 +228,7 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                # mode 8 and 9 reach) stays off. On the device mode 9 crashed with a data abort inside gpuOn() at
                # +0x7b8, so the write path is not established yet; see the note in the commit.
                "sheng-gpu-power=9",
-          "sheng-gpu-zap=0",
+          "sheng-gpu-zap=4",
           "fuxi-probe-prologue=1",
           "fuxi-probe-fence=4",
           "fuxi-probe-tctrl=0x08000000",

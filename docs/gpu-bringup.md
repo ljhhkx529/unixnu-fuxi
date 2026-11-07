@@ -508,3 +508,36 @@ command processor. So the plain path stays.
 
 mediaserverd is refused the accelerator by the sandbox. That is a separate client from the render server and
 does not explain fence 9, but it is the same shape of problem as the plugin's own grants and worth listing.
+
+
+## Round 7 continued: sheng-gpu-zap was left at 0
+
+The original device repository's own probe defaults `sheng-gpu-zap` to **4**, and its comment says why it
+matters:
+
+> sheng-gpu-zap: 0 off, 1 through init_image, 2 through mem_setup and the segment copy, 3 through
+> auth_and_reset, 4 (default) also CP_SET_SECURE_MODE 0.
+
+and
+
+> sheng-gpu-zap=0 skips the zap/secure-mode step … **The CP then stays in secure mode**.
+
+This port had it at 0, so the command processor was never taken out of secure mode. The probe does implement
+the step (`zapAndSecure()`, limit 4 reaches "TZ authenticated the zap shader and the CP left secure mode"), it
+was simply disabled. Restoring 4 moves the counters:
+
+    zap=0:  fence submitted 9  retired 8
+    zap=4:  fence submitted 10 retired 9
+
+one more submission through, so secure mode is part of the story — but one fence still never retires and
+device creation still stops at marker 0x6a3b. **zap=4 stays**: it matches the repository that worked.
+
+### Where the next round starts
+
+Two independent gaps are now measured, not guessed:
+
+1. device creation stops between marker 0x6a3b and the next one it would write (0x6E01 or 0x68f2), a range
+   that contains only `setenv`/`CFPreferences` calls and the shader-cache directory scan around
+   `native_bridge_metal_open`;
+2. one client submission (fence 9/10, a 1000-byte IB with an ordinary Turnip command stream) is queued and
+   never retired.
