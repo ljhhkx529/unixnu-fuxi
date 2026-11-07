@@ -161,17 +161,34 @@ and BV threads itself.
 So the port cannot render until this CP accepts CP_THREAD_CONTROL, and everything points at the BV thread
 having no ring. `native_adreno_plain_submit` is left at 0; it does not help.
 
+## Programming the whole BV window changes nothing
+
+Every candidate in the writable window takes the ring's address and control word:
+
+    bv programmed a40 200000 a42 20c a48 200000 a4a 20c a62 20c a66 0
+
+All six read back exactly what was written, so the BV block is now programmed as far as its registers can be
+reached — and plain + CP_THREAD_CONTROL still does not retire a fence. Programming the BV ring is therefore
+**not** what makes thread control work.
+
+That leaves two readings:
+
+- CP_THREAD_CONTROL is refused for a reason other than the BV ring (a CP mode bit the port never sets), or
+- the packet is fine and something else about a submission whose first packet is CP_THREAD_CONTROL is wrong.
+
+Both are testable without touching the driver: put the packet **second** in the submission (after a scratch
+write) and see whether the fence retires, then compare with it first.
+
 ## Next step
 
-The BV register map is the one missing fact. Three sources have now been tried: the SQE blob (no immediates),
-the vendor KGSL module (no register tables; its 0xa48 hits are .eh_frame), and write-probing (located the
-control word at 0xa62 and the rptr at 0xa66, but no base). What remains:
+One boot each, both read-only on the driver side:
 
-1. **Disassemble the vendor KGSL module's gen7 ring setup** — `msm_kgsl.ko` in the fuxi-firmware repository
-   carries `gen7_*` symbols and a full ringbuffer init path, so the CP_BV_RB_BASE offset is in its code as
-   a computed constant even if not as a literal.
-2. Failing that, **write the BR base into each candidate in 0xa40..0xa4f one per boot** and keep the one that
-   makes plain+`CP_THREAD_CONTROL` retire. Four boots at most, and 0xa48 (which held 0x20000000) is first.
+1. **Put CP_THREAD_CONTROL second** in the plain submission, after a CP_SCRATCH type-4 write (the packet every
+   working submission already starts with). If the fence retires, the packet is fine and its position is what
+   matters; if not, the packet itself is refused.
+2. **Compare against `CP_RB_CNTL`** (0x20c on this board) with the a7xx bit that enables the thread group. The
+   vendor KGSL module in the fuxi-firmware repository is the source for that bit, and its ringbuffer init path
+   is now located at `gen7_ringbuffer_init` (0x8eb50) for whoever picks this up.
 
 If the BV window turns out not to be the answer, the alternative is to stop emitting CP_THREAD_CONTROL at
 all, which client IBs would also have to honour.

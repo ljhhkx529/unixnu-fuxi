@@ -1667,15 +1667,25 @@ void gpuStart() {
          * dropped. Protection is a control word, not a range edit: turn it off, program the ring, turn it back. */
         /* The BV block mirrors BR's: BR is BASE 0x800, CNTL 0x802, RPTR_ADDR 0x804, RPTR 0x806, WPTR 0x807,
          * and a read sweep put BV's rptr at 0xa66 holding the same 0x4e as BR's, so BV sits at 0xa60. */
+        /* The BV block's writable window is 0xa40..0xa4f with the control word at 0xa62 and the rptr at
+         * 0xa66, but its BASE has not been located. Write the ring's address and control to every candidate
+         * in that window and see whether thread control starts working. */
+        const uint32_t cntl = gpuRd(0x00802);
+        const uint64_t base = gGpuBuffers[1].iova;
         gpuWr(A740_CP_PROTECT_CNTL, 0);
-        gpuWr64(0x00a60, gGpuBuffers[1].iova);
-        gpuWr(0x00a62, gpuRd(0x00802));
-        gpuWr64(0x00a64, gGpuBuffers[2].iova);
-        gpuWr(0x00a67, 0);
+        gpuWr64(0x00a40, base);
+        gpuWr(0x00a42, cntl);
+        gpuWr64(0x00a44, gGpuBuffers[2].iova);
+        gpuWr64(0x00a48, base);
+        gpuWr(0x00a4a, cntl);
+        gpuWr64(0x00a4c, gGpuBuffers[2].iova);
+        gpuWr(0x00a62, cntl);
+        gpuWr(0x00a66, 0);
         gpuWr(A740_CP_PROTECT_CNTL, (1u << 0) | (1u << 1) | (1u << 3));
-        printf("fuxi-gpu: bv programmed base %llx cntl %x rptr_addr %llx\n",
-               (unsigned long long)((uint64_t(gpuRd(0x00a61)) << 32) | gpuRd(0x00a60)), gpuRd(0x00a62),
-               (unsigned long long)((uint64_t(gpuRd(0x00a65)) << 32) | gpuRd(0x00a64)));
+        printf("fuxi-gpu: bv programmed a40 %llx a42 %x a48 %llx a4a %x a62 %x a66 %x\n",
+               (unsigned long long)((uint64_t(gpuRd(0x00a41)) << 32) | gpuRd(0x00a40)), gpuRd(0x00a42),
+               (unsigned long long)((uint64_t(gpuRd(0x00a49)) << 32) | gpuRd(0x00a48)), gpuRd(0x00a4a),
+               gpuRd(0x00a62), gpuRd(0x00a66));
     }
     gpuWr(A740_CP_SQE_CNTL, 1);
     // 5. a7xx_patch_pwrup_reglist (preemption list only; IFPC is off) and a7xx_cp_init through the ring.
