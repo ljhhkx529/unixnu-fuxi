@@ -1650,9 +1650,13 @@ void gpuStart() {
      * rewrites CP_RB_* and would otherwise leave the BV ring with no ring at all -- which is what makes every
      * CP_THREAD_CONTROL stop the command processor. See docs/gpu-bringup.md. */
     if (native_adreno_bv_ring) {
+        /* 0xa80..0xa87 lies inside the last (infinite) span of the CP's protect table, so writes there are
+         * dropped. Protection is a control word, not a range edit: turn it off, program the ring, turn it back. */
+        gpuWr(A740_CP_PROTECT_CNTL, 0);
         gpuWr64(0x00a80, gGpuBuffers[1].iova);
         gpuWr(0x00a82, gpuRd(0x00802));
         gpuWr(0x00a87, 0);
+        gpuWr(A740_CP_PROTECT_CNTL, (1u << 0) | (1u << 1) | (1u << 3));
     }
     gpuWr(A740_CP_SQE_CNTL, 1);
     // 5. a7xx_patch_pwrup_reglist (preemption list only; IFPC is off) and a7xx_cp_init through the ring.

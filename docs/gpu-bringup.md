@@ -84,12 +84,28 @@ The second result points at **`CP_PROTECT_CNTL`**: the port programs `A740_CP_PR
 hw_init, so a register outside the protected list is not writable by design. `CP_BV_APRIV_CNTL` (0xad0) does
 take, so the BV block is not wholly protected — 0xa80..0xa87 specifically is.
 
+## Protection opened: one register moved, two did not
+
+The CP's protect control word is `(1<<0)|(1<<1)|(1<<3)`, and bit 3 is LAST_SPAN_INF_RANGE, so everything
+above the last listed span — which includes 0xa80..0xa87 — is read-only. Turning the control word off,
+writing the ring, and turning it back on gives:
+
+    before:  ring bv a80 0 a81 0 a82 0 a87 2 a98 300008 a99 0 ad0 f
+    after:   ring bv a80 0 a81 0 a82 0 a87 0 a98 300008 a99 0 ad0 f
+
+**0xa87 accepted the write** (2 -> 0), so protection was indeed the blocker for it. **0xa80, 0xa81 and
+0xa82 still read back 0** after being written with the ring base and control, so those offsets are not the
+BV ring's BASE/CNTL. The test still fails, so zeroing the stale BV write pointer alone does not help.
+
+Conclusion: the BV ring cannot be programmed from this port until the a740 register map places its BASE and
+CNTL. The guess (0xa80/0xa82, mirroring BR's 0x800/0x802) is wrong.
+
 ## Next step
 
-Open the protected register window for the BV ring (`CP_PROTECT_REG_n` covering 0xa80..0xa87, or the
-equivalent range), program `CP_BV_RB_BASE`/`CP_BV_RB_CNTL`/`CP_BV_RB_WPTR`, and re-run the
-plain+`CP_THREAD_CONTROL` test — still the cheapest decisive check, because it needs no client and no
-framed path.
+Find the a740 positions of CP_BV_RB_BASE and CP_BV_RB_CNTL (the SQE firmware dump the port already keeps,
+`a740_sqe.fw` disassembly, or an Adreno register database), program them with protection off as above, and
+re-run the plain+`CP_THREAD_CONTROL` test. 0xa87 for the BV write pointer is one candidate confirmed by a
+successful write.
 
 If the BV window turns out not to be the answer, the alternative is to stop emitting CP_THREAD_CONTROL at
 all, which client IBs would also have to honour.
