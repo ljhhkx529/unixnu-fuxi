@@ -269,3 +269,32 @@ retire whatever they carry, the render server's does not. Next round starts ther
 | `native_adreno_plain_submit` | enabled by the probe; the framed fence's BV timestamp wait needs it |
 | `sheng-gpu-single-table=1` | enabled; clients run on the kernel table since the CP cannot switch |
 | BV register probing (`0xa40`..`0xa4f`, `0xa62`, `0xa66`) | programmed, not the blocker |
+
+
+## The client's submission is the only one left
+
+    late_fence live 1 submitted 9 retired 8      (at 45 s and again at 75 s)
+
+The render server's submission is fence 9. It is accepted, it is queued, and it never retires — the command
+processor stops on it and stays stopped. Everything this port builds itself retires (8 of 8).
+
+The plugin's own source already records this shape. `drivers/AdrenoMetal/NativeAdrenoUserTest.h`, in the
+replay harness:
+
+> The first packet is CP_THREAD_CONTROL(BOTH) and int-060 stopped on it alone. Before the prefixes, the same
+> two dwords run with BR only (1) and BV only (2), so a hang names the thread.
+
+So the packet that stops this CP is the same one everywhere, and Turnip's IBs carry it with SYNC_THREADS set.
+Our own submissions stopped carrying it and started retiring.
+
+The same comment records a second lead worth keeping: "Turnip's own fill of this IB stopped in int-062 while
+this replay retired", with two controls (device-mapped stores reusing an address after a free, and a
+write-combine memcpy). That is about how Turnip *fills* its BOs, not about the packets.
+
+### What round 2 should do
+
+Two ways to stop the client's IB carrying SYNC_THREADS, in order of cost:
+
+1. **Patch the IB in the driver's submit path** — copy the client's IB, walk its packets, clear bit 31 in every
+   CP_THREAD_CONTROL, submit the copy. The driver already has scratch space and the BOs' CPU mappings.
+2. **Patch Turnip's IB generation**, if the plugin builds it from source here.

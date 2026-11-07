@@ -131,7 +131,13 @@ extern volatile unsigned int native_adreno_fence_events_count;
 /* The CP stall snapshot Adreno740 keeps when a fence wait times out (NativeAdrenoSubmit.cpp): the ring words, the CP's
  * own state and the last command it fetched. */
 extern volatile unsigned int native_adreno_stall[29];
+extern int native_adreno_fences(unsigned int *submitted, unsigned int *retired);
 void fuxi_display_client_report(void) {
+    {
+        unsigned int s = 0, r = 0;
+        const int live = native_adreno_fences(&s, &r);
+        printf("fuxi-display: late_fence live %d submitted %u retired %u\n", live, s, r);
+    }
     struct FuxiMetalDiagFields *m = &native_adreno_metal_diag;
     printf("fuxi-metal: opens %u busy %u bad %u foreign %u/%u name_reads %u reader %s starter %s\n",
            m->opens, m->busy, m->bad, m->foreign_opens, m->foreign_type, m->name_reads,
