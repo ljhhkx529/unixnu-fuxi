@@ -1215,6 +1215,7 @@ extern "C" volatile uint32_t native_adreno_prologue_level;
 extern "C" volatile uint32_t native_adreno_no_bv;
 extern "C" volatile uint32_t native_adreno_fence_level;
 extern "C" volatile uint32_t native_adreno_bv_ring;
+extern "C" volatile uint32_t native_adreno_plain_submit;
 void framedSubmitProbe() {
     /* One framed submission per boot, which is all a stopped command processor allows: a refused submission
      * leaves it stopped, so every later one only queues. The two boot arguments choose how much prologue and
@@ -1237,7 +1238,7 @@ void framedSubmitProbe() {
         uint32_t h = 0;
         if (AdrenoPM4Type7(0x17, 1, &h) == AdrenoPM4Success && AdrenoPM4Type7(0x26, 0, &body[2]) == AdrenoPM4Success) {
             body[0] = h;
-            body[1] = 0;
+            body[1] = tctrl;   /* the payload this boot's test uses, from fuxi-probe-tctrl */
             uint32_t f = 0;
             const IOReturn ps = gRing.submit(body, 3, &f);
             if (ps) printf("fuxi-gpu: plain+tctrl submit %x\n", unsigned(ps));
@@ -1652,6 +1653,8 @@ void gpuStart() {
     const NativeAdrenoRingCache cache{nullptr, ringPublish, ringAcquire};
     native_adreno_fence_phys = gGpuBuffers[2].physical;   // the page the CP writes its timestamps to, for the UFS log
     native_adreno_bv_ring = 1;   /* see docs/gpu-bringup.md: fuxi never programs the BV ring */
+    /* native_adreno_plain_submit stays 0: handing the client IB straight to the ring still stalls, so the
+     * client's own IB carries what this CP refuses. See docs/gpu-bringup.md. */
     const IOReturn attached = gRing.attach(&rio, &cache, const_cast<uint8_t *>(gGpuCpu[1]), gGpuBuffers[1].bytes,
         gGpuBuffers[1].iova, const_cast<uint8_t *>(gGpuCpu[2]), gGpuBuffers[2].bytes, gGpuBuffers[2].iova);
     if (attached) {snprintf(row, sizeof row, "C4 ring attach %x", unsigned(attached)); setRow(7, row); { printf("fuxi-gpu: gpuStart exit %u cp %u\n", __LINE__, c[0]); return; }}

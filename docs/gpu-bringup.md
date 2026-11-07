@@ -145,14 +145,33 @@ So the BV control block is 0xa40..0xa4f plus the rptr at 0xa66, and it is **not*
 0xa48 holding 0x20000000 is the only base-like value found; it is the strongest candidate for a BV ring
 base (or for the address the CP uses for the BV side).
 
+## Thread control refuses every payload, and so does the client IB
+
+Two more boots:
+
+| test | result |
+| --- | --- |
+| plain submission + CP_THREAD_CONTROL with payload 0x80000001 (sync BR, the shipping value) | fence not retired |
+| client submissions routed through the **plain** path (`native_adreno_plain_submit=1`), so no framed prologue and no framed fence | `submitted 9 retired 6`: the three client submissions queue and never retire |
+
+The first closes the loophole in the earlier plain+tctrl result, which had used payload 0. The second says
+the client's own IB carries the same refused packet — which is expected, since Turnip synchronises the BR
+and BV threads itself.
+
+So the port cannot render until this CP accepts CP_THREAD_CONTROL, and everything points at the BV thread
+having no ring. `native_adreno_plain_submit` is left at 0; it does not help.
+
 ## Next step
 
-1. **Write the BR ring's base and control into 0xa48 and 0xa42** (the two most register-like positions in the
-   writable window) and re-run the plain+`CP_THREAD_CONTROL` test. 0xa48 previously held 0x20000000, a value
-   of the right shape for a ring base.
-2. In parallel, **dump the client's own IB** from `native_adreno_ring_log` to see whether Turnip's commands
-   contain CP_THREAD_CONTROL at all. If they do not, the fix is to keep client submissions on the plain path
-   (`submitFramed` -> `submit`) and the framed machinery can stay unused until the thread control is solved.
+The BV register map is the one missing fact. Three sources have now been tried: the SQE blob (no immediates),
+the vendor KGSL module (no register tables; its 0xa48 hits are .eh_frame), and write-probing (located the
+control word at 0xa62 and the rptr at 0xa66, but no base). What remains:
+
+1. **Disassemble the vendor KGSL module's gen7 ring setup** — `msm_kgsl.ko` in the fuxi-firmware repository
+   carries `gen7_*` symbols and a full ringbuffer init path, so the CP_BV_RB_BASE offset is in its code as
+   a computed constant even if not as a literal.
+2. Failing that, **write the BR base into each candidate in 0xa40..0xa4f one per boot** and keep the one that
+   makes plain+`CP_THREAD_CONTROL` retire. Four boots at most, and 0xa48 (which held 0x20000000) is first.
 
 If the BV window turns out not to be the answer, the alternative is to stop emitting CP_THREAD_CONTROL at
 all, which client IBs would also have to honour.
