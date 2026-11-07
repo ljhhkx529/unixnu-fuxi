@@ -1237,7 +1237,23 @@ extern "C" volatile uint32_t native_adreno_plain_submit;
 extern "C" volatile uint32_t native_adreno_no_thread_sync;
 extern "C" volatile uint32_t native_adreno_bv_to_br;
 extern "C" volatile uint32_t native_adreno_drop_empty_ib;
+extern "C" volatile uint32_t native_adreno_drop_wait_mem;
 extern "C" int (*native_adreno_dram_write32)(uint64_t, uint32_t);
+/* What the command processor itself reports about the indirect buffer it is inside: [0]/[1] CP_IB1_BASE, [2] its
+ * remaining budget in dwords, [3]/[4] CP_IB2_BASE, [5] its budget, [6]/[7] CP_RB_WPTR/CP_RB_RPTR. A budget that
+ * stopped part-way through names the byte the stream died at. */
+extern "C" void native_gpu_ib_state(uint32_t *out) {
+    if (!out) return;
+    /* A6XX-A7XX (adreno/a6xx.xml): IB1 0x0928/0x092a, IB2 0x092b/0x092d, SDS 0x092e/0x0930,
+     * MRB 0x0931/0x0933, VSD 0x0934. A remaining size that stopped part-way names the byte the stream died at,
+     * and which of them is live names the mechanism the CP is inside. */
+    out[0] = gpuRd(0x0928); out[1] = gpuRd(0x0929); out[2] = gpuRd(0x092a);
+    out[3] = gpuRd(0x092b); out[4] = gpuRd(0x092c); out[5] = gpuRd(0x092d);
+    out[6] = gpuRd(0x092e); out[7] = gpuRd(0x092f); out[8] = gpuRd(0x0930);
+    out[9] = gpuRd(0x0931); out[10] = gpuRd(0x0932); out[11] = gpuRd(0x0933);
+    out[12] = gpuRd(0x0934);
+    out[13] = gpuRd(0x0807); out[14] = gpuRd(0x0806);
+}
 void framedSubmitProbe() {
     /* One framed submission per boot, which is all a stopped command processor allows: a refused submission
      * leaves it stopped, so every later one only queues. The two boot arguments choose how much prologue and
@@ -1681,6 +1697,7 @@ void gpuStart() {
      * before it finishes at all (fence live 0, marks 0). See docs/gpu-bringup.md. */
     native_adreno_no_thread_sync = 1;   /* SYNC_THREADS hangs this CP; the init's own payload has bit 27 only */
     native_adreno_bv_to_br = 1;   /* the BV thread has no runnable ring here, and naming it stops the CP */
+    native_adreno_drop_wait_mem = 1;   /* the CP sits on the stream's final CP_WAIT_MEM_WRITES */
     /* native_adreno_drop_empty_ib stays 0: decoding the stream showed those indirect buffers are filled by the
      * command processor itself (CP_MEM_WRITE then CP_INDIRECT_BUFFER), so they are empty at submit time by
      * design and rewriting them to NOP destroys the idiom. See docs/gpu-bringup.md. */
@@ -1691,6 +1708,14 @@ void gpuStart() {
     const IOReturn attached = gRing.attach(&rio, &cache, const_cast<uint8_t *>(gGpuCpu[1]), gGpuBuffers[1].bytes,
         gGpuBuffers[1].iova, const_cast<uint8_t *>(gGpuCpu[2]), gGpuBuffers[2].bytes, gGpuBuffers[2].iova);
     if (attached) {snprintf(row, sizeof row, "C4 ring attach %x", unsigned(attached)); setRow(7, row); { printf("fuxi-gpu: gpuStart exit %u cp %u\n", __LINE__, c[0]); return; }}
+    /* EXPERIMENT (fuxi-cp-protect=0): with LAST_SPAN_INF_RANGE set, every register above the last span is read-only
+     * and a write there is dropped in silence. If the client's draw state is set through such a write, the block it
+     * configures never signals completion and the stream waits for ever. Turning protection off answers that. */
+    {
+        unsigned keep = 1;
+        PE_parse_boot_argn("fuxi-cp-protect", &keep, sizeof keep);
+        if (!keep) { gpuWr(A740_CP_PROTECT_CNTL, 0); printf("fuxi-gpu: cp protect off\n"); }
+    }
     gpuWr64(A740_CP_BV_RB_RPTR_ADDR, gGpuBuffers[2].iova + 8);   // rbmemptr(bv_rptr)
     /* BV ring: base/cntl/wptr, mirroring the BR ring. Written here, after the CP init, because the init
      * rewrites CP_RB_* and would otherwise leave the BV ring with no ring at all -- which is what makes every

@@ -964,3 +964,35 @@ stopped the bring-up outright.
 
 The honest next step is either to make the interesting capture reproducible (pin the client to one workload) or
 to accept that the next real advance needs the BV ring, which this port has no evidence for.
+
+
+## Round 21: the CP consumed the whole IB and never came back
+
+The right registers exist and this port was reading the wrong ones. For A6XX-A7XX (adreno/a6xx.xml) they are
+CP_IB1_BASE 0x0928 with **CP_IB1_REM_SIZE 0x092a**, IB2 0x092b/0x092d, **SDS** 0x092e/0x0930, **MRB** 0x0931/0x0933 and
+VSD 0x0934. Reading them after the stall:
+
+    cp ib1 100028000 rem 0   ib2 0  rem 0   sds 0  rem 0
+    cp mrb 8000000018002000 rem 0   vsd 0   wptr 79 rptr 72
+
+Three facts, and they change the picture:
+
+1. **CP_IB1_BASE holds the client's IB address and REM_SIZE is 0** — the command processor fetched and consumed
+   every one of the 1000 bytes. It is not stuck in the middle of the stream.
+2. **The ring's read pointer has not moved past the indirect-buffer packet** (wptr 79, rptr 72: seven dwords
+   outstanding, which is exactly one submission). So the CP finished the IB and did not resume the ring.
+3. Nothing else is live: IB2, SDS and MRB all have zero remaining size, so the CP is not sitting in a draw-state
+   or visibility-stream fetch.
+
+CP_PROTECT was ruled out in the same round: with `fuxi-cp-protect=0` the counters are unchanged
+(`submitted 10 retired 9`), so no register write is being dropped silently.
+
+### What the stream ends with
+
+The last packets of the decoded IB are CP_EVENT_WRITE {0x21}, {0x20}, {0x31} and then **CP_WAIT_MEM_WRITES**. A
+wait that never finishes would look exactly like this: the IB cursor at its end, the ring not resuming, no fault.
+The experiment to prove it — rewriting those waits to CP_NOP — was built, but this boot's recorded IB contained
+none, so it has not run yet.
+
+That is the whole remaining question, and it is now narrow: **is the stream waiting for memory writes that never
+land, and if so, which write.**

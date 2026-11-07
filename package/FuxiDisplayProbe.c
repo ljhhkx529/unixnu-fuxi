@@ -129,10 +129,12 @@ extern volatile unsigned int native_adreno_ib_peek;
 extern volatile unsigned int native_adreno_bv_patched[4];
 extern volatile unsigned int native_adreno_ib_ind[16];
 extern volatile unsigned int native_adreno_empty_ib[4];
+extern void native_gpu_ib_state(unsigned int *out);
 extern volatile unsigned int native_adreno_amble[16];
 extern volatile unsigned int native_adreno_ib_bufs[8][10];
 extern volatile unsigned int native_adreno_ib_bufs_count;
 extern volatile unsigned int native_adreno_ib_hist[16][6];
+extern volatile unsigned int native_adreno_wait_mem[4];
 extern volatile unsigned int native_adreno_prologue[96];
 extern volatile unsigned int native_adreno_prologue_info[4];
 /* The fence event ring (Adreno740 NativeAdrenoSubmit.cpp): type 1 submit, 2 wait-enter, 3 wait-complete, 4 wait-timeout. */
@@ -154,6 +156,15 @@ void fuxi_display_client_report(void) {
            native_legacy_client_calls, native_legacy_client_pid, native_legacy_frame_count);
     printf("fuxi-display: gop offers %llu done %llu fail %llu abandon %llu\n",
            native_gop_gpu_offers, native_gop_gpu_completions, native_gop_gpu_failures, native_gop_gpu_abandoned);
+    {
+        unsigned int ib[16] = {0};
+        native_gpu_ib_state(ib);
+        printf("fuxi-metal: wait_mem dropped %u last_at %u\n", native_adreno_wait_mem[0], native_adreno_wait_mem[1]);
+    printf("fuxi-display: cp ib1 %x%08x rem %x ib2 %x%08x rem %x sds %x%08x rem %x\n",
+               ib[1], ib[0], ib[2], ib[4], ib[3], ib[5], ib[7], ib[6], ib[8]);
+        printf("fuxi-display: cp mrb %x%08x rem %x vsd %x wptr %x rptr %x\n",
+               ib[10], ib[9], ib[11], ib[12], ib[13], ib[14]);
+    }
     printf("fuxi-display: gop_wait calls %llu timeouts %llu last_ms %llu\n",
            native_gop_wait_stats[0], native_gop_wait_stats[1], native_gop_wait_stats[2]);
     printf("fuxi-display: gop_handoff calls %llu op %llu memory %llu status %x\n",
