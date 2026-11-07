@@ -1209,17 +1209,29 @@ void perfctrSramProbe() {
 // One framed submission carrying a single no-op packet (CP_WAIT_FOR_IDLE): the prologue, the fence, nothing
 // else. If its fence retires, the framed prologue is sound and whatever stops the command processor is in
 // the client's own IB; if it does not, the prologue itself is where it stops.
+extern "C" volatile uint32_t native_adreno_reset_bits;
+extern "C" volatile uint32_t native_adreno_thread_ctrl;
 void framedSubmitProbe() {
     uint32_t w[1] = {};
     if (AdrenoPM4Type7(0x26, 0, w) != AdrenoPM4Success) { printf("fuxi-gpu: framed pm4 failed\n"); return; }
     const NativeAdrenoRingClock clk{nullptr, ringNow, ringIdle};
-    uint32_t fence = 0;
-    const IOReturn s = gRing.submitFramed(w, 1, &fence);
-    printf("fuxi-gpu: framed submit %x fence %u\n", unsigned(s), fence);
-    if (s) return;
-    uint32_t seen = 0;
-    const uint32_t r = gRing.wait(fence, &clk, 200000, &seen);
-    printf("fuxi-gpu: framed wait %x seen %x\n", r, seen);
+    /* The prologue's first CP_THREAD_CONTROL is the one packet a plain submission never emits, so it is the
+     * first candidate when the framed path stalls. Swept over every thread selection it can name, in one boot:
+     * sync BR (the shipping value), sync both, both, BR alone, none. */
+    static const uint32_t ctrls[] = {0x80000001u, 0x80000003u, 0x3u, 0x1u, 0x0u};
+    for (unsigned i = 0; i < sizeof ctrls / sizeof ctrls[0]; ++i) {
+        native_adreno_thread_ctrl = ctrls[i];
+        native_adreno_reset_bits = 0xf;
+        gRing.requestContextReset();
+        uint32_t fence = 0;
+        const IOReturn s = gRing.submitFramed(w, 1, &fence);
+        if (s) { printf("fuxi-gpu: thread ctrl %x submit %x\n", ctrls[i], unsigned(s)); continue; }
+        uint32_t seen = 0;
+        const uint32_t r = gRing.wait(fence, &clk, 100000, &seen);
+        printf("fuxi-gpu: thread ctrl %x fence %u wait %x seen %x\n", ctrls[i], fence, r, seen);
+    }
+    native_adreno_thread_ctrl = 0;
+    native_adreno_reset_bits = 0xf;
 }
 void publishAndWrapperTest(bool rounds) {
     char row[64];
