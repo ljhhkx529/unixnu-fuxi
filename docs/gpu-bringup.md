@@ -421,3 +421,24 @@ That is render-side work in `drivers/AdrenoMetal`, not kernel work.
 | plugin ABI path | reaches step 34, error 0 |
 | display path | CPU copy, by design until a client asks |
 | probe report function | rewritten to one line per counter (the old block-per-diagnostic version stopped compiling under -Wshadow/-Wconversion) |
+
+
+## Round 5: the scanout thread exists, and its first step is the suspect
+
+The production plugin does start the GPU scanout: `NativeAdrenoMetalPlugin.mm` spawns a thread that sleeps
+three seconds and calls `bridgephase::serveScanout(gpu, device)`. The transport it would use is already
+written (`NativeMetalBridgePhase.h`: `link.method(0x7000 + method, …)` and `map(g.conn, 0x5343, …)`), and the
+client (`gpuscanout::Client`) is a drop-in `open` + `serveOne` loop.
+
+`serveScanout` marks its progress with `gpu.mark(0x6700)`, `0x6701`, `0x6702`, then `0x6710`..`0x6715` as the
+client opens, `0x6720` on the first wait and `0x6730`/`0x6731` per frame. The driver keeps the last sixteen
+markers, and **none of them is in 0x67xx** — the newest are `3001 3002 3003 3004 42d5 50ff` repeating. So the
+thread runs and stops before its first marker, or its markers never arrive.
+
+Its very first step after marking is to open the accelerator a second time:
+
+    const int openResult = link.openFn ? link.openFn(link.port, mach_task_self(), 0x4148, &link.conn) : -1;
+
+Type **0x4148**, while the render server's own connection uses 0x4147 and the driver grants
+`NativeAdrenoPluginOpenType`. The driver's open path refuses any other type as foreign. That is the first thing
+to test next round: whether the scanout connection is being opened with a type the driver drops.

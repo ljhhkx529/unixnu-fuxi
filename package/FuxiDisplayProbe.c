@@ -157,6 +157,13 @@ void fuxi_display_client_report(void) {
                d->name_reader[0] ? d->name_reader : "(none)", d->starter[0][0] ? d->starter[0] : "(none)");
     }
     {
+        struct FuxiMetalDiagFields *d = &native_adreno_metal_diag;
+        printf("fuxi-metal: scanout marks %u:", d->marks_total);
+        for (unsigned k = 0; k < 16; ++k) printf(" %x", d->marks[k]);
+        printf("\n");
+        printf("fuxi-metal: scanout text %s\n", d->report2[0] ? d->report2 : "(none)");
+    }
+    {
         char methodLine[200]; unsigned used = 0;
         for (unsigned k = 0; k < 20; ++k) {
             if (!native_adreno_method_stats[k][0] || used > 160) continue;
