@@ -1221,6 +1221,11 @@ void publishAndWrapperTest(bool rounds) {
     const uint32_t opened = native_adreno_publish_stats(&closed);
     printf("fuxi-gpu: publish vm %d rc %x timer %x opened %u closed %u\n",
            vm ? 1 : 0, unsigned(published), unsigned(timer), opened, closed);
+    /* The address-space geometry the clients get: the GPU's input size decides the aperture, and a client's
+     * window is the aperture above GpuClientVaStart, so an ias of 32 leaves no window at all. */
+    printf("fuxi-gpu: publish ias %u va_start %llx va_size %llx client_va_start %llx\n",
+           ias, (unsigned long long)gDeviceInfo.va_start, (unsigned long long)gDeviceInfo.va_size,
+           (unsigned long long)GpuClientVaStart);
     // P s<publish IOReturn> w<steps ok>/<steps> e<first error>@<step> v<r1>/<r2 dwords of 4> m<clientMemoryForType> o<opened>/<closed>
     snprintf(row, sizeof row, "P s%x w%d/%d e%x@%d v%d/%d m%x o%u/%u s%x", unsigned(published), ok, n, unsigned(err), errAt, v1, v2,
              memStatus, opened, closed, gpuFsr());
