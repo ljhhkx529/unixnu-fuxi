@@ -1190,6 +1190,22 @@ void openCpAperture() {
     const ScmRes r = scmCall(0x42000c1bu, 4, 0xffff0000u | (0u << 8) | 0u, 0xffffffffu, 0xffffffffu, 0xffffffffu);
     native_adreno_cp_aperture[1] = uint32_t(r.a0);
 }
+// RBBM_PERFCTR_SRAM_INIT (0x050e) and its status bit (0x050f bit 0): the framed prologue writes the command
+// and then waits for the status with CP_WAIT_REG_MEM. Driven here from the CPU, outside the ring, so the
+// answer says whether the wait is on a signal this board ever raises.
+void perfctrSramProbe() {
+    const uint32_t before = gpuRd(0x050f);
+    gpuWr(0x050e, 1);
+    __asm__ volatile("dsb sy" ::: "memory");
+    uint32_t after = 0;
+    unsigned polls = 0;
+    for (; polls < 2000; ++polls) {
+        after = gpuRd(0x050f);
+        if (after & 1) break;
+        IODelay(10);
+    }
+    printf("fuxi-gpu: perfctr_sram status before %x after %x polls %u\n", before, after, polls);
+}
 void publishAndWrapperTest(bool rounds) {
     char row[64];
     if (!native_adreno_publish || !native_adreno_published_service || !native_adreno_publish_stats) {setRow(5, "P nolink"); return;}
@@ -1203,6 +1219,7 @@ void publishAndWrapperTest(bool rounds) {
     coherenceProbe(vm);
     const IOReturn timer = gTimer.attach(&gTimerIo, NativeAdrenoTimeCp);
     {unsigned wc = 1; PE_parse_boot_argn("sheng-gpu-wc", &wc, sizeof wc); native_adreno_wc_enabled = wc ? 1 : 0;}
+    perfctrSramProbe();
     openCpAperture();
     // The GPU's input address size. A user connection's window is (1 << ias) - GpuClientVaStart, and the driver refuses a
     // zero window with kIOReturnNoResources, so a hardcoded 32 left every Metal client unable to mount.

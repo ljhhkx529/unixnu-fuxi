@@ -114,6 +114,13 @@ extern volatile unsigned int native_adreno_cp_check[6];
  * [18..20] a fault the switch left latched (FAR lo/hi, FSYNR0), [21] the status after clearing it. */
 extern volatile unsigned int native_adreno_cp_image[22];
 extern volatile unsigned int native_adreno_table_switches[8];
+/* The process table createVm built, read back through the VM: [0] a buffer whose spans are not all mapped,
+ * [1] its index, [2] the status, [3] how many were checked, [4]/[5] the ring's IOVA and bytes there. */
+/* The framed prologue as written into the ring (Adreno740 NativeAdrenoRing.cpp emitPrologue):
+ * [0] words, [1] reset, [2] table, [3] stamps, then the words. */
+extern volatile unsigned int native_adreno_vm_check[8];
+extern volatile unsigned int native_adreno_prologue[96];
+extern volatile unsigned int native_adreno_prologue_info[4];
 /* The fence event ring (Adreno740 NativeAdrenoSubmit.cpp): type 1 submit, 2 wait-enter, 3 wait-complete, 4 wait-timeout. */
 extern volatile unsigned int native_adreno_fence_events[32][4];
 extern volatile unsigned int native_adreno_fence_events_count;
@@ -165,6 +172,20 @@ void fuxi_display_client_report(void) {
                native_adreno_cp_image[21]);
         /* [0] CP_SMMU_TABLE_UPDATE packets the ring emitted, [2]/[3] VMs created/destroyed, [4]/[5] live now/peak,
          * [6] the last table error, [7] createVm's step (0 on success). */
+        {
+            const unsigned n = native_adreno_prologue_info[0];
+            printf("fuxi-metal: prologue words %u reset %u table %u stamps %u\n",
+                   n, native_adreno_prologue_info[1], native_adreno_prologue_info[2], native_adreno_prologue_info[3]);
+            for (unsigned i = 0; i < n && i < 96; i += 8) {
+                char line[160]; int m = 0;
+                for (unsigned j = i; j < i + 8 && j < n; ++j)
+                    m += snprintf(line + m, sizeof line - m, " %08x", native_adreno_prologue[j]);
+                printf("fuxi-metal:   +%02u%s\n", i, line);
+            }
+        }
+        printf("fuxi-metal: vm_check fail %u at %u st %x checked %u ring_iova %x ring_bytes %x\n",
+               native_adreno_vm_check[0], native_adreno_vm_check[1], native_adreno_vm_check[2],
+               native_adreno_vm_check[3], native_adreno_vm_check[4], native_adreno_vm_check[5]);
         printf("fuxi-metal: tbl_switches %u %u %u %u %u %u %u %u\n",
                native_adreno_table_switches[0], native_adreno_table_switches[1],
                native_adreno_table_switches[2], native_adreno_table_switches[3],
