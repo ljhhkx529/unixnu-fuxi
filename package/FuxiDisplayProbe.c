@@ -163,6 +163,13 @@ void fuxi_display_client_report(void) {
                native_adreno_cp_image[14], native_adreno_cp_image[15], native_adreno_cp_image[17],
                native_adreno_cp_image[18], native_adreno_cp_image[19], native_adreno_cp_image[20],
                native_adreno_cp_image[21]);
+        /* [0] CP_SMMU_TABLE_UPDATE packets the ring emitted, [2]/[3] VMs created/destroyed, [4]/[5] live now/peak,
+         * [6] the last table error, [7] createVm's step (0 on success). */
+        printf("fuxi-metal: tbl_switches %u %u %u %u %u %u %u %u\n",
+               native_adreno_table_switches[0], native_adreno_table_switches[1],
+               native_adreno_table_switches[2], native_adreno_table_switches[3],
+               native_adreno_table_switches[4], native_adreno_table_switches[5],
+               native_adreno_table_switches[6], native_adreno_table_switches[7]);
         printf("fuxi-metal: cp_check %x/%x/%x/%x/%x/%x switching %x/%x\n",
                native_adreno_cp_check[0], native_adreno_cp_check[1], native_adreno_cp_check[2],
                native_adreno_cp_check[3], native_adreno_cp_check[4], native_adreno_cp_check[5],
