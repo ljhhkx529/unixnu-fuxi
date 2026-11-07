@@ -1580,7 +1580,10 @@ void gpuStart() {
         if (selftest) userClientTest();
         setRow(5, "P start");
         publishAndWrapperTest(selftest);
-        if (bootArg("sheng-gpu-metal", 0) == 1) publishMetal();
+        if (bootArg("sheng-gpu-metal", 0) == 1) {
+        publishMetal();
+        printf("fuxi-gpu: gpuStart metal status %x stage %d kext %x\n", unsigned(gMetalStatus), gMetalStage, unsigned(gMetalKext));
+    }
         if (bootArg("sheng-gpu-dcvs", 0)) startGpuDcvs();
     }
 }

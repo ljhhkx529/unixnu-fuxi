@@ -520,9 +520,26 @@ extern void native_touch_probe(void);
 extern "C" void sheng_gpu_power_probe(void);
 extern "C" void fuxi_gpu_addon_report(void);
 extern "C" void fuxi_gpu_power_report(void);
+extern "C" void native_hid_input_probe(void);
+extern "C" const char *fuxi_hid_row(char *out, size_t size);
+extern "C" bool fuxi_hid_settled(void);
 void native_legacy_display_late_probe(void) {
     native_keystore_probe();
     native_touch_probe();
+    /* The HID stack, as sheng and old start it from this probe: the digitizer device is published before the
+     * display so backboardd finds an IOHIDDevice when it starts. */
+    native_hid_input_probe();
+    {
+        /* The HID start runs on its own thread; report where it got to, 20 s after it began or as soon as it
+         * settles, so a stalled or refused start is visible in the serial log. */
+        thread_t t = nullptr;
+        if (kernel_thread_start([](void *, wait_result_t) -> void {
+                for (int i = 0; i < 40 && !fuxi_hid_settled(); ++i) IOSleep(500);
+                char row[200];
+                printf("fuxi-display: hid%s\n", fuxi_hid_row(row, sizeof row));
+                return;
+            }, nullptr, &t) == KERN_SUCCESS) thread_deallocate(t);
+    }
     fuxi_gpu_addon_report();
     fuxi_gpu_power_report();
     IOService *display=pendingLegacyDisplay;if(!display)return;pendingLegacyDisplay=nullptr;
@@ -590,9 +607,15 @@ void native_legacy_display_late_probe(void) {
                                 // SpringBoard found no display and crashed with the presenter attached there, registered or not).
                                 IOService *home=IOService::getResourceService();
                                 bool handoffAttached=false;
+                                printf("fuxi-display: handoff create %d home %d\n", handoff?1:0, home?1:0);
+                                const bool hInit = handoff && handoff->init();
                                 if(handoff && home)native_gop_presenter_set_source(handoff,nub);
-                                if(handoff && home && handoff->init() && (handoffAttached=handoff->attach(home)) && handoff->start(home))gpuHandoffPresenter=handoff;
+                                handoffAttached = hInit && handoff->attach(home);
+                                const bool hStart = handoffAttached && handoff->start(home);
+                                printf("fuxi-display: handoff init %d attach %d start %d\n", hInit?1:0, handoffAttached?1:0, hStart?1:0);
+                                if(handoff && home && hInit && handoffAttached && hStart)gpuHandoffPresenter=handoff;
                                 else {if(handoffAttached)handoff->detach(home);OSSafeReleaseNULL(handoff);}
+                                printf("fuxi-display: handoff presenter %d\n", gpuHandoffPresenter?1:0);
                             }
                         }
                         finishUnitScalePolicy(true);

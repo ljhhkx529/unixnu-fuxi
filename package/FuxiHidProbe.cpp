@@ -2,7 +2,7 @@
 // Starts the touch digitizer of ShengHidInput (NativeHidInput.cpp, an unchanged copy of UniXNU ShengHidInput 71a40e7) for the
 // fuxi touch probe and provides the three board functions it calls. It follows UniXNU-sheng package/HidInputProbe.cpp
 // (native_hid_input_probe, native_hid_live_checkpoint) without sheng's display hooks and Home-button automation: fuxi has
-// no button driver, so only the touch-only device (native_hid_touch_allocate) is created. FuxiTouchProbe.cpp calls
+// no button driver, so the keyboard-first combined device is created. FuxiTouchProbe.cpp calls
 // fuxi_hid_start once sensing runs, with the boot argument fuxi-touch-hid=1; the device then turns every contact set the
 // probe publishes into a digitizer report (native_touch_hid_reports, the hid counter of the touch report).
 #include <IOKit/IOService.h>
@@ -21,6 +21,7 @@ extern kmod_info_t g_kernel_kmod_info;
 // registers derives from IOHIDDevice, which exists only once IOHIDFamily is loaded.
 extern "C" void native_hid_static_init(void) __asm__("__GLOBAL__sub_I_NativeHidInput.cpp");
 extern "C" IOService *native_hid_touch_allocate(void);
+extern "C" IOService *native_hid_input_allocate(void);   /* the keyboard-first combined device */
 extern "C" {
 extern kern_return_t OSKextLoadKextWithIdentifier(const char *);
 // [0] step reached (1 IOHIDFamily, 2 IOHIDEventDriver, 3 IOHIDResource, 4 metaclass, 5 device, 6 started), [1] IOHIDFamily
@@ -106,7 +107,10 @@ static void startThread(void *, wait_result_t) {
     if (handle) {native_hid_static_init(); st[5] = OSMetaClass::postModLoad(handle);}
     if (!handle || st[5]) {st[7] = 4; resource->release(); return;}
     st[0] = 5;
-    IOService *device = native_hid_touch_allocate();
+    // The keyboard-first combined device, which is what unixnu-fuxi-old uses for fuxi touch: on this kernel the
+    // standalone digitizer (native_hid_touch_allocate) starts but no IOHIDEventDriver ever attaches to it, while
+    // the combined descriptor is the arrangement the event driver does attach to.
+    IOService *device = native_hid_input_allocate();
     bool ok = device && device->metaCast("IOHIDDevice");
     if (ok) {st[6] = 1; ok = device->init();}
     if (ok) {st[6] = 2; ok = device->attach(resource);}
@@ -131,6 +135,13 @@ extern "C" void fuxi_hid_start(void) {
     if (kernel_thread_start(startThread, nullptr, &thread) == KERN_SUCCESS) thread_deallocate(thread);
     else fuxi_hid_state[7] = 9;
 }
+
+// The entry UniXNU-sheng's and unixnu-fuxi-old's display probes call (native_hid_input_probe): start the
+// digitizer without waiting for a touch. The touch probe also calls fuxi_hid_start once sensing runs, and
+// both go through the same one-shot guard, so the device is created once whichever comes first. Without
+// this entry the HID stack only starts after a contact, and AppleUserHIDEventDriver times out waiting for
+// a server before any touch arrives.
+extern "C" void native_hid_input_probe(void) { fuxi_hid_start(); }
 
 // The start has come to an end: the device runs and an event driver has attached, a step failed, or 20 s have passed. The
 // touch probe ends its run only at a lift after this, so that the touch it reports went through the HID device.
