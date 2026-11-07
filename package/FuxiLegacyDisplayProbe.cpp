@@ -522,6 +522,7 @@ extern "C" void fuxi_gpu_addon_report(void);
 extern "C" void fuxi_gpu_power_report(void);
 extern "C" void native_hid_input_probe(void);
 extern "C" const char *fuxi_hid_row(char *out, size_t size);
+extern "C" void fuxi_display_client_report(void);
 extern "C" bool fuxi_hid_settled(void);
 void native_legacy_display_late_probe(void) {
     native_keystore_probe();
@@ -529,6 +530,17 @@ void native_legacy_display_late_probe(void) {
     /* The HID stack, as sheng and old start it from this probe: the digitizer device is published before the
      * display so backboardd finds an IOHIDDevice when it starts. */
     native_hid_input_probe();
+    {
+        /* Later, once userland has had time to open the display and the presenter, report who did. */
+        thread_t c = nullptr;
+        if (kernel_thread_start([](void *, wait_result_t) -> void {
+                IOSleep(45000);
+                fuxi_display_client_report();
+                IOSleep(30000);
+                fuxi_display_client_report();
+                return;
+            }, nullptr, &c) == KERN_SUCCESS) thread_deallocate(c);
+    }
     {
         /* The HID start runs on its own thread; report where it got to, 20 s after it began or as soon as it
          * settles, so a stalled or refused start is visible in the serial log. */

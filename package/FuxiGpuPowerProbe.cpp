@@ -95,6 +95,7 @@ extern "C" NativeAdrenoVm *NativeAdrenoGpuContextVm() __attribute__((weak));
 extern "C" IOReturn native_adreno_publish(NativeAdrenoVm *, NativeAdrenoSubmit *, NativeAdrenoRing *, const NativeAdrenoRingClock *,
     const NativeAdrenoTimer *, const NativeAdrenoAbiDeviceInfo *, uint32_t, uint32_t) __attribute__((weak));
 extern "C" uint32_t native_adreno_publish_stats(uint32_t *) __attribute__((weak));
+extern "C" unsigned NativeAdrenoGpuContextInputBits() __attribute__((weak));
 // The staged AGXAccelerator (drivers/NativeAdreno/NativeAdrenoAccelerator.cpp): its static initializer runs only after the
 // original IOGPUFamily kext has loaded, because the parent metaclass does not exist before that.
 extern "C" void native_adreno_accelerator_static_init(void) __asm__("__GLOBAL__sub_I_NativeAdrenoAccelerator.cpp") __attribute__((weak));
@@ -521,7 +522,7 @@ void cpRow(const char *what) {
 // the returned x6 (ARM_SMCCC_QUIRK_QCOM_A6); QCOM_SCM_V2_EBUSY (-12) retries after 30 ms, at most 20 times. WAITQ_SLEEP
 // (2) needs the SCM wait-queue interrupt, which is not wired here, so it is returned to the caller as is.
 struct ScmRes {int64_t a0; uint64_t a1; uint32_t ms, resumes;};
-ScmRes scmCall(uint64_t fn, uint64_t arginfo, uint64_t p0, uint64_t p1, uint64_t p2) {
+ScmRes scmCall(uint64_t fn, uint64_t arginfo, uint64_t p0, uint64_t p1, uint64_t p2, uint64_t p3 = 0) {
     uint64_t first = fn, a6 = 0;
     const uint64_t start = ringNow(nullptr);
     auto done = [&](int64_t a0, uint64_t a1, unsigned resumes) {
@@ -529,7 +530,7 @@ ScmRes scmCall(uint64_t fn, uint64_t arginfo, uint64_t p0, uint64_t p1, uint64_t
     };
     for (unsigned resume = 0, busy = 0; resume < 10000;) {
         register uint64_t x0 asm("x0") = first, x1 asm("x1") = arginfo, x2 asm("x2") = p0, x3 asm("x3") = p1;
-        register uint64_t x4 asm("x4") = p2, x5 asm("x5") = 0, x6 asm("x6") = a6, x7 asm("x7") = 0;
+        register uint64_t x4 asm("x4") = p2, x5 asm("x5") = p3, x6 asm("x6") = a6, x7 asm("x7") = 0;
         asm volatile("smc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3), "+r"(x4), "+r"(x5), "+r"(x6), "+r"(x7)
                      :: "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
         if (x0 == 1) {first = 1; a6 = x6; ++resume; continue;}
@@ -975,7 +976,7 @@ NativeAdrenoTimer gTimer;
 // UBWC 4.0 / swizzle levels 2+3 / bank bit 16 / macrotile from ubwc_config.c sm8550_data, the GMEM window and trap base from the
 // values hw_init programs above. The VA window keeps clear of the kernel buffers (below 0x302000+) and the GMEM window
 // (0x1000000..0x12fffff) and ends at the 4 GiB aperture.
-const NativeAdrenoAbiDeviceInfo gDeviceInfo = {0x43050a01u, 3u << 20, 0x1000000ull, 0x1fffffffff000ull, 0x20000000ull,
+NativeAdrenoAbiDeviceInfo gDeviceInfo = {0x43050a01u, 3u << 20, 0x1000000ull, 0x1fffffffff000ull, GpuClientVaStart,
                                                0xE0000000ull, 16, 6, 1, 4, NativeAdrenoDeviceClientIova, 0};
 int timerRead(void *, uint32_t reg, uint32_t *value) {*value = gpuRd(reg); return 0;}
 const NativeAdrenoTimeIo gTimerIo{nullptr, timerRead};
@@ -1176,6 +1177,19 @@ void coherenceProbe(NativeAdrenoVm *vm) {
     snprintf(native_gpu_coherence_row, sizeof native_gpu_coherence_row, "H d%u/64 a%u r%u/%u w%u/%u s%x k%u -> %s", k[1], gCoherenceAttempts,
              k[2], k[3], k[4], k[5], k[6], k[0], pass ? "on" : "off");
 }
+// qcom_scm_set_gpu_smmu_aperture(0): the secure world opens the CP's aperture to the GPU's context bank 0, so CP_SMMU_TABLE_UPDATE in
+// the ring can switch the bank's page table (per-process GPU address spaces). Asked first whether the call exists
+// (QCOM_SCM_INFO_IS_CALL_AVAIL). native_adreno_cp_aperture: [0] availability, [1] the call's x0 (Adreno740 NativeAdrenoPublish.cpp).
+extern "C" volatile uint32_t native_adreno_cp_aperture[4];
+void openCpAperture() {
+    // ARM_SMCCC_CALL_VAL(STD, SMC_64, OWNER_SIP, svc << 8 | cmd): SVC_INFO 0x06 / IS_CALL_AVAIL 0x01, SVC_MP 0x0c / CP_SMMU_APERTURE_ID 0x1b.
+    const ScmRes avail = scmCall(0x42000601u, 1, 0x02000000u | (0x0cu << 8) | 0x1bu, 0, 0);
+    native_adreno_cp_aperture[0] = avail.a0 ? 0x80000000u | uint32_t(avail.a0) : uint32_t(avail.a1);
+    if (avail.a0 || !avail.a1) {native_adreno_cp_aperture[1] = 0xffffffffu; return;}
+    // args[0] = 0xffff0000 | QCOM_SCM_CP_APERTURE_REG (0) << 8 | context bank; the other three 0xffffffff. ARGS(4), all values.
+    const ScmRes r = scmCall(0x42000c1bu, 4, 0xffff0000u | (0u << 8) | 0u, 0xffffffffu, 0xffffffffu, 0xffffffffu);
+    native_adreno_cp_aperture[1] = uint32_t(r.a0);
+}
 void publishAndWrapperTest(bool rounds) {
     char row[64];
     if (!native_adreno_publish || !native_adreno_published_service || !native_adreno_publish_stats) {setRow(5, "P nolink"); return;}
@@ -1189,7 +1203,12 @@ void publishAndWrapperTest(bool rounds) {
     coherenceProbe(vm);
     const IOReturn timer = gTimer.attach(&gTimerIo, NativeAdrenoTimeCp);
     {unsigned wc = 1; PE_parse_boot_argn("sheng-gpu-wc", &wc, sizeof wc); native_adreno_wc_enabled = wc ? 1 : 0;}
-    const IOReturn published = native_adreno_publish(vm, &gSubmit, &gRing, &clock, timer ? nullptr : &gTimer, &gDeviceInfo, 32, 40);
+    openCpAperture();
+    // The GPU's input address size. A user connection's window is (1 << ias) - GpuClientVaStart, and the driver refuses a
+    // zero window with kIOReturnNoResources, so a hardcoded 32 left every Metal client unable to mount.
+    const unsigned ias = NativeAdrenoGpuContextInputBits ? NativeAdrenoGpuContextInputBits() : 0;
+    gDeviceInfo.va_size = ias > 32 ? (1ull << ias) - GpuClientVaStart : 0;
+    const IOReturn published = native_adreno_publish(vm, &gSubmit, &gRing, &clock, timer ? nullptr : &gTimer, &gDeviceInfo, ias, 40);
     IOService *svc = published ? nullptr : native_adreno_published_service();
     int ok = 0, n = 0, errAt = -1, v1 = -1, v2 = -1;
     IOReturn err = 0;
@@ -1200,6 +1219,8 @@ void publishAndWrapperTest(bool rounds) {
     }
     uint32_t closed = 0;
     const uint32_t opened = native_adreno_publish_stats(&closed);
+    printf("fuxi-gpu: publish vm %d rc %x timer %x opened %u closed %u\n",
+           vm ? 1 : 0, unsigned(published), unsigned(timer), opened, closed);
     // P s<publish IOReturn> w<steps ok>/<steps> e<first error>@<step> v<r1>/<r2 dwords of 4> m<clientMemoryForType> o<opened>/<closed>
     snprintf(row, sizeof row, "P s%x w%d/%d e%x@%d v%d/%d m%x o%u/%u s%x", unsigned(published), ok, n, unsigned(err), errAt, v1, v2,
              memStatus, opened, closed, gpuFsr());
