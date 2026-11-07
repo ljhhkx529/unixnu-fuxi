@@ -473,6 +473,24 @@ int lineAudit(uint64_t pa, size_t bytes, uint32_t *dirty, uint32_t *stale) {
     return 0;
 }
 // NativeAdrenoVm::sampleWord's DRAM reader (int-070): one aligned word through a fresh uncached mapping.
+bool physWrite64(uint64_t pa, uint64_t value) {
+    const vm_offset_t va = ml_io_map_unmappable(vm_offset_t(pa & ~uint64_t(0xfff)), 0x1000, 0x7 /* VM_WIMG_IO */);
+    if (!va) return false;
+    *reinterpret_cast<volatile uint64_t *>(va + (pa & 0xff8)) = value;
+    __asm__ volatile("dsb sy" ::: "memory");
+    ml_io_unmap(va, 0x1000);
+    return true;
+}
+/* The write side of dramRead32: the client's IB has no kernel mapping, so the word goes in through the same
+ * uncached physical aperture, as a read-modify-write of the aligned pair. */
+int dramWrite32(uint64_t pa, uint32_t value) {
+    uint64_t w = 0;
+    const uint64_t aligned = pa & ~uint64_t(7);
+    if (!physRead64(aligned, &w)) return 1;
+    const unsigned shift = (pa & 4) * 8;
+    w = (w & ~(uint64_t(0xffffffffu) << shift)) | (uint64_t(value) << shift);
+    return physWrite64(aligned, w) ? 0 : 1;
+}
 int dramRead32(uint64_t pa, uint32_t *value) {
     uint64_t w = 0;
     if (!physRead64(pa & ~uint64_t(7), &w)) return 1;
@@ -1217,6 +1235,8 @@ extern "C" volatile uint32_t native_adreno_fence_level;
 extern "C" volatile uint32_t native_adreno_bv_ring;
 extern "C" volatile uint32_t native_adreno_plain_submit;
 extern "C" volatile uint32_t native_adreno_no_thread_sync;
+extern "C" volatile uint32_t native_adreno_bv_to_br;
+extern "C" int (*native_adreno_dram_write32)(uint64_t, uint32_t);
 void framedSubmitProbe() {
     /* One framed submission per boot, which is all a stopped command processor allows: a refused submission
      * leaves it stopped, so every later one only queues. The two boot arguments choose how much prologue and
@@ -1293,6 +1313,7 @@ void publishAndWrapperTest(bool rounds) {
     // userClientTest attaches the submit object; with the self-tests skipped it still has to be attached before a client opens.
     if (vm) gSubmit.attach(vm, &gRing);
     native_adreno_dram_read32 = dramRead32;
+    native_adreno_dram_write32 = dramWrite32;
     native_adreno_cached_read32 = cachedRead32;
     native_adreno_line_audit = lineAudit;
     coherenceProbe(vm);
@@ -1657,6 +1678,7 @@ void gpuStart() {
     native_adreno_fence_phys = gGpuBuffers[2].physical;   // the page the CP writes its timestamps to, for the UFS log
     native_adreno_bv_ring = 1;   /* see docs/gpu-bringup.md: fuxi never programs the BV ring */
     native_adreno_no_thread_sync = 1;   /* SYNC_THREADS hangs this CP; the init's own payload has bit 27 only */
+    native_adreno_bv_to_br = 1;   /* the BV thread has no runnable ring here, and naming it stops the CP */
     /* The framed path is unusable on this board even with SYNC_THREADS gone: with it the system stops reporting
      * altogether (the boot log ends where the display reports would start), so the client's IB goes straight to
      * the ring. */

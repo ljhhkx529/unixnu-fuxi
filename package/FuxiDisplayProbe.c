@@ -123,9 +123,10 @@ extern volatile unsigned int native_adreno_mark_log_count;
 extern volatile unsigned int native_adreno_vm_check[8];
 /* The first 28 dwords of the client's newest IB (Adreno740 NativeAdrenoSubmit.cpp): [0] fence, [1]/[2] iova,
  * [3] bytes, then the words. */
-extern volatile unsigned int native_adreno_ib_log[4][4+128];
+extern volatile unsigned int native_adreno_ib_log[4][4+256];
 extern volatile unsigned int native_adreno_ib_log_count;
 extern volatile unsigned int native_adreno_ib_peek;
+extern volatile unsigned int native_adreno_bv_patched[4];
 extern volatile unsigned int native_adreno_prologue[96];
 extern volatile unsigned int native_adreno_prologue_info[4];
 /* The fence event ring (Adreno740 NativeAdrenoSubmit.cpp): type 1 submit, 2 wait-enter, 3 wait-complete, 4 wait-timeout. */
@@ -183,13 +184,15 @@ void fuxi_display_client_report(void) {
             volatile unsigned int *e = native_adreno_ib_log[(total - 1) & 3];
             printf("fuxi-metal: client_ib fence %u iova %x%08x bytes %u peek %x\n",
                    e[0], e[2], e[1], e[3], native_adreno_ib_peek);
-            for (unsigned k = 0; k < 128; k += 8) {
+            for (unsigned k = 0; k < 256; k += 16) {
                 char ibl[160]; unsigned il = 0;
-                for (unsigned j = k; j < k + 8; ++j) il += (unsigned)snprintf(ibl + il, sizeof ibl - il, " %08x", e[4 + j]);
+                for (unsigned j = k; j < k + 16; ++j) il += (unsigned)snprintf(ibl + il, sizeof ibl - il, " %08x", e[4 + j]);
                 printf("fuxi-metal: ib+%03u%s\n", k, ibl);
             }
         }
     }
+    printf("fuxi-metal: bv_patch ok %u last_bytes %u refused %u\n",
+           native_adreno_bv_patched[0], native_adreno_bv_patched[1], native_adreno_bv_patched[2]);
     {
         char methodLine[200]; unsigned used = 0;
         for (unsigned k = 0; k < 20; ++k) {

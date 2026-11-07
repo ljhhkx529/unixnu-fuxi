@@ -656,3 +656,33 @@ possible because the driver already reads these buffers successfully (`peek 0`, 
 That is board-specific and blunt, and it will not run the binning pass — but it is the decisive experiment:
 if fences start retiring once no packet names BV, the diagnosis is proven end to end and the remaining work is
 turning that into a correct no-binning path rather than a rewrite.
+
+
+## Round 11: the IB was rewritten and it made no difference
+
+The driver can now write where it could only read before: `NativeAdrenoVm::pokeWords` (through the buffer's own
+mapping when it has one, else through a new board hook `native_adreno_dram_write32`, which fuxi implements as a
+read-modify-write through the same uncached physical aperture `dramRead32` uses). With
+`native_adreno_bv_to_br` the submit path rewrites every CP_THREAD_CONTROL in the client's IB so it never
+selects BV:
+
+    bv_patch ok 1 last_bytes 1000 refused 0
+
+the whole 1000-byte IB was patched, and the fence **still** does not retire:
+
+    fence live 1 submitted 10 retired 9
+    marklog 6: 6800 6801 6a3b 6b10 6b11 6b12
+
+So the BV thread is not the only thing that stops this command processor. The probe's own test still shows the
+payload difference (3 stalls, 0x08000001 retires), but on the client's stream the thread control was not what
+it was waiting on.
+
+### What the stream does after the thread control
+
+The IB uses **indirect buffers**: `703d0004 00027000 00000001 00000000 00000000` is CP_INDIRECT_BUFFER
+targeting 0x00027000, and `703e8003 40080980 00027008 …` follows it. If those second-level buffers are not
+reachable, the command processor stops exactly like this — no fault, no progress. That is the next thing to
+check: whether the memory those packets point at is mapped in the table the CP is using.
+
+The write machinery is worth keeping either way: it is the first time this port could repair a client's command
+stream instead of only observing it.
