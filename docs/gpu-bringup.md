@@ -713,3 +713,40 @@ buffer stays zero, and the command processor stops reading it.
 
 Either the BV thread has to run (which needs a BV ring this port has never programmed), or the runtime has to be
 made to emit a stream that does not depend on it.
+
+
+## Round 13: the empty indirect buffers are not the blocker either
+
+With `native_adreno_drop_empty_ib` the submit path turns every CP_INDIRECT_BUFFER whose target begins with a zero
+word into CP_NOP, keeping the packet's length so the rest of the stream stays aligned:
+
+    empty_ib dropped 3 last 27000
+    fence live 1 submitted 10 retired 9
+
+Three jumps neutralised, and the fence still does not retire. So an empty second-level buffer is one symptom of
+the missing binning pass, not the thing the command processor waits on.
+
+### What has now been eliminated by direct measurement
+
+| candidate | how it was tested | outcome |
+| --- | --- | --- |
+| SYNC_THREADS in CP_THREAD_CONTROL | payload 0x08000000 vs 0x80000001 | fixed, was real |
+| CP in secure mode | `sheng-gpu-zap=0` vs 4 | real, one more submission passes |
+| BV thread selected | whole IB rewritten to BR only | no change |
+| empty indirect buffers | three of them rewritten to CP_NOP | no change |
+| write-combined client mappings | `sheng-gpu-wc=0` | fixed, was real |
+| page-table switching | single table | fixed, was real |
+| framed prologue/fence | `plain_submit` both ways | framed is worse |
+
+What is left in the stream is the family of wait packets (`70d58003 …`, and `70928000` CP_WAIT_MEM_WRITES) — waits
+for values a binning pass would write. That is consistent with everything above: the stream is built for
+concurrent binning, the BV thread never runs, and its results never appear.
+
+### The two remaining routes
+
+1. **Program the BV ring for real.** The write probe located its control word (0xa62, 12 bits) and rptr (0xa66, 20
+   bits) and a writable window at 0xa40..0xa4f, but its BASE has never been found; every attempt to program it
+   left thread control unchanged.
+2. **Build Turnip from source with the binning pass removed**, so the streams it emits never depend on BV. The
+   Mesa tree is present (`out/.../tree/.cache/mesa-work`), `build-turnip-darwin.py` builds the iOS dylib, and the
+   plugin now rebuilds — so this is a build-hours problem, not an unknown.

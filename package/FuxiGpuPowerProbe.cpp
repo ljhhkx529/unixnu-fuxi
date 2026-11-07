@@ -1236,6 +1236,7 @@ extern "C" volatile uint32_t native_adreno_bv_ring;
 extern "C" volatile uint32_t native_adreno_plain_submit;
 extern "C" volatile uint32_t native_adreno_no_thread_sync;
 extern "C" volatile uint32_t native_adreno_bv_to_br;
+extern "C" volatile uint32_t native_adreno_drop_empty_ib;
 extern "C" int (*native_adreno_dram_write32)(uint64_t, uint32_t);
 void framedSubmitProbe() {
     /* One framed submission per boot, which is all a stopped command processor allows: a refused submission
@@ -1679,6 +1680,7 @@ void gpuStart() {
     native_adreno_bv_ring = 1;   /* see docs/gpu-bringup.md: fuxi never programs the BV ring */
     native_adreno_no_thread_sync = 1;   /* SYNC_THREADS hangs this CP; the init's own payload has bit 27 only */
     native_adreno_bv_to_br = 1;   /* the BV thread has no runnable ring here, and naming it stops the CP */
+    native_adreno_drop_empty_ib = 1;   /* the binning pass never fills its buffer; skip the jump into it */
     /* The framed path is unusable on this board even with SYNC_THREADS gone: with it the system stops reporting
      * altogether (the boot log ends where the display reports would start), so the client's IB goes straight to
      * the ring. */
