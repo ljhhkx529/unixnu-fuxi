@@ -393,3 +393,31 @@ but no composited frame is taken through it, so no swap is ever offered, so the 
 Whether backboardd ever creates a Metal command buffer through the plugin at all (the plugin's own counters
 and its `NativeBridgeMetalFrontend` swap path), and if not, what it needs to. That is plugin and render-side
 work, not kernel.
+
+
+## Round 4: the plugin never reaches the presenter, not even once
+
+Counters added to the presenter's own tunnel entries (`native_gop_handoff_call`, `native_gop_handoff_memory`)
+settle it:
+
+    gop_handoff calls 0 op 0 memory 0 status 0
+    gop_wait    calls 0 timeouts 0
+
+So the plugin does not try and fail — **it never asks**. Nothing on the display side is refusing anything: the
+presenter is created, attached and started, and no client ever comes near it.
+
+The plugin's accelerator path works (its ABI run reaches step 34 with no error), so the gap is inside the
+plugin's presentation path: `NativeBridgeMetalFrontend` never reaches its swap, which is what would call
+WAIT_SWAP and set `gpuClient`, which is what would let `offer` accept a frame.
+
+That is render-side work in `drivers/AdrenoMetal`, not kernel work.
+
+### Round 4 summary
+
+| item | state |
+| --- | --- |
+| presenter tunnel entries counted | added (`native_gop_handoff_stat`) |
+| plugin → presenter calls | **0**, so the presentation path is never taken |
+| plugin ABI path | reaches step 34, error 0 |
+| display path | CPU copy, by design until a client asks |
+| probe report function | rewritten to one line per counter (the old block-per-diagnostic version stopped compiling under -Wshadow/-Wconversion) |
