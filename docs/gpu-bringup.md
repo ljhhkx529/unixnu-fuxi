@@ -442,3 +442,39 @@ Its very first step after marking is to open the accelerator a second time:
 Type **0x4148**, while the render server's own connection uses 0x4147 and the driver grants
 `NativeAdrenoPluginOpenType`. The driver's open path refuses any other type as foreign. That is the first thing
 to test next round: whether the scanout connection is being opened with a type the driver drops.
+
+
+## Round 6: the publish marker was missing, and it changes everything
+
+Answering the question directly: **no component and no plugin file was missing** — `Adreno740`, `AdrenoMetal` and
+`GopFramebuffer` are all there, the addon carried the whole 34 MiB bundle including
+`libvulkan_freedreno.dylib`, and against sheng only `ShengPreflight`/`ShengUfs` differ (fuxi has its own
+NativeUfs).
+
+What was missing is a **marker file**. `scripts/add-gpu-plugin-data.py` and `scripts/make-gpu-addon.py` both
+document it:
+
+> With `--publish` the seed also carries /private/var/ngpu/addons/NativeAdrenoMetal.publish: the plugin then
+> returns the native Metal device to the original discovery in backboardd, so the render server composites
+> through it. **Without the file the plugin only runs its tests.**
+
+Our addon was built without `--publish` (8 files). Regenerated with it (9 files), the plugin's behaviour changes
+completely:
+
+| before | after |
+| --- | --- |
+| `report backboard s34 e0` (its self-test) | no report at all — the test path is no longer taken |
+| `marklog` empty of 0x68xx | `marklog 3: 6800 6801 6a3b` |
+| one client open | `opens 3`, `m8 GetStatus 100`, `m6 WaitFence 553` |
+
+`6800` entered and `6801` Turnip found are the plugin's own documented markers; `6a3b` is its diagnostic word
+for this process (bits: deep-framebuffer preference false, MobileGestalt answer true, compression capability
+dictionary present, not root). The next marker it would write is `0x6E01`, and it never comes — so device
+creation stops between that diagnostic block and the arm64e framebuffer patch that follows it.
+
+### Where round 7 starts
+
+That gap in `NativeAdrenoMetalPlugin.mm` `publish::deviceForPort`: the environment it sets
+(`CA_DISABLE_FRAMEBUFFER_COMPRESSION`, and on arm64e the three EDR/headroom variables and three `writeTask`
+patches with markers 0x6E01..0x6E03), then the shader-cache directory scan that marks 0x6810+i or 0x68f2 and
+ends at 0x6802.
