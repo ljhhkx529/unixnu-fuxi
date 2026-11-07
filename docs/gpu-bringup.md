@@ -229,3 +229,43 @@ all, which client IBs would also have to honour.
 A framed submission never retires a fence, while the probe's own plain `gRing.submit()` does (fence 6 is
 its own CP_MEM_WRITE and it completes). The framed path differs in two ways: the prologue and
 `emitFramedFence`. Testing them one at a time, one boot each, is the next step.
+
+
+## Breakthrough: SYNC_THREADS is what stops the command processor
+
+The CP init runs a CP_THREAD_CONTROL of its own and completes, so the packet is not refused in general. Its
+payload is `CpConcurrentBinDisable = 1u << 27` — bit 27 and nothing else. Every payload this port built for
+the prologue and the framed fence set `RingSyncThreads = 1u << 31` as well, and that bit tells the command
+processor to wait for the named thread to reach a synchronisation point. On this GPU those threads never do,
+so the ring stops with no fault, no progress and no error.
+
+One boot settles it:
+
+    plain + CP_THREAD_CONTROL(0x80000001, sync BR)  -> wait 1 seen 6   (stalled)
+    plain + CP_THREAD_CONTROL(0x08000000, bit 27)   -> wait 0 seen 7   (retired)
+
+**Fix**: `native_adreno_no_thread_sync` (default 0) drops bit 31 from the prologue's CP_THREAD_CONTROL
+payloads. With it set and client submissions routed through the plain path, the ring retires every fence it
+is given: `submitted 8 retired 8`.
+
+### What still fails
+
+With the sync bit fixed, `sheng-gpu-single-table=1` and `native_adreno_plain_submit=1` together get further
+than any earlier configuration:
+
+    fence      submitted 8 retired 8      (the port's own submissions all retire)
+    clients    opens 4 busy 0             (all four mount)
+    Submit     1 call, 0 failures         (the render server's submission is accepted)
+    WaitFence  1 call, 1 failure          (its fence still does not retire)
+
+So the machinery is sound and the remaining gap is the **client's own IB content**: the port's submissions
+retire whatever they carry, the render server's does not. Next round starts there.
+
+### Round summary
+
+| change | state |
+| --- | --- |
+| SYNC_THREADS dropped from CP_THREAD_CONTROL (`native_adreno_no_thread_sync`) | kept, enabled by the probe |
+| `native_adreno_plain_submit` | enabled by the probe; the framed fence's BV timestamp wait needs it |
+| `sheng-gpu-single-table=1` | enabled; clients run on the kernel table since the CP cannot switch |
+| BV register probing (`0xa40`..`0xa4f`, `0xa62`, `0xa66`) | programmed, not the blocker |

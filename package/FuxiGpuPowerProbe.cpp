@@ -1216,6 +1216,7 @@ extern "C" volatile uint32_t native_adreno_no_bv;
 extern "C" volatile uint32_t native_adreno_fence_level;
 extern "C" volatile uint32_t native_adreno_bv_ring;
 extern "C" volatile uint32_t native_adreno_plain_submit;
+extern "C" volatile uint32_t native_adreno_no_thread_sync;
 void framedSubmitProbe() {
     /* One framed submission per boot, which is all a stopped command processor allows: a refused submission
      * leaves it stopped, so every later one only queues. The two boot arguments choose how much prologue and
@@ -1655,8 +1656,10 @@ void gpuStart() {
     const NativeAdrenoRingCache cache{nullptr, ringPublish, ringAcquire};
     native_adreno_fence_phys = gGpuBuffers[2].physical;   // the page the CP writes its timestamps to, for the UFS log
     native_adreno_bv_ring = 1;   /* see docs/gpu-bringup.md: fuxi never programs the BV ring */
-    /* native_adreno_plain_submit stays 0: handing the client IB straight to the ring still stalls, so the
-     * client's own IB carries what this CP refuses. See docs/gpu-bringup.md. */
+    native_adreno_no_thread_sync = 1;   /* SYNC_THREADS hangs this CP; the init's own payload has bit 27 only */
+    /* With SYNC_THREADS gone the framed prologue is usable, but the framed fence still waits on a BV timestamp
+     * that only runs if the BV thread does. Hand the client's IB straight to the ring instead. */
+    native_adreno_plain_submit = 1;
     const IOReturn attached = gRing.attach(&rio, &cache, const_cast<uint8_t *>(gGpuCpu[1]), gGpuBuffers[1].bytes,
         gGpuBuffers[1].iova, const_cast<uint8_t *>(gGpuCpu[2]), gGpuBuffers[2].bytes, gGpuBuffers[2].iova);
     if (attached) {snprintf(row, sizeof row, "C4 ring attach %x", unsigned(attached)); setRow(7, row); { printf("fuxi-gpu: gpuStart exit %u cp %u\n", __LINE__, c[0]); return; }}

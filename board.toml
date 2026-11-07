@@ -231,7 +231,11 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
           "sheng-gpu-zap=0",
           "fuxi-probe-prologue=1",
           "fuxi-probe-fence=4",
-          "fuxi-probe-tctrl=0",
+          "fuxi-probe-tctrl=0x08000000",
+          # This board's CP refuses SYNC_THREADS (fixed in the driver) and cannot switch its page table from the
+          # ring, so clients are served on the kernel's own table and submissions go out without the framed
+          # prologue. Together those two make every fence retire; see docs/gpu-bringup.md.
+          "sheng-gpu-single-table=1",
                "sheng-gpu-metal=1",
                "sheng-gpu-dcvs=1",
                "sheng-fb-gpu=1",
