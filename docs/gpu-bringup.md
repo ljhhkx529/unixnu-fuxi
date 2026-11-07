@@ -996,3 +996,33 @@ none, so it has not run yet.
 
 That is the whole remaining question, and it is now narrow: **is the stream waiting for memory writes that never
 land, and if so, which write.**
+
+
+## Round 22: fence 10 named, and it is the stream this port has been reading
+
+Printing the recorded slots with their fence numbers removes the sampling doubt for good:
+
+    slots submitted 10 retired 9
+      slot 0  fence 9         iova 000302f00 bytes 4
+      slot 1  fence 10 LIVE   iova 100028000 bytes 1000  head 70970001 1 …
+
+So the submission that never retires **is** the 1000-byte client IB every instrument in this port has been looking
+at, and its first CP_THREAD_CONTROL already carries the patched payload 1. Fence 9, by contrast, is a four-byte
+IB holding a single CP_NOP, and it retired.
+
+Decoding that same capture again shows the stream ends
+
+    243 CP_EVENT_WRITE {0x21}   245 CP_EVENT_WRITE {0x20}   247 CP_EVENT_WRITE {0x31}
+    249 CP_WAIT_MEM_WRITES      ← and this is where it sits, with CP_IB1_REM_SIZE 0
+
+The experiment built for it (rewrite those waits to CP_NOP) reported zero packets dropped, so either the knob was
+not in force for this submission or the rewrite never ran — the unconditional counter added to settle that has not
+produced a reading yet: **this build's boot stopped at 298 log lines**, before userspace reported anything, so the
+image needs re-running before that question is answered.
+
+### Where this leaves it
+
+The remaining hypothesis is now a single packet: the stream's closing **CP_WAIT_MEM_WRITES** never completes, which
+would mean the memory writes just before it (CP_MEM_WRITE / CP_REG_TO_MEM into 0x27000..0x27018) never land. If
+rewriting that one packet to CP_NOP lets fence 10 retire, the whole picture is explained and the fix is about those
+writes; if it does not, the CP is waiting on something that is not a memory write at all.

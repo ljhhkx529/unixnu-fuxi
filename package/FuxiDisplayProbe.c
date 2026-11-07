@@ -159,7 +159,9 @@ void fuxi_display_client_report(void) {
     {
         unsigned int ib[16] = {0};
         native_gpu_ib_state(ib);
-        printf("fuxi-metal: wait_mem dropped %u last_at %u\n", native_adreno_wait_mem[0], native_adreno_wait_mem[1]);
+        printf("fuxi-metal: wait_mem dropped %u last_at %u seen %u drop_knob %u\n",
+           native_adreno_wait_mem[0], native_adreno_wait_mem[1], native_adreno_wait_mem[2],
+           native_adreno_wait_mem[3]);
     printf("fuxi-display: cp ib1 %x%08x rem %x ib2 %x%08x rem %x sds %x%08x rem %x\n",
                ib[1], ib[0], ib[2], ib[4], ib[3], ib[5], ib[7], ib[6], ib[8]);
         printf("fuxi-display: cp mrb %x%08x rem %x vsd %x wptr %x rptr %x\n",
@@ -215,6 +217,18 @@ void fuxi_display_client_report(void) {
            native_adreno_ib_ind[12]);
     printf("fuxi-metal: ib_ind sample st %x cached %x dram %x\n",
            native_adreno_ib_ind[13], native_adreno_ib_ind[14], native_adreno_ib_ind[15]);
+    {
+        unsigned int submitted = 0, retired = 0;
+        (void)native_adreno_fences(&submitted, &retired);
+        printf("fuxi-metal: slots submitted %u retired %u\n", submitted, retired);
+        for (unsigned s = 0; s < 4; ++s) {
+            volatile unsigned int *e = native_adreno_ib_log[s];
+            if (!e[0]) continue;
+            printf("fuxi-metal:   slot %u fence %u%s iova %x%08x bytes %u head %x %x %x %x %x %x %x %x\n",
+                   s, e[0], e[0] > retired ? " LIVE" : "", e[2], e[1], e[3],
+                   e[4], e[5], e[6], e[7], e[8], e[9], e[10], e[11]);
+        }
+    }
     printf("fuxi-metal: ib_bufs %u\n", native_adreno_ib_bufs_count);
     for (unsigned b = 0; b < native_adreno_ib_bufs_count && b < 8; ++b)
         printf("fuxi-metal:   b%u addr %x%08x bytes %u peek %x head %x %x %x %x %x %x %x\n", b,
