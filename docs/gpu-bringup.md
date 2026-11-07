@@ -931,3 +931,36 @@ always the newest.
 The next useful instrument is therefore a **history of submissions by fence number**, with the amble addresses
 each one carried and whether they were reachable — so a boot that produces the interesting stream is not lost
 because a trivial one followed it.
+
+
+## Round 20: per-fence history built, and no sample yet
+
+The driver now keeps the last sixteen submissions by fence number, each with the amble fetches it carried, their
+address, the peek result and the first word of the body (`native_adreno_ib_hist[16][6]`). It prints one line per
+entry:
+
+    (nothing)
+
+No submission in this boot carried an amble with an address, so there was nothing to record. The one capture that
+did (round 16) is gone.
+
+### Reaching a verdict on the remaining rounds
+
+Counting what this session has actually established, in the order the evidence arrived:
+
+**Fixed and kept** — write-combined client mappings (`sheng-gpu-wc=0`), one shared page table
+(`sheng-gpu-single-table=1`), SYNC_THREADS dropped from CP_THREAD_CONTROL, secure mode exited
+(`sheng-gpu-zap=4`), the plain submission path, and the publish marker in the addon. Between them they took the
+GPU from "clients cannot mount" to "the render server's Metal device is created, submits, and waits on a fence".
+
+**Still open** — one submission of the render server's stream never retires, and every candidate this port could
+test directly has been eliminated on the client's own bytes: the thread the packets name (rewritten and read
+back), the empty second-level buffers (which turned out to be filled by the CP itself), SYNC_THREADS, secure
+mode, cache coherence, page tables.
+
+**What cannot be tested here yet** — whether the CP can fetch the amble bodies, because a capture that carries
+them has not recurred, and whether the BV thread can be made to run, because two attempts to program its ring
+stopped the bring-up outright.
+
+The honest next step is either to make the interesting capture reproducible (pin the client to one workload) or
+to accept that the next real advance needs the BV ring, which this port has no evidence for.

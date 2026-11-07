@@ -132,6 +132,7 @@ extern volatile unsigned int native_adreno_empty_ib[4];
 extern volatile unsigned int native_adreno_amble[16];
 extern volatile unsigned int native_adreno_ib_bufs[8][10];
 extern volatile unsigned int native_adreno_ib_bufs_count;
+extern volatile unsigned int native_adreno_ib_hist[16][6];
 extern volatile unsigned int native_adreno_prologue[96];
 extern volatile unsigned int native_adreno_prologue_info[4];
 /* The fence event ring (Adreno740 NativeAdrenoSubmit.cpp): type 1 submit, 2 wait-enter, 3 wait-complete, 4 wait-timeout. */
@@ -210,6 +211,12 @@ void fuxi_display_client_report(void) {
                native_adreno_ib_bufs[b][9], native_adreno_ib_bufs[b][3], native_adreno_ib_bufs[b][4],
                native_adreno_ib_bufs[b][5], native_adreno_ib_bufs[b][6], native_adreno_ib_bufs[b][7],
                native_adreno_ib_bufs[b][8]);
+    for (unsigned h = 0; h < 16; ++h) {
+        if (!native_adreno_ib_hist[h][0]) continue;
+        printf("fuxi-metal: hist f%u ambles %u addr %x%08x peek %x first %x\n",
+               native_adreno_ib_hist[h][0], native_adreno_ib_hist[h][1], native_adreno_ib_hist[h][3],
+               native_adreno_ib_hist[h][2], native_adreno_ib_hist[h][4], native_adreno_ib_hist[h][5]);
+    }
     printf("fuxi-metal: amble n %u peek %x addr %x%08x words %x %x %x %x %x %x %x %x\n",
            native_adreno_amble[0], native_adreno_amble[1], native_adreno_amble[3], native_adreno_amble[2],
            native_adreno_amble[4], native_adreno_amble[5], native_adreno_amble[6], native_adreno_amble[7],
