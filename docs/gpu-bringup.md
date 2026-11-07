@@ -298,3 +298,14 @@ Two ways to stop the client's IB carrying SYNC_THREADS, in order of cost:
 1. **Patch the IB in the driver's submit path** — copy the client's IB, walk its packets, clear bit 31 in every
    CP_THREAD_CONTROL, submit the copy. The driver already has scratch space and the BOs' CPU mappings.
 2. **Patch Turnip's IB generation**, if the plugin builds it from source here.
+
+
+### The client IB read is the next thing to fix, not the IB
+
+The submission is 48 bytes and the plugin's own test writes exactly twelve dwords into that BO
+(`NativeAdrenoUserTest.h`: `for (unsigned i = 0; i < 12; ++i) iw[i] = words[i];`), so the buffer is populated.
+The driver's `peekWords` reads zeros for it at 0x100000000 even in single-table mode, so **the read path is
+what is broken**, and nothing can be concluded about the IB's content until it is fixed.
+
+That matters because the two remaining explanations — "Turnip's IB carries SYNC_THREADS" and "the CP cannot
+read the IB at all" — are still both open, and only a working read tells them apart.
