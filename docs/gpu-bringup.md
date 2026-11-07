@@ -366,3 +366,30 @@ Until a process opens the presenter, the display keeps its CPU copy — that is 
 | client IB | 932-byte Turnip IB with real packets, first is CP_THREAD_CONTROL(3) |
 | plugin test | reaches step 34 with error 0 |
 | display | still the CPU copy; the presenter has no client |
+
+
+## Round 3: the client's submission retires, the display is a different door
+
+    report backboard s34 e0        the plugin's own ABI run reaches step 34 with no error, twice
+    gop_wait calls 0               the GPU presenter was never asked for a frame
+    gop offers 0 done 0
+    sheng-fb: copy  …              the display still copies on the CPU
+
+The plugin's run walks Query, GetDeviceInfo, two BoAllocs, two BoMaps, two BoCpuMaps, two maps, Submit and
+WaitFence before anything else (steps 1..12) and then continues to 34 with error 0, so **the Metal client's
+submission retires a fence**: that half of the objective is met.
+
+The display's GPU path is gated differently, and the reason is now precise.
+`NativeGOPPresenter::offer` accepts a frame only when `gpuClient` is set, and `gpuClient` is set by the
+**WAIT_SWAP** method handler — the first time a client asks the presenter for a frame. The plugin reaches the
+presenter through the accelerator's tunnel (methods 0x7000 + NGP_METHOD_*, `GpuScanoutClient.h`), and it
+never calls WAIT_SWAP, because it never presents a real frame: `gop_wait calls 0`.
+
+So nothing on the display side is broken. The render server loads the plugin and the plugin's device works,
+but no composited frame is taken through it, so no swap is ever offered, so the display keeps its copy.
+
+### What round 4 should establish
+
+Whether backboardd ever creates a Metal command buffer through the plugin at all (the plugin's own counters
+and its `NativeBridgeMetalFrontend` swap path), and if not, what it needs to. That is plugin and render-side
+work, not kernel.

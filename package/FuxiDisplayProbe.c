@@ -133,7 +133,10 @@ extern volatile unsigned int native_adreno_fence_events_count;
  * own state and the last command it fetched. */
 extern volatile unsigned int native_adreno_stall[29];
 extern int native_adreno_fences(unsigned int *submitted, unsigned int *retired);
+extern volatile unsigned long long native_gop_wait_stats[4];
 void fuxi_display_client_report(void) {
+    printf("fuxi-display: gop_wait calls %llu timeouts %llu last_ms %llu\n",
+           native_gop_wait_stats[0], native_gop_wait_stats[1], native_gop_wait_stats[2]);
     {
         unsigned int s = 0, r = 0;
         const int live = native_adreno_fences(&s, &r);
