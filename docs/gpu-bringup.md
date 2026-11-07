@@ -590,3 +590,44 @@ Markers were added around `removeHalfImported()` and `native_bridge_metal_open()
 that is the bridge's Rust build asking for a toolchain this machine does not have. `--no-replay` gets past the
 host-Turnip step, not past that. The plugin sources are therefore edited and staged but **not built**, and the
 image in use still carries the previous bundle.
+
+
+## Round 9: the BV thread is the one that stalls
+
+The plugin now rebuilds (a local `cargo`/`rustc` shim points at the installed 1.98.0 toolchain; the Homebrew
+cargo on PATH does not understand `+1.98.0`), and the markers added last round name the call:
+
+    marklog 6: 6800 6801 6a3b 6b10 6b11 6b12
+
+`6b10`/`6b11` bracket `removeHalfImported()` and both appear, so that call is fine. `6b12` is written just
+before `native_bridge_metal_open()` and **`6b13` never is**: the runtime's device open is where the render
+server stops, and `client calls 383 last_sel 6 last_st e00002d6` shows it sitting in WaitFence, timing out.
+
+The whole 1000-byte IB says why. Its **first** packet is
+
+    70970001 00000003        CP_THREAD_CONTROL, payload 3 = BOTH threads
+
+and it switches threads again further in (`70970001 08000001` = BR with binning disabled, `70970001 00000002` =
+BV, `70970001 00000003` = both). This board's BV thread has no runnable ring, so the command processor stops on
+the very first packet.
+
+The probe, asked the same question directly:
+
+| payload | meaning | result |
+| --- | --- | --- |
+| `0x08000000` | no thread selected | retires |
+| `0x08000001` | BR only | **retires** |
+| `0x00000003` | both threads | stalls |
+
+So BR is healthy and **BV is not**. Everything else about the ring, the fence and the page tables works.
+
+### The way out
+
+Two routes, and the first is far cheaper:
+
+1. **Stop Turnip from using the BV thread** — a concurrent-binning-off build or debug option, so the command
+   streams it emits never select BV. The CP init already proves the hardware is happy with bit 27
+   (binning disabled).
+2. Program the BV ring for real. The write-probe found its window (`0xa40`..`0xa4f` writable, control word at
+   `0xa62`, rptr at `0xa66`) but no BASE, and programming everything found did not make thread control work —
+   consistent with the thread also needing a GMU-side setup this port never does.
