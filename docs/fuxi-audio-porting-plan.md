@@ -528,7 +528,7 @@ unixnu-fuxi
 | speaker 拓扑 | `check-qcom-audio-topology-host.py` | 37 | 无 | A3 未完成 |
 | 共享输出环 | `check-qcom-audio-ring-host.py` | 31 | 无 | A4 未完成 |
 | CS35L41 步骤表（sheng 运行器） | `check-cirrus-cs35l41-host.py` | 38 | 无 | M3 未完成 |
-| 共享音频页（sheng 形状） | `check-qcom-audio-abi-host.py` | 33 | 无 | A4 未完成 |
+| 共享音频页（sheng 形状） | `check-qcom-audio-abi-host.py` | 37 | 无 | A4 未完成 |
 | GENI I2C（sheng 原样） | `check-geni-i2c-host.py` | 2169 | 无 | M3 未完成 |
 | 采集统计 | `check-qcom-audio-capture-host.py` | 30 | 无 | A5 未完成 |
 | 恢复顺序（端到端） | `check-qcom-audio-service-host.py` | 17 | 无 | A6 未完成 |

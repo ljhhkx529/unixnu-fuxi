@@ -10,18 +10,18 @@ board = "fuxi"
 status = "source-confirmed"
 
 [adsp.carveout]
-carveout_base = { value = 0, state = "unverified", evidence = "adsp.carveout" }
-carveout_size = { value = 0, state = "unverified", evidence = "adsp.carveout" }
+carveout_base = { value = 0x9ea00000, state = "unverified", evidence = "sheng.sm8550" }
+carveout_size = { value = 0x04680000, state = "unverified", evidence = "sheng.sm8550" }
 
 [adsp.entries]
-state_entry = { value = "", state = "unverified", evidence = "none" }
-ready_entry = { value = "", state = "unverified", evidence = "none" }
-fatal_entry = { value = "", state = "unverified", evidence = "none" }
-load_state_message = { value = "", state = "unverified", evidence = "none" }
+state_entry = { value = "master-kernel", state = "unverified", evidence = "sheng.sm8550" }
+ready_entry = { value = "slave-kernel", state = "unverified", evidence = "sheng.sm8550" }
+fatal_entry = { value = "slave-kernel", state = "unverified", evidence = "sheng.sm8550" }
+load_state_message = { value = "{class: image, res: load_state, name: adsp, val: on}", state = "unverified", evidence = "sheng.sm8550" }
 
 [adsp.values]
-ready_value = { value = 0, state = "unverified", evidence = "none" }
-fatal_value = { value = 0, state = "unverified", evidence = "none" }
+ready_value = { value = 0x2, state = "unverified", evidence = "sheng.sm8550" }
+fatal_value = { value = 0x1, state = "unverified", evidence = "sheng.sm8550" }
 
 [adsp.timeouts]
 mailbox_timeout = { value = 0, state = "unverified", evidence = "none" }

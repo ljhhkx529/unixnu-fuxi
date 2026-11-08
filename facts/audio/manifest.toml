@@ -109,3 +109,10 @@ allow_cross_device_calibration = false
 allow_cs35l43_register_program = false
 first_tone_max_milliseconds = 500
 first_tone_requires_attenuation = true
+
+# A reference implementation on the same SoC, recorded as the source of the predictions below. It is not evidence about
+# this board: it says what the platform looks like on sheng, and every value taken from it stays unverified here until
+# fuxi's own measurement replaces it.
+[sheng]
+sm8550 = "unverified"
+reference = "UniXNU-sheng package/AdspProbe.cpp: kAdspBase 0x9ea00000 + 0x4680000, kDtbBase 0x9e980000 + 0x80000, PAS 1 and 36, remote pid 2, SMP2P entries master-kernel (stop, bit 0) and slave-kernel (fatal 0, ready 1, handover 2, stop ack 3), GLINK channel adsp_apps, SMEM items in 443 / out 429 / crash 423 / glink 478-480, glink FIFO 0x4000, load-state request {class: image, res: load_state, name: adsp, val: on}"

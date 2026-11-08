@@ -96,8 +96,11 @@ static void test_refusals(void)
     check(qcom_audio_abi_init(&c, &cfg) == QcomAudioAbiBadFormat, "a page without a rate is refused");
     cfg = config(); cfg.out_channels = 0;
     check(qcom_audio_abi_init(&c, &cfg) == QcomAudioAbiBadFormat, "a page without an output is refused");
-    cfg = config(); cfg.ring_frames = 1000u;
-    check(qcom_audio_abi_init(&c, &cfg) == QcomAudioAbiBadRing, "a ring that is not whole periods is refused");
+    cfg = config(); cfg.period_frames = cfg.ring_frames + 1u;
+    check(qcom_audio_abi_init(&c, &cfg) == QcomAudioAbiBadRing, "a period longer than the ring is refused");
+    cfg = config(); cfg.ring_frames = 65536u; cfg.lead_frames = 2880u;   /* sheng's own shape */
+    check(qcom_audio_abi_init(&c, &cfg) == QcomAudioAbiOk,
+          "a ring of 65536 frames with a 480-frame period is accepted: the indices are modulo, so it need not divide");
     cfg = config(); cfg.lead_frames = cfg.ring_frames;
     check(qcom_audio_abi_init(&c, &cfg) == QcomAudioAbiBadRing, "a lead that reaches the ring's length is refused");
     check(qcom_audio_abi_init(0, &cfg) == QcomAudioAbiBadArgument, "a null page is refused");
@@ -114,8 +117,8 @@ static void test_refusals(void)
     check(qcom_audio_abi_validate(&bad, sizeof bad) == QcomAudioAbiBadVersion, "a version this side does not read is refused");
     bad = c; bad.ticks_per_frame_q32 = 0;
     check(qcom_audio_abi_validate(&bad, sizeof bad) == QcomAudioAbiBadFormat, "a page without a timeline is refused");
-    bad = c; bad.ring_frames = 1000u;
-    check(qcom_audio_abi_validate(&bad, sizeof bad) == QcomAudioAbiBadRing, "a ring that is not whole periods is refused");
+    bad = c; bad.period_frames = bad.ring_frames + 1u;
+    check(qcom_audio_abi_validate(&bad, sizeof bad) == QcomAudioAbiBadRing, "a period longer than the ring is refused");
     bad = c; bad.lead_frames = bad.ring_frames;
     check(qcom_audio_abi_validate(&bad, sizeof bad) == QcomAudioAbiBadRing, "a lead that reaches the ring's length is refused");
 }

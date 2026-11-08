@@ -35,7 +35,8 @@ int qcom_audio_ring_init(QcomAudioRing *r, const QcomAudioRingConfig *config)
     if (!config->frames || !config->period_frames || !config->sample_rate || !config->host_clock_hz)
         return QcomRingBadConfig;
     if (!config->channels || !config->bytes_per_sample) return QcomRingBadConfig;
-    if (config->frames % config->period_frames) return QcomRingBadConfig;
+    /* A period must fit in the ring; it need not divide it, because the indices are modulo the ring's length. */
+    if (config->period_frames > config->frames) return QcomRingBadConfig;
     if (!config->periods_in_flight || config->periods_in_flight > config->frames / config->period_frames)
         return QcomRingTooManyPeriods;
 

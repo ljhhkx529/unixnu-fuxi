@@ -53,7 +53,8 @@ def main() -> int:
 
     for label, script in (("绑定", "scripts/check-fuxi-audio-binding.py"),
                           ("事实", "scripts/check-fuxi-audio-facts.py"),
-                          ("记录", "scripts/check-fuxi-audio-records.py")):
+                          ("记录", "scripts/check-fuxi-audio-records.py"),
+                          ("sheng 参考", "scripts/check-fuxi-audio-sheng-refs.py")):
         result = subprocess.run([sys.executable, str(ROOT / script)], capture_output=True, text=True)
         line = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else "no output"
         if result.returncode != 0:

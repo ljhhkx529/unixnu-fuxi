@@ -16,7 +16,10 @@ int qcom_audio_abi_init(QcomAudioControl *control, const QcomAudioAbiConfig *con
     if (!config->rate || !config->out_channels || !config->period_frames || !config->ring_frames ||
         !config->host_clock_hz)
         return QcomAudioAbiBadFormat;
-    if (config->ring_frames % config->period_frames) return QcomAudioAbiBadRing;
+    /* The ring's length need not be a whole number of periods: the plug-in indexes it modulo its length, as sheng's
+     * does with a 65536-frame ring and a 480-frame period. What has to hold is that a period fits and the lead does
+     * not reach the end of the ring. */
+    if (config->period_frames > config->ring_frames) return QcomAudioAbiBadRing;
     if (config->lead_frames >= config->ring_frames) return QcomAudioAbiBadRing;
 
     for (uint32_t i = 0; i < sizeof *control; ++i) ((uint8_t *)control)[i] = 0;
@@ -45,7 +48,7 @@ int qcom_audio_abi_validate(const void *page, size_t length)
     if (c->version != QCOM_AUDIO_VERSION) return QcomAudioAbiBadVersion;
     if (!c->rate || !c->out_channels || !c->period_frames || !c->ring_frames || !c->ticks_per_frame_q32)
         return QcomAudioAbiBadFormat;
-    if (c->ring_frames % c->period_frames) return QcomAudioAbiBadRing;
+    if (c->period_frames > c->ring_frames) return QcomAudioAbiBadRing;
     if (c->lead_frames >= c->ring_frames) return QcomAudioAbiBadRing;
     return QcomAudioAbiOk;
 }
