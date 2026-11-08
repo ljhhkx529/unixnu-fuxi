@@ -27,7 +27,7 @@ COVERED = {
                         ("graph", "endpoint", "endpoint_format", "stream_format")),
     "CirrusCs35l41.h": ("Cs35l41Binding", ("amp.registers", "amp.b", "amp.t"), ()),
     "QcomAudioRing.h": ("QcomAudioRingConfig", ("path.ring", "path"), ()),
-    "QcomHalAbi.h": ("QcomHalConfig", ("hal",), ()),
+    "QcomAudioAbi.h": ("QcomAudioAbiConfig", ("abi",), ()),
     "QcomAudioCapture.h": ("QcomAudioCaptureConfig", ("capture",), ()),
     "QcomAudioGraph.h": ("QcomArGraphSpec", ("path.graph",), ()),
     "QcomAudioTopology.h": ("QcomAudioTopologyInputs",

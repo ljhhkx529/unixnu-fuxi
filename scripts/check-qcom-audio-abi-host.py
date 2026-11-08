@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and run the shared HAL block host model."""
+"""Build and run the shared audio page host model."""
 
 from pathlib import Path
 import subprocess
@@ -12,16 +12,16 @@ PACKAGE = ROOT / "package"
 
 
 with tempfile.TemporaryDirectory() as temporary:
-    executable = Path(temporary) / "qcom-hal-abi-host"
+    executable = Path(temporary) / "qcom-audio-abi-host"
     subprocess.run([
         "cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-O1", "-g",
         "-fsanitize=address,undefined",
-        str(PACKAGE / "tests/qcom_hal_abi_host.c"),
-        str(PACKAGE / "QcomHalAbi.c"),
+        str(PACKAGE / "tests/qcom_audio_abi_host.c"),
+        str(PACKAGE / "QcomAudioAbi.c"),
         "-o", str(executable),
     ], check=True)
     result = subprocess.run([str(executable)], capture_output=True, text=True)
 
 sys.stderr.write(result.stderr)
 print(result.stdout.strip())
-sys.exit(0 if result.returncode == 0 and result.stdout.startswith("PASS QcomHalAbi:") else 1)
+sys.exit(0 if result.returncode == 0 and result.stdout.startswith("PASS QcomAudioAbi:") else 1)

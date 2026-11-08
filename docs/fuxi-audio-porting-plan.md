@@ -528,12 +528,12 @@ unixnu-fuxi
 | speaker 拓扑 | `check-qcom-audio-topology-host.py` | 37 | 无 | A3 未完成 |
 | 共享输出环 | `check-qcom-audio-ring-host.py` | 31 | 无 | A4 未完成 |
 | CS35L41 步骤表（sheng 运行器） | `check-cirrus-cs35l41-host.py` | 38 | 无 | M3 未完成 |
-| HAL 共享 ABI | `check-qcom-hal-abi-host.py` | 35 | 无 | A4 未完成 |
+| 共享音频页（sheng 形状） | `check-qcom-audio-abi-host.py` | 33 | 无 | A4 未完成 |
 | GENI I2C（sheng 原样） | `check-geni-i2c-host.py` | 2169 | 无 | M3 未完成 |
 | 采集统计 | `check-qcom-audio-capture-host.py` | 30 | 无 | A5 未完成 |
 | 恢复顺序（端到端） | `check-qcom-audio-session-host.py` | 17 | 无 | A6 未完成 |
 
-合计 **2690 项**主机检查，全部在 ASan/UBSan 下运行，且不依赖任何 fuxi 数值。
+合计 **2688 项**主机检查，全部在 ASan/UBSan 下运行，且不依赖任何 fuxi 数值。
 
 | 门禁 | 覆盖 | 状态 |
 | --- | --- | --- |
@@ -702,7 +702,7 @@ A0 仍未完成的部分是 **ADSP 加载器本身**（`adsp.mbn`/`adsp_dtb.mbn`
 
 ## 13. 当前未执行事项
 
-主机侧已经完整：11 个板级无关层与 2 道门禁（9.1），2690 项检查全部在 ASan/UBSan 下通过，且没有一条依赖 fuxi 的数值。
+主机侧已经完整：11 个板级无关层与 2 道门禁（9.1），2688 项检查全部在 ASan/UBSan 下通过，且没有一条依赖 fuxi 的数值。
 每个文件都把自己的板级值做成了入参，`facts/audio/binding.toml` 用 108 个字段记录它们，门禁拒绝未验证值进入构建。
 
 仍然没有做、也无法在主机上做的：
@@ -728,7 +728,7 @@ A0 仍未完成的部分是 **ADSP 加载器本身**（`adsp.mbn`/`adsp_dtb.mbn`
 | `ShengAudioReach.{c,h}` | 375+109 | `QcomAudioGraph` 已按 sheng 结构参数化：开图 + config（I2S 端点/转换器输出/端点媒体格式）+ 图命令 + map/write/read + PRM 时钟与投票 + 应答解析（67 项）。与 `QcomAudioReach` 的并立待合并 | sheng 每方向**两张图**（device graph 拥有硬件端点、stream graph 拥有共享内存端点，连接由 stream graph 的 open 携带） | 接入会话后按双图重写 config 构造 |
 | `AdspFirmware.c` + `AdspProbe.cpp` + `ShengAdsp.h` | 182+690+30 | `QcomMdt` 157 + `QcomAdsp` 142 + **`QcomAdspClient`（sheng 形状，30 项）** | 客户端层已补：按名字注册、发送排队、回调在 DSP 线程 | 加载顺序仍需搬进 AdspProbe 的分阶段形状 |
 | `ShengCs35l43.{c,h}` | 141+92 | **运行器已原样移植**（`Cs35Run`），程序表由 binding 生成，安全门在门内（38 项） | 曾是相位状态机 + 32 位 hook | ✅ 完成（程序内容按 CS35L41 事实，不抄 CS35L43 的寄存器程序） |
-| `ShengAudioAbi.h` | 88 | `QcomHalAbi` 64 行 | **机制不同**：sheng 是 control page + 输出/输入**两个环** + `ticks_per_frame_q32` + 两个 anchor + `out_seq/in_seq` + `lead_frames` + `*_late` + 四个方法号 | 按 sheng 的 ABI 重写；rate/channels/period/ring/lead 作为绑定值 |
+| `ShengAudioAbi.h` | 88 | **已按 sheng 形状重做**（`QcomAudioAbi`，33 项）：control page + 双环语义 + `ticks_per_frame_q32` + 双 anchor + `out_seq/in_seq` + `lead_frames` + `*_late` + 方法号；诊断页与追踪页按 sheng 的 2048/2560 偏移预留 | 自造的 `QcomHalAbi` 已删除 | ✅ 完成（诊断/追踪页内容待 plug-in 落地时填） |
 | `AudioProbe.cpp` + `ShengAudioService.cpp` + HAL | 1159+143 | `QcomAudioPath`/`QcomAudioRing`/`QcomAudioCapture`/`QcomAudioSession` | 我自划分层，与 sheng 的服务/探针/HAL 三分不同 | 把已有能力（period 窗口、事务代次、采集统计、SSR 恢复）**搬进** sheng 的结构，而不是并列 |
 
 保留的判断：上述能力本身仍然有用（period 窗口与 late/underrun 计数、采集统计、重启代次隔离），它们不删除，但要落在

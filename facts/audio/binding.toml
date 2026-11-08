@@ -96,19 +96,17 @@ shmem_module = { value = 0, state = "unverified", evidence = "none" }
 interface_word = { value = 0, state = "unverified", evidence = "none" }
 
 # The block the kernel service and the user-space HAL share. Offsets are part of the ABI; the values are board facts.
-[hal]
-output_ring_address = { value = 0, state = "unverified", evidence = "none" }
-output_ring_bytes = { value = 0, state = "unverified", evidence = "none" }
-output_frames = { value = 0, state = "unverified", evidence = "none" }
-output_period_frames = { value = 0, state = "unverified", evidence = "none" }
-output_periods_in_flight = { value = 0, state = "unverified", evidence = "none" }
-channels = { value = 0, state = "unverified", evidence = "none" }
-bytes_per_sample = { value = 0, state = "unverified", evidence = "none" }
-sample_rate = { value = 0, state = "unverified", evidence = "none" }
+# The page the audio service and the CoreAudio plug-in share, in sheng's shape.
+[abi]
+rate = { value = 0, state = "unverified", evidence = "none" }
+out_channels = { value = 0, state = "unverified", evidence = "none" }
+in_channels = { value = 0, state = "unverified", evidence = "none" }
+period_frames = { value = 0, state = "unverified", evidence = "none" }
+ring_frames = { value = 0, state = "unverified", evidence = "none" }
+lead_frames = { value = 0, state = "unverified", evidence = "none" }
 host_clock_hz = { value = 0, state = "unverified", evidence = "none" }
-zero_timestamp_ticks = { value = 0, state = "unverified", evidence = "none" }
+anchor_host = { value = 0, state = "unverified", evidence = "none" }
 
-# The first microphone path: one mono period stream, accounted the way the plan accepts it.
 [capture]
 channels = { value = 0, state = "unverified", evidence = "none" }
 bit_width = { value = 0, state = "unverified", evidence = "none" }
