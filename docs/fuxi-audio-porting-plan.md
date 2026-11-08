@@ -644,6 +644,28 @@ GLINK 线路**各投 4000 轮输入（一半纯噪声、一半"合法头部 + �
 
 **这只读不写**：清单里的第一类（I2C 与 SMEM 只读）不改变任何设备状态，是"只读探针"能直接拿到的部分。
 
+
+### 9.7 探针镜像的打包（照 `docs/boot_track.md`）
+
+音频探针是内核里的一段只读代码，要跑在真机上就必须打包成 boot 镜像。**不要把 `CONFIG_XNU_OWNER_DATA_MOUNT` 关掉**——
+它是 Data 卷挂载的开关（当初特意打开，`77d0724`），关掉会让系统停在 `kern_exec.c`。正确做法是用树里已经生成的 Data seed：
+
+```bash
+# 内核用真实仓库的配置（副本里改 defconfig 会连带丢掉 display 归档，链接会失败）
+cd ../UniXNU && ./unixnu defconfig fuxi_defconfig -D ../unixnu-fuxi && ./unixnu build kernel
+
+# payload 与镜像用一份**只改 board.toml**（加 fuxi-audio-probe=1）的副本
+./unixnu build payload -D /tmp/fuxi-probe --uefi ../uefi-fuxi \
+    --kernel out/fuxi/ipados-17.7.11-21H461/fuxi/kernel/kernel.macho \
+    --unique-chip-id 0x0123456789abcdef --data-ramdisk out/ipsw/21H461/data.dbr
+./unixnu bootimg -D /tmp/fuxi-probe --uefi ../uefi-fuxi --target DEBUG \
+    --dtb ../uefi-fuxi/Platforms/Xiaomi/fuxiPkg/FdtBlob/sm8550-xiaomi-fuxi.dtb -o /tmp/fuxi-probe.img
+```
+
+这样镜像**正常启动到桌面**，探针在 `bsd_init` 跑完、报告走 USB CDC 通道（`scripts/fuxi-usb-debug.sh`），
+不需要拍照，也不需要动手机的电源键。`scripts/fuxi-audio-probe.sh run` 把这几步串成一条命令，并校验
+**payload 里的 kernel 就是刚构建的那个**（`bootimg` 曾把旧 payload 打进镜像，导致刷了错的内核）。
+
 ## 10. 日志和验收记录格式
 
 每次设备测试至少记录：
