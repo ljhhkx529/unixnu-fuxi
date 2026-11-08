@@ -647,6 +647,10 @@ GLINK 线路**各投 4000 轮输入（一半纯噪声、一半"合法头部 + �
 
 ### 9.7 探针镜像的打包（照 `docs/boot_track.md`）
 
+本节命令只保留为历史构建记录，**不是当前可执行的真机流程**。当前禁止恢复 audio boot argument、运行
+`scripts/fuxi-audio-probe.sh run`、自动 boot/刷写或自动重启。恢复真机实验必须先完成 9.8 所链接 runbook 的 host gate，
+再由设备所有者对单个 test id 授权。
+
 音频探针是内核里的一段只读代码，要跑在真机上就必须打包成 boot 镜像。**不要把 `CONFIG_XNU_OWNER_DATA_MOUNT` 关掉**——
 它是 Data 卷挂载的开关（当初特意打开，`77d0724`），关掉会让系统停在 `kern_exec.c`。正确做法是用树里已经生成的 Data seed：
 
@@ -662,12 +666,12 @@ cd ../UniXNU && ./unixnu defconfig fuxi_defconfig -D ../unixnu-fuxi && ./unixnu 
     --dtb ../uefi-fuxi/Platforms/Xiaomi/fuxiPkg/FdtBlob/sm8550-xiaomi-fuxi.dtb -o /tmp/fuxi-probe.img
 ```
 
-**写阶段先证明再上机。** 探针的映射方向必须与阶段一致：只读阶段用 `kIOMapReadOnly`，写阶段（`fuxi-audio-probe>=4`）用读写映射。
-第一次尝试分配 SMP2P 项时正是因为映射是只读的，`qcom_smem_alloc` 的第一次写入就 fault，内核当场死掉。
+**写阶段先证明再上机。** 第一次尝试分配 SMP2P 项时，向只读 mapping 写入是该次 fault 的直接问题；但改成可写 mapping
+并不足以证明安全，后来的“可写但零写”样本仍然失联。任何真实写入还必须先证明 cache 属性与 alias、实现有超时的
+TCSR hwspinlock 3、验证发布 barrier，并在 shadow image 上限定 byte diff。
 
-这样镜像**正常启动到桌面**，探针在 `bsd_init` 跑完、报告走 USB CDC 通道（`scripts/fuxi-usb-debug.sh`），
-不需要拍照，也不需要动手机的电源键。`scripts/fuxi-audio-probe.sh run` 把这几步串成一条命令，并校验
-**payload 里的 kernel 就是刚构建的那个**（`bootimg` 曾把旧 payload 打进镜像，导致刷了错的内核）。
+历史成功样本曾启动到桌面并通过 USB CDC 取回报告，但后续多个相同路径的样本杀死了内核和 USB，因此不能把一次成功
+推广成安全保证。脚本中的 kernel/payload hash 校验仍可作为构建检查参考；它的自动设备路径不得使用。
 
 
 ### 9.8 原则：探针不得阻塞启动与串口
@@ -676,14 +680,13 @@ cd ../UniXNU && ./unixnu defconfig fuxi_defconfig -D ../unixnu-fuxi && ./unixnu 
 `native_touch_probe` 里同步执行，一旦它触碰了不该碰的内存，内核当场死掉——启动停在半路，串口也就永远不出现，
 于是连"为什么死"都看不到。
 
-现在的做法：
+当前做法是把调用从启动路径彻底删除；`FuxiAudioProbe.cpp` 虽然仍编进 archive，但没有调用者。之前的“内核线程延迟
+20 秒”方案已经被真机否定：线程和 USB worker 仍共享同一个内核，probe 中的 data abort、panic、死锁或 cache alias
+仍会同时杀死系统与串口。USB 控制命令也只能做到“稳定启动后、一次执行一步并提前留下 step id”，不能隔离内核 fault。
 
-1. **启动路径只创建一个内核线程就返回**，探针本身的任何工作都不在 `bsd_init` 的同步路径上；
-2. 线程先 `IOSleep(20000)`，等用户态与 USB CDC 通道起来，**再**执行探查；
-3. 报告通过 `IOLog` 与已有捕获通道送出，因此即便探查本身出错，**出事前的日志已经发出来了**；
-4. `fuxi-audio-probe` 未设置时，连线程都不创建。
-
-**代价**：报告比启动晚约 20 秒。**收益**：一个迟到的报告远胜一次到不了的启动。
+恢复探查前必须按 [Fuxi Audio Probe 故障隔离与调试 Runbook](fuxi-audio-probe-debug-runbook.md) 建立受限状态机、
+小 checkpoint、明确的 mapping 属性、TCSR hwspinlock 3 和逐 gate 验收。不得恢复
+`native_touch_probe() -> native_audio_probe()`，也不得使用 `IOSleep(20000)` 作为安全证明。
 
 ## 10. 日志和验收记录格式
 

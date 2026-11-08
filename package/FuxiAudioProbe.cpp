@@ -22,10 +22,10 @@
 extern "C" {
 #include "QcomSmem.h"
 
-/* Boot argument fuxi-audio-probe=N: 0 off, 1 log the report, 2 also end the boot with it on the panic screen. */
+/* Legacy boot argument consumed only if native_audio_probe() is called.  The current boot path has no such caller. */
 int fuxi_audio_probe = 0;
 
-/* Called from bsd_init by the audio patch, next to the touch probe. */
+/* Retained for a future gated diagnostic provider; it must not be restored to the boot path. */
 void native_audio_probe(void);
 }
 
@@ -136,9 +136,8 @@ void run()
 
 }  // namespace
 
-/* The probe must never block the boot or the serial channel: the boot path only starts this thread, and the thread waits
- * long enough for userland and the USB CDC channel to be up before it touches anything. A report that arrives late is
- * worth more than a boot that does not arrive at all. */
+/* Historical delayed worker, currently unreachable.  Waiting for USB does not isolate a kernel fault: this code must be
+ * split into individually acknowledged diagnostic steps before it gains a caller again. */
 #define kProbeDelayMs 20000u
 
 static void audioProbeThread(void *, wait_result_t)

@@ -589,7 +589,8 @@ static void touchThread(void *, wait_result_t) {
 
 /* The audio probe is not called from here any more: five device runs ended with the kernel dead inside it, and a probe
  * that can take the boot down is worse than no probe. Its code stays in package/FuxiAudioProbe.cpp for the day it can be
- * reached over the USB control channel instead, where a fault costs a report rather than the boot. */
+ * reached through a gated, single-step diagnostic provider. USB triggering improves attribution but does not contain a
+ * kernel fault, so the default boot path must remain free of audio work. */
 extern "C" void native_touch_probe(void) {
     unsigned stage = 0;
     if (!PE_parse_boot_argn("fuxi-touch", &stage, sizeof stage) || stage < 1 || native_touch_stage_req) return;
