@@ -1,0 +1,18 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -795,6 +795,14 @@ bsd_init(void)
+ 	extern void native_touch_probe(void);
+ 	native_touch_probe();
+ #endif
+ 
++#if DEVELOPMENT || DEBUG
++	/* fuxi (Xiaomi 13): the audio probe, stage 0. It reads SMEM through package/QcomSmem.c and reports what the audio
++	 * line needs; nothing is written and nothing is powered. Off unless the boot argument fuxi-audio-probe is set. */
++	extern void native_audio_probe(void);
++	native_audio_probe();
++#endif
++
+ 	/* Initialize the file systems. */
+ 	bsd_init_kprintf("calling vfsinit\n");
+ 	vfsinit();
