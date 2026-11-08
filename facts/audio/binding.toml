@@ -72,6 +72,14 @@ channels = { value = 0, state = "unverified", evidence = "none" }
 interleaving = { value = 0, state = "unverified", evidence = "none" }
 bytes_per_frame = { value = 0, state = "unverified", evidence = "none" }
 
+[path.ring]
+frames = { value = 0, state = "unverified", evidence = "none" }
+period_frames = { value = 0, state = "unverified", evidence = "none" }
+channels = { value = 0, state = "unverified", evidence = "none" }
+bytes_per_sample = { value = 0, state = "unverified", evidence = "none" }
+sample_rate = { value = 0, state = "unverified", evidence = "none" }
+host_clock_hz = { value = 0, state = "unverified", evidence = "none" }
+
 [path.topology]
 stream_instance = { value = 0, state = "unverified", evidence = "none" }
 stream_module = { value = 0, state = "unverified", evidence = "none" }

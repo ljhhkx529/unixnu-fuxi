@@ -26,6 +26,7 @@ COVERED = {
     "QcomAudioPath.h": ("QcomAudioPathConfig", ("path", "path.references"),
                         ("graph", "endpoint", "endpoint_format", "stream_format")),
     "CirrusCs35l41.h": ("Cs35l41Binding", ("amp.registers", "amp.b", "amp.t"), ()),
+    "QcomAudioRing.h": ("QcomAudioRingConfig", ("path.ring", "path"), ()),
     "QcomAudioTopology.h": ("QcomAudioTopologyInputs",
                             ("path", "path.references", "path.topology", "path.graph", "path.endpoint", "path.format"),
                             ()),
@@ -77,7 +78,11 @@ def struct_fields(header: str, name: str) -> list[str]:
         if not statement:
             continue
         for part in statement.split(","):
-            # Each piece ends in the declarator's name, with the type (and any pointer) in front of it.
+            # A pointer is runtime wiring (a shared buffer, an index), not a board fact, so it is not a binding
+            # field; every other declarator is.
+            if "*" in part:
+                continue
+            # Each piece ends in the declarator's name, with the type in front of it.
             match = re.search(r"([A-Za-z_]\w*)\s*(\[[^\]]*\])?$", part.strip())
             if match:
                 fields.append(match.group(1))
