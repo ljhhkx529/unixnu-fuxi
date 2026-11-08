@@ -47,6 +47,12 @@ static void test_page(void)
     const QcomAudioAbiConfig cfg = config();
     check(sizeof(QcomAudioControl) <= QCOM_AUDIO_DIAG_OFFSET,
           "the control page fits before the diagnostic block");
+    check(sizeof(QcomAudioDiag) <= QCOM_AUDIO_TRACE_OFFSET - QCOM_AUDIO_DIAG_OFFSET,
+          "the diagnostic block fits before the trace");
+    check(sizeof(QcomAudioTrace) <= QCOM_AUDIO_PAGE_BYTES - QCOM_AUDIO_TRACE_OFFSET,
+          "the trace fits in the rest of the page");
+    check(QCOM_AUDIO_DIAG_SLOTS == 32u && QCOM_AUDIO_TRACE_SLOTS == 128u,
+          "the slot counts the plug-in writes are the ones the service reads");
     check(qcom_audio_abi_init(&c, &cfg) == QcomAudioAbiOk, "a consistent configuration fills the page");
     check(c.magic == QCOM_AUDIO_MAGIC && c.version == QCOM_AUDIO_VERSION, "the page carries the identity");
     check(c.rate == cfg.rate && c.out_channels == cfg.out_channels && c.in_channels == cfg.in_channels,

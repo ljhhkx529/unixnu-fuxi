@@ -540,6 +540,16 @@ unixnu-fuxi
 | `check-fuxi-audio-binding.py` | 108 个字段 / 89 个层字段 | 0 verified，108 unverified |
 | `check-fuxi-audio-facts.py` | 两颗 CS35L41、TDM/WCD 接线 | source-confirmed；runtime unverified |
 
+### 9.1b HAL 插件（构建证据，不是运行证据）
+
+`hal/FuxiAudioPlugIn.c` 是 sheng 的 CoreAudio 插件换 fuxi 身份：bundle id `org.unixnu.fuxi.audio`、IOKit 类 `FuxiAudio`、
+设备/型号 UID、以及本板的共享页。机制未变（AudioServerPlugIn 驱动接口、三种映射内存、属性表、搬运帧的 IO 线程）。
+它发布的数值**从映射后的页里读**，头文件里的宏只在页映射之前作兜底（流描述必须先答）。
+
+`scripts/build-fuxi-audio-hal.py` 用 Xcode 的 iPhoneOS sysroot 加 macOS 的 CoreAudio 头编译并 ad-hoc 签名，本机实测产出
+`FuxiAudio.driver`（CDHash `8c96f3ca41761825098d1d9f82d7ad0bc1ca1159`）。**这只是"能编译"，不是"能工作"**：21H461 的 HAL ABI
+审计与真机验证都没做，插件从未在手机上运行过。
+
 ### 9.2 主机检查能证明什么、不能证明什么
 
 主机侧证明的是**顺序、条件与计数**：识别先于配置、故障先清后配、配置写回读、PLL 锁定后才算 ready、mute 先于重启、

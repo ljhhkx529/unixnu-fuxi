@@ -26,11 +26,18 @@ extern "C" {
 #endif
 
 #define QCOM_AUDIO_CLASS "FuxiAudio"
+#define QCOM_AUDIO_RATE 48000u
+#define QCOM_AUDIO_OUT_CHANNELS 2u
+#define QCOM_AUDIO_IN_CHANNELS 1u
+#define QCOM_AUDIO_PERIOD_FRAMES 480u
+#define QCOM_AUDIO_RING_FRAMES 65536u
 #define QCOM_AUDIO_MAGIC 0x46555841u   /* 'FUXA' */
 #define QCOM_AUDIO_VERSION 1u
 #define QCOM_AUDIO_PAGE_BYTES 4096u
 #define QCOM_AUDIO_DIAG_OFFSET 2048u
+#define QCOM_AUDIO_DIAG_SLOTS 32u
 #define QCOM_AUDIO_TRACE_OFFSET 2560u
+#define QCOM_AUDIO_TRACE_SLOTS 128u
 
 enum {QcomAudioMemoryControl = 0, QcomAudioMemoryOutput = 1, QcomAudioMemoryInput = 2};
 enum {QcomAudioStartOutput = 0, QcomAudioStopOutput = 1, QcomAudioStartInput = 2, QcomAudioStopInput = 3};
@@ -64,6 +71,39 @@ _Static_assert(offsetof(QcomAudioControl, ticks_per_frame_q32) == 40, "the timel
 _Static_assert(offsetof(QcomAudioControl, out_anchor_host) == 48, "the anchors are pinned");
 _Static_assert(offsetof(QcomAudioControl, out_seq) == 88, "the sequence counters are pinned");
 _Static_assert(sizeof(QcomAudioControl) <= QCOM_AUDIO_DIAG_OFFSET, "the control page fits before the diagnostics");
+
+/* The second half of the page: what the plug-in recorded, so the kernel log names what the audio server asked for
+ * without the unified log. The fields are sheng's, because the plug-in that fills them is. */
+typedef struct {
+    volatile uint32_t count, loads;
+    volatile uint32_t selector[QCOM_AUDIO_DIAG_SLOTS], where[QCOM_AUDIO_DIAG_SLOTS];
+    volatile uint32_t volume_milli, volume_sets;
+    volatile uint32_t mix_peak;
+    volatile uint32_t in_misses;
+    volatile int32_t ahead_min, ahead_max, behind_min, behind_max;
+    volatile uint32_t io_frames, writes;
+    volatile uint32_t overlaps, overlap_max;
+    volatile uint32_t frames_total, gaps, gap_frames;
+    volatile uint32_t interval[6];
+    volatile uint64_t last_end, last_host;
+    volatile int32_t skew_min, skew_max;
+    volatile int32_t io_pri, io_base, io_policy, io_tc, io_pri_min;
+    volatile uint32_t io_period, io_computation, io_constraint;
+    volatile uint32_t host_clock;
+    volatile int32_t host_clock_result;
+} QcomAudioDiag;
+
+/* After it, every distinct property access in the order the audio server made it: selector, then object << 24 |
+ * scope's first byte << 16 | kind (1 set, 0 get) | 2 if it failed. */
+typedef struct {
+    volatile uint32_t count;
+    volatile uint32_t entry[QCOM_AUDIO_TRACE_SLOTS][2];
+} QcomAudioTrace;
+
+_Static_assert(sizeof(QcomAudioDiag) <= QCOM_AUDIO_TRACE_OFFSET - QCOM_AUDIO_DIAG_OFFSET,
+               "the diagnostic block fits between its offset and the trace's");
+_Static_assert(sizeof(QcomAudioTrace) <= QCOM_AUDIO_PAGE_BYTES - QCOM_AUDIO_TRACE_OFFSET,
+               "the trace fits in the rest of the page");
 
 /* The board's numbers, and the host clock they are expressed in. */
 typedef struct {
