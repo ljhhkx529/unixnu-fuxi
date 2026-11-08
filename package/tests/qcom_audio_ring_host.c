@@ -48,8 +48,11 @@ static void test_config(void)
     check(qcom_audio_ring_room(&r) == FRAMES - 1u, "a fresh ring can take all but one frame");
     check(r.period_deadline_ticks == 192000u, "one period is 192000 host ticks at 48 kHz on a 19.2 MHz clock");
 
-    QcomAudioRingConfig bad = good; bad.frames = 2000u;   /* not a multiple of the period */
-    check(qcom_audio_ring_init(&r, &bad) == QcomRingBadConfig, "a ring whose size is not a whole number of periods is refused");
+    /* The length need not be a multiple of the period: the indices are modulo the length, as sheng's ring is. */
+    QcomAudioRingConfig bad = good; bad.period_frames = bad.frames + 1u;
+    check(qcom_audio_ring_init(&r, &bad) == QcomRingBadConfig, "a period longer than the ring is refused");
+    bad = good; bad.frames = 2000u;
+    check(qcom_audio_ring_init(&r, &bad) == QcomRingOk, "a ring whose size is not a whole number of periods is accepted");
     bad = good; bad.period_frames = 0;
     check(qcom_audio_ring_init(&r, &bad) == QcomRingBadConfig, "a zero period is refused");
     bad = good; bad.sample_rate = 0;
