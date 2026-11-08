@@ -278,6 +278,23 @@ fuxi binding 的候选输入为：
 
 验收：两颗功放分别 100 次 reset/identify/configure/mute；chip ID/revision 一致；PLL 在输入 clock 存在时锁定；无 fault IRQ；任何故障可单颗关闭。此阶段仍不能宣称“音频可用”。
 
+### Phase 4 完成情况（主机部分）
+
+`package/CirrusCs35l41.{h,c}`：状态机只负责**顺序与条件**，寄存器映、要写入的值、revision 掩码、boost 上下限与轮询预算
+全部由 `Cs35l41Binding` 传入；两条线与复位由 hook 提供。因此本文件里没有任何 fuxi 地址，寄存器事实仍留在
+`facts/audio/manifest.toml` 并保持 `unverified`。
+
+保证的性质：**识别先于配置**（ID/revision 不符立即停止，且不写任何配置）、**故障先清后配**（清不掉即停）、
+**每个配置写都读回比对**、**PLL 锁定后才进入 MUTED_READY**、**进入 MUTED_READY 前一定已 mute**、
+**只有 verified + configured + locked + 无故障才允许解除 mute**。
+
+`scripts/check-cirrus-cs35l41-host.py` 在 ASan/UBSan 下跑 **29 项**：完整路径、解除/恢复 mute、shutdown（先 mute 再复位）、
+以及逐项拒绝——未就绪就解除 mute、错误 chip id（且一个配置字节都没写）、revision 越界、boot 永不完成、写读回不符、
+写失败、boost 峰值超上限 / 电容低于下限（都在写之前拒绝）、PLL 永不锁定、上电即有黏性故障、解除前出现故障、
+以及计划的验收项"100 次 reset/identify/configure/mute 全部达到 MUTED_READY 且 chip id 一致"。
+
+真机部分（两颗功放的真实寄存器值与 revision、100 次读写循环、IRQ 分类）仍待设备授权。
+
 ### Phase 5：speaker AudioReach graph 和第一声（A3）
 
 目标：建立 fuxi 的真实 speaker endpoint，并安全证明左右/上下声道。
