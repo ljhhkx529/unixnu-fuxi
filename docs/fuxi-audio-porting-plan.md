@@ -528,14 +528,15 @@ unixnu-fuxi
 | 共享输出环 | `check-qcom-audio-ring-host.py` | 31 | 无 | A4 未完成 |
 | CS35L41 安全状态机 | `check-cirrus-cs35l41-host.py` | 29 | 无 | M3 未完成 |
 | HAL 共享 ABI | `check-qcom-hal-abi-host.py` | 35 | 无 | A4 未完成 |
+| GENI I2C 传输 | `check-qcom-geni-i2c-host.py` | 39 | 无 | M3 未完成 |
 | 采集统计 | `check-qcom-audio-capture-host.py` | 30 | 无 | A5 未完成 |
 | 恢复顺序（端到端） | `check-qcom-audio-session-host.py` | 17 | 无 | A6 未完成 |
 
-合计 **502 项**主机检查，全部在 ASan/UBSan 下运行，且不依赖任何 fuxi 数值。
+合计 **541 项**主机检查，全部在 ASan/UBSan 下运行，且不依赖任何 fuxi 数值。
 
 | 门禁 | 覆盖 | 状态 |
 | --- | --- | --- |
-| `check-fuxi-audio-binding.py` | 108 个字段 / 89 个层字段 | 0 verified，108 unverified |
+| `check-fuxi-audio-binding.py` | 123 个字段 / 104 个层字段 | 0 verified，123 unverified |
 | `check-fuxi-audio-facts.py` | 两颗 CS35L41、TDM/WCD 接线 | source-confirmed；runtime unverified |
 
 ### 9.2 主机检查能证明什么、不能证明什么
@@ -700,8 +701,8 @@ A0 仍未完成的部分是 **ADSP 加载器本身**（`adsp.mbn`/`adsp_dtb.mbn`
 
 ## 13. 当前未执行事项
 
-主机侧已经完整：11 个板级无关层与 2 道门禁（9.1），502 项检查全部在 ASan/UBSan 下通过，且没有一条依赖 fuxi 的数值。
-每个文件都把自己的板级值做成了入参，`facts/audio/binding.toml` 用 108 个字段记录它们，门禁拒绝未验证值进入构建。
+主机侧已经完整：11 个板级无关层与 2 道门禁（9.1），541 项检查全部在 ASan/UBSan 下通过，且没有一条依赖 fuxi 的数值。
+每个文件都把自己的板级值做成了入参，`facts/audio/binding.toml` 用 123 个字段记录它们，门禁拒绝未验证值进入构建。
 
 仍然没有做、也无法在主机上做的：
 
