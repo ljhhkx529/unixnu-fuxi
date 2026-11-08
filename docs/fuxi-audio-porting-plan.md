@@ -513,7 +513,7 @@ unixnu-fuxi
 
 ### 9.1 当前状态（主机侧已完成，真机侧全部空缺）
 
-下表由 \`scripts/report-fuxi-audio-status.py\` 生成：它实际运行每个套件并汇总，所以数字不会随文档漂移。
+下表由 `scripts/report-fuxi-audio-status.py` 生成：它实际运行每个套件并汇总，所以数字不会随文档漂移。
 
 | 对象 | Host 套件 | 项数 | Device 证据 | 等级 |
 | --- | --- | --- | --- | --- |
