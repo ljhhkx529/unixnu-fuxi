@@ -44,3 +44,32 @@ next_single_measurement: H1（控制协议 codec 与拒绝策略）
 已排除，否则它们提到函数名就会被误判成调用点。
 
 **不做的事**：不据此宣称设备上没有回归——runbook 要求三次稳定启动（G0）才能把"代码上不可达"升级为"设备上无回退"。
+
+---
+
+## H5 — SMEM 解析器只读模糊测试
+
+```text
+test_id: H5
+result: PASS
+device_commit: e133ba1（设备仓库 V2）
+kernel_commit: 未参与（host 测试）
+image_sha256: 未参与
+boot_args: 未参与
+smem_before_checksum: 每个变异体在解析前记录
+smem_after_checksum: 只读调用后必须与 before 逐字节相同
+unexpected_diff: 无
+classification: 14 个单点变异（坏 magic、超大 entry count、未知 version、零/越界 partition offset、
+               溢出 size、缺 partition magic、header 与 entry 不一致、free 指针逆序、坏 canary、
+               item size 越界、padding 溢出、未对齐 offset、非 2 的幂 cacheline）+ 4000 轮噪声，
+               全部被拒或停留在界内；只读调用未改变任何字节
+next_single_measurement: H6（shadow allocation 的 byte diff）
+```
+
+门禁：`python3 scripts/check-fuxi-audio-probe-h5.py`
+
+它复用 A0 夹具构造一张**合法**镜像，然后每次只改一个字段，要求解析器要么拒绝、要么在界内；随后用 memcmp 证明只读
+调用（`qcom_smem_partition` / `find` / `item_count` / `item_at`）**一个字节都没改**。噪声部分要求 4000 轮随机镜像
+**没有任何一次**被当成合法分区表。
+
+**不做的事**：不据此宣称真实 SMEM 的页表属性或 cache 语义正确——那是 G2.6 的设备义务。
