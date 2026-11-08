@@ -542,6 +542,16 @@ Host 编译通过、host test 通过和真机观察必须分开报告。对失�
 	extbf{拒绝}（未对齐邮箱、过小邮箱、未开就发、超长消息、超过四条命令、写表太小），以及 cmd-db 的坏 magic/过短/越界 aux
 与档位索引的四种取值、两套 RSC 布局的差异和一次请求的 12 次写入顺序。
 
+### A0 加载顺序（完成于本轮）
+
+`package/QcomAdsp.{h,c}` 把上面七件串成一条不会等待的状态机：镜像落位（每段过 `qcom_mdt_place`）→ 认证 hook →
+内存 hook → QMP 握手与 load-state 请求 → 等 DSP 的 ready 位 → GLINK 与通道就绪。**板级值全部入参**
+（carveout、entry 名、ready/fatal 位、load-state 文本、三个超时），需要硬件的两步是 hook。
+
+`scripts/check-qcom-adsp-host.py` 在 ASan/UBSan 下跑 **33 项**：一条完整成功路径（真实 Mdt/Qmp/Smp2p/Glink 在下面，
+AOP 逐寄存器模拟），以及逐项故障注入——carveout 小于镜像、小于取整后的 span、缺 hook、认证失败、认证需要再来一次、
+内存失败、邮箱无描述符、邮箱永不开启、DSP 永不 ready、DSP 报 fatal、链路永不上、失败后再调用仍返回同一原因。
+
 A0 仍未完成的部分是 **ADSP 加载器本身**（`adsp.mbn`/`adsp_dtb.mbn` 的段、内存窗口、代理电源域、SMEM 布局的实际取值），
 它需要 fuxi 的固件与设备证据，按计划保持未验证。
 
