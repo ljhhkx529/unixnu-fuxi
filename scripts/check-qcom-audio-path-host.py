@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory() as temporary:
         "-fsanitize=address,undefined",
         str(PACKAGE / "tests/qcom_audio_path_host.c"),
         str(PACKAGE / "QcomAudioPath.c"),
-        str(PACKAGE / "QcomAudioReach.c"),
+        str(PACKAGE / "QcomAudioGraph.c"),
         str(PACKAGE / "ShengGpr.c"),
         str(PACKAGE / "QcomGlink.c"),
         "-o", str(executable),

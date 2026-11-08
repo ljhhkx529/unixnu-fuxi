@@ -26,7 +26,6 @@ void qcom_audio_path_init(QcomAudioPath *p, const QcomAudioPathConfig *config, Q
     if (p->periods_in_flight > QCOM_AUDIOPATH_MAX_PERIODS) p->periods_in_flight = QCOM_AUDIOPATH_MAX_PERIODS;
 }
 
-/* The stage that follows a finished one. */
 static int next_stage(int state)
 {
     switch (state) {
@@ -39,17 +38,15 @@ static int next_stage(int state)
     }
 }
 
-/* The generation sits above the counter, so a reply from before a restart can never match. The full value is
- * what the reply is compared against, so p->token holds the token itself and p->counter counts the commands. */
+/* The generation sits above the counter, so a reply from before a restart can never match. */
 static uint32_t next_token(QcomAudioPath *p)
 {
     p->token = (p->generation << 24) | (++p->counter & 0x00ffffffu);
     return p->token;
 }
 
-/* Hands the frame already sitting in p->tx to GLINK. A send that cannot go out yet (no remote intent, no room)
- * leaves the frame in place, so the next step retries the same bytes instead of a new token: the command is
- * never lost between encoding and sending. */
+/* Hands the packet already sitting in p->tx to GLINK. A send that cannot go out yet keeps the bytes, so the next step
+ * retries them instead of building a new command with a new token. */
 static int try_send(QcomAudioPath *p)
 {
     const int rc = qcom_glink_send(p->link, p->channel, p->tx, p->tx_bytes);
@@ -65,21 +62,12 @@ static int try_send(QcomAudioPath *p)
     return fail(p, QcomPathBadConfig);
 }
 
-/* Frames one APM payload with QcomGpr into p->tx and tries to send it. The payload always lives in another buffer
- * (p->apm or the caller's), never in p->tx: encoding a packet over its own payload would overwrite it. */
-static int submit(QcomAudioPath *p, uint32_t opcode, const uint8_t *payload, uint32_t bytes)
+/* Records what a builder produced in p->tx and tries to send it. */
+static int built(QcomAudioPath *p, int rc, uint32_t bytes, uint32_t opcode)
 {
-    GprPacket packet;
-    for (uint32_t i = 0; i < sizeof packet; ++i) ((uint8_t *)&packet)[i] = 0;
-    packet.dst_domain = GPR_DOMAIN_ADSP;
-    packet.src_domain = GPR_DOMAIN_APPS;
-    packet.src_port = p->config.gpr_port;
-    packet.dst_port = GPR_PORT_APM;
-    packet.token = next_token(p);
-    packet.opcode = opcode;
-    const uint32_t size = gpr_encode(p->tx, sizeof p->tx, &packet, payload, bytes);
-    if (!size) return fail(p, QcomPathBadConfig);
-    p->tx_bytes = size;
+    if (rc < 0) return fail(p, rc);
+    if (!bytes) return fail(p, QcomPathBadConfig);
+    p->tx_bytes = bytes;
     p->tx_pending = 1;
     p->outstanding_opcode = opcode;
     p->stage_sent = 0;
@@ -94,18 +82,16 @@ int qcom_audio_path_receive(QcomAudioPath *p, const uint8_t *data, uint32_t leng
         (void)gpr_spf_receive(&p->spf, data, length);
         return QcomPathOk;
     }
-    GprPacket packet;
-    if (gpr_decode(data, length, &packet) != GprOk) {++p->unknown; return QcomPathOk;}
-    if (packet.dst_domain != GPR_DOMAIN_APPS) {++p->unknown; return QcomPathOk;}
     QcomArAnswer answer;
-    if (qcom_ar_parse(&packet, &answer) == QcomArAnswerBad) {++p->unknown; return QcomPathOk;}
-    /* A data-done answer belongs to whichever period carries that address; the commands keep a single
-     * outstanding transaction, so a data answer is matched before the token gate. */
-    if (packet.opcode == QCOM_AR_OP_DATA_WRITE_DONE) {
-        QcomArAnswer data;
-        if (qcom_ar_parse(&packet, &data) != QcomArAnswerDataDone) {++p->unknown; return QcomPathOk;}
+    const int kind = qcom_ar_parse(data, length, &answer);
+    if (kind == QcomArAnswerBad) {++p->unknown; return QcomPathOk;}
+    if (answer.src_port != GPR_PORT_APM && kind != QcomArAnswerWriteDone) {++p->unknown; return QcomPathOk;}
+
+    /* A data-done answer belongs to whichever period carries that address; the commands keep a single outstanding
+     * transaction, so a data answer is matched before the token gate. */
+    if (kind == QcomArAnswerWriteDone) {
         for (uint32_t i = 0; i < QCOM_AUDIOPATH_MAX_PERIODS; ++i) {
-            if (!p->period[i].active || p->period[i].address != data.address) continue;
+            if (!p->period[i].active || p->period[i].address != answer.address) continue;
             p->period[i].active = 0;
             ++p->completed;
             return QcomPathOk;
@@ -114,9 +100,9 @@ int qcom_audio_path_receive(QcomAudioPath *p, const uint8_t *data, uint32_t leng
         return QcomPathOk;
     }
     /* One command transaction is outstanding: a reply for anything else belongs to an older one. */
-    if (!p->outstanding || packet.token != p->token) {++p->late; return QcomPathOk;}
+    if (!p->outstanding || answer.token != p->token) {++p->late; return QcomPathOk;}
 
-    switch (qcom_ar_parse(&packet, &answer)) {
+    switch (kind) {
     case QcomArAnswerBasicResult:
         if (answer.status) return fail(p, QcomPathCommandFailed);
         if (answer.result_opcode != p->outstanding_opcode) {++p->late; return QcomPathOk;}
@@ -132,6 +118,14 @@ int qcom_audio_path_receive(QcomAudioPath *p, const uint8_t *data, uint32_t leng
     }
 }
 
+uint32_t qcom_audio_path_in_flight(const QcomAudioPath *p)
+{
+    uint32_t n = 0;
+    if (!p) return 0;
+    for (uint32_t i = 0; i < QCOM_AUDIOPATH_MAX_PERIODS; ++i) if (p->period[i].active) ++n;
+    return n;
+}
+
 int qcom_audio_path_step(QcomAudioPath *p)
 {
     if (!p) return QcomPathBadConfig;
@@ -142,18 +136,17 @@ int qcom_audio_path_step(QcomAudioPath *p)
 
     switch (p->state) {
     case QcomPathIdle:
-        if (!p->config.graph || !p->config.endpoint || !p->config.endpoint_format ||
-            !p->config.stream_format || !p->config.buffer_bytes || !p->link || !p->channel)
+        if (!p->config.graph || !p->config.modules || !p->config.module_count || !p->config.endpoint_instance ||
+            !p->config.endpoint_interface || !p->config.endpoint_format || !p->config.stream_format ||
+            !p->config.shmem_instance || !p->config.buffer_bytes || !p->link || !p->channel)
             return fail(p, QcomPathBadConfig);
         gpr_spf_init(&p->spf, p->config.gpr_port, DEFAULT_SPF_QUERIES);
         p->state = QcomPathSpf;
         return QcomPathOk;
     case QcomPathSpf: {
         if (qcom_glink_poll(p->link) == QcomGlinkCorrupt) return fail(p, QcomPathSpfError);
-        const int spf = p->spf.state;
-        if (spf == SpfReady) {p->state = QcomPathOpen; return QcomPathOk;}
-        if (spf == SpfGaveUp) return fail(p, QcomPathSpfTimeout);
-        /* The probe consumes a query when it hands one out, so the frame is kept until GLINK takes it. */
+        if (p->spf.state == SpfReady) {p->state = QcomPathOpen; return QcomPathOk;}
+        if (p->spf.state == SpfGaveUp) return fail(p, QcomPathSpfTimeout);
         if (!p->tx_pending) {
             uint8_t query[GPR_HEADER_BYTES];
             const uint32_t n = gpr_spf_next(&p->spf, query);
@@ -177,13 +170,12 @@ int qcom_audio_path_step(QcomAudioPath *p)
     case QcomPathMap:
     case QcomPathStart: {
         if (qcom_glink_poll(p->link) == QcomGlinkCorrupt) return fail(p, QcomPathCommandFailed);
+        if (p->tx_pending) return try_send(p);
         if (p->outstanding) {
             if (++p->waits > budget) {++p->timeouts; return fail(p, QcomPathTimeout);}
             return QcomPathAgain;
         }
-        if (p->tx_pending) return try_send(p);
         if (p->stage_sent) {
-            /* The reply arrived: on to the next stage. */
             p->stage_sent = 0;
             p->waits = 0;
             const int next = next_stage(p->state);
@@ -191,66 +183,61 @@ int qcom_audio_path_step(QcomAudioPath *p)
             p->state = next;
             return QcomPathOk;
         }
-        uint32_t bytes = 0;
-        uint32_t opcode = QCOM_AR_OP_SET_CFG;
+
+        const uint32_t token = next_token(p);
         switch (p->state) {
-        case QcomPathOpen:
-            opcode = QCOM_AR_OP_GRAPH_OPEN;
-            bytes = qcom_ar_open_graph(p->apm, sizeof p->apm, p->config.graph);
-            break;
-        case QcomPathEndpoint:
-            bytes = qcom_ar_configure_endpoint(p->apm, sizeof p->apm, p->config.endpoint,
-                                               p->config.endpoint_format);
-            break;
-        case QcomPathStream:
-            bytes = qcom_ar_configure_stream(p->apm, sizeof p->apm, p->config.stream_instance,
-                                             p->config.stream_format);
-            break;
-        case QcomPathMap:
-            opcode = QCOM_AR_OP_MEM_MAP;
-            bytes = qcom_ar_map(p->apm, sizeof p->apm, p->config.stream_instance, p->config.buffer_address,
-                                p->config.buffer_bytes);
-            break;
-        default:
-            opcode = QCOM_AR_OP_GRAPH_START;
-            bytes = qcom_ar_graph_command(p->apm, sizeof p->apm, QCOM_AR_APM_INSTANCE,
-                                          p->config.graph->graph_id);
-            break;
+        case QcomPathOpen: {
+            const uint32_t n = qcom_ar_graph_open(p->tx, sizeof p->tx, p->config.gpr_port, token, p->config.graph,
+                                                  p->config.modules, p->config.module_count, p->config.links,
+                                                  p->config.link_count);
+            return built(p, n ? 0 : QcomPathBadConfig, n, QCOM_AR_OP_GRAPH_OPEN);
         }
-        if (!bytes) return fail(p, QcomPathBadConfig);
-        return submit(p, opcode, p->apm, bytes);
+        case QcomPathEndpoint: {
+            const uint32_t n = qcom_ar_config_hw_endpoint(p->tx, sizeof p->tx, p->config.gpr_port, token,
+                                                          p->config.apm_iid, p->config.endpoint_instance,
+                                                          p->config.endpoint_interface, p->config.endpoint_format);
+            return built(p, n ? 0 : QcomPathBadConfig, n, QCOM_AR_OP_SET_CFG);
+        }
+        case QcomPathStream: {
+            const uint32_t n = qcom_ar_config_pcm_output(p->tx, sizeof p->tx, p->config.gpr_port, token,
+                                                         p->config.apm_iid, p->config.stream_instance,
+                                                         p->config.stream_format, QCOM_AR_INTERLEAVED);
+            return built(p, n ? 0 : QcomPathBadConfig, n, QCOM_AR_OP_SET_CFG);
+        }
+        case QcomPathMap: {
+            const uint32_t n = qcom_ar_map(p->tx, sizeof p->tx, p->config.gpr_port, token, p->config.apm_iid,
+                                           p->config.buffer_address, p->config.buffer_bytes);
+            return built(p, n ? 0 : QcomPathBadConfig, n, QCOM_AR_OP_MEM_MAP);
+        }
+        default: {
+            const uint32_t n = qcom_ar_graph_command(p->tx, sizeof p->tx, p->config.gpr_port, token,
+                                                     p->config.apm_iid, QCOM_AR_OP_GRAPH_START,
+                                                     p->config.graph->subgraph_id);
+            return built(p, n ? 0 : QcomPathBadConfig, n, QCOM_AR_OP_GRAPH_START);
+        }
+        }
     }
     default:
         return fail(p, QcomPathWrongState);
     }
 }
 
-uint32_t qcom_audio_path_in_flight(const QcomAudioPath *p)
-{
-    uint32_t n = 0;
-    if (!p) return 0;
-    for (uint32_t i = 0; i < QCOM_AUDIOPATH_MAX_PERIODS; ++i) if (p->period[i].active) ++n;
-    return n;
-}
-
 int qcom_audio_path_period(QcomAudioPath *p, uint32_t bytes)
 {
     if (!p || p->state != QcomPathRunning) return QcomPathWrongState;
     if (!bytes || bytes > p->config.buffer_bytes) return QcomPathBadConfig;
-    /* A command still on its way owns the transmit buffer, and the DSP only owes a bounded number of periods. */
     if (p->outstanding || p->tx_pending) return QcomPathAgain;
     if (qcom_audio_path_in_flight(p) >= p->periods_in_flight) return QcomPathAgain;
-    /* Each period starts where the previous one ended, wrapping at the end of the mapped buffer, so two periods
-     * never carry the same address: the address is what the DSP's answer is matched against. */
+
+    /* Each period starts where the previous one ended and wraps, so two periods never carry the same address: the
+     * address is what the DSP's answer is matched against. */
     const uint64_t offset = p->cursor;
     p->cursor = (uint32_t)((p->cursor + bytes) % p->config.buffer_bytes);
-    const uint32_t payload = bytes;
-    uint8_t frame[32];
-    frame[0] = (uint8_t)((p->config.buffer_address + offset) & 0xff);
-    for (unsigned i = 1; i < 8; ++i) frame[i] = (uint8_t)(((p->config.buffer_address + offset) >> (8 * i)) & 0xff);
-    for (unsigned i = 0; i < 4; ++i) frame[8 + i] = (uint8_t)((p->map_handle >> (8 * i)) & 0xff);
-    for (unsigned i = 0; i < 4; ++i) frame[12 + i] = (uint8_t)((payload >> (8 * i)) & 0xff);
-    const int rc = submit(p, QCOM_AR_OP_DATA_WRITE, frame, sizeof frame);
+    const uint32_t token = next_token(p);
+    const uint32_t n = qcom_ar_write(p->tx, sizeof p->tx, p->config.gpr_port, token, p->config.shmem_instance,
+                                     p->config.buffer_address + offset, p->map_handle, bytes);
+    if (!n) return fail(p, QcomPathBadConfig);
+    const int rc = built(p, 0, n, QCOM_AR_OP_WRITE);
     if (rc != QcomPathOk) return rc;
     for (uint32_t i = 0; i < QCOM_AUDIOPATH_MAX_PERIODS; ++i) {
         if (p->period[i].active) continue;
@@ -260,7 +247,7 @@ int qcom_audio_path_period(QcomAudioPath *p, uint32_t bytes)
         ++p->submitted;
         break;
     }
-    /* The frame's token is not the period's identity: the DSP echoes the address, which is. */
+    /* A period's identity is its address, not its token, so the command slot is free again at once. */
     p->outstanding = 0;
     p->tx_pending = 0;
     p->stage_sent = 0;
@@ -275,8 +262,11 @@ int qcom_audio_path_restart(QcomAudioPath *p, uint32_t generation)
     for (uint32_t i = 0; i < QCOM_AUDIOPATH_MAX_PERIODS; ++i) p->period[i].active = 0;
     p->generation = generation;
     p->outstanding = 0;
+    p->tx_pending = 0;
+    p->stage_sent = 0;
     p->waits = 0;
     p->map_handle = 0;
+    p->cursor = 0;
     p->state = QcomPathIdle;
     p->last_error = QcomPathOk;
     return QcomPathOk;

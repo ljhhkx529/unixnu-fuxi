@@ -154,10 +154,10 @@ static void dsp_receive(void *context, QcomGlinkChannel *channel, const uint8_t 
         dsp_send(d, &packet, QCOM_AR_OP_MEM_MAP_DONE, handle, sizeof handle);
         return;
     }
-    if (packet.opcode == QCOM_AR_OP_DATA_WRITE) {
+    if (packet.opcode == QCOM_AR_OP_WRITE) {
         uint8_t done[16] = {0};
         for (unsigned i = 0; i < 8 && i < packet.payload_bytes; ++i) done[i] = packet.payload[i];
-        dsp_send(d, &packet, QCOM_AR_OP_DATA_WRITE_DONE, done, sizeof done);
+        dsp_send(d, &packet, QCOM_AR_OP_WRITE_DONE, done, sizeof done);
         return;
     }
     uint8_t result[8] = {0};
@@ -187,11 +187,15 @@ static int mute_hook(void *context)
     return r->mute_result;
 }
 
-static const QcomArModule modules[] = {{0x101u, QCOM_AR_MOD_SHARED_MEMORY, 0, 1}};
-static const QcomArGraph graph = {0x7001u, 2, QCOM_AR_DIR_RX, QCOM_AR_SCENARIO_PLAYBACK, 0x8001u,
-                                  QCOM_AR_POSITION_STREAM, 8192, GPR_DOMAIN_ADSP, modules, 1, 0, 0};
-static const QcomArEndpoint endpoint = {0x102u, 0x102u, QCOM_AR_INTERFACE_CODEC_DMA, 0x4u, 0, 0, 0, 0x3u};
-static const QcomArFormat format = {QCOM_AR_MEDIA_PCM, 16, 2, QCOM_AR_INTERLEAVED, 4};
+static const QcomArGraphSpec graph = {1u, 0x5100u, 2u, QCOM_AR_DIR_RX, 1u, 0x9001u, 4u, 8192u, GPR_DOMAIN_ADSP};
+static const QcomArGraphModule modules[] = {
+    {QCOM_AR_MOD_WR_SHMEM, 0x6001u, 0u, 1u},
+    {QCOM_AR_MOD_PCM_CNV, 0x6003u, 1u, 1u},
+    {QCOM_AR_MOD_I2S_SINK, 0x6051u, 1u, 0u},
+};
+static const QcomArGraphLink links[] = {{0x6001u, 0x6003u}, {0x6003u, 0x6051u}};
+static const QcomArI2sInterface intf = {QCOM_AR_LPAIF, QCOM_AR_I2S_SECONDARY, QCOM_AR_I2S_SD1, QCOM_AR_WS_INTERNAL};
+static const QcomArFormat format = {48000u, 16u, 2u};
 
 static void rig_init(Rig *r, uint64_t carveout)
 {
@@ -237,11 +241,18 @@ static void rig_init(Rig *r, uint64_t carveout)
     pc.gpr_port = 3u;
     pc.token_seed = 0x1000u;
     pc.timeout_steps = 8u;
+    pc.apm_iid = 1u;
     pc.graph = &graph;
-    pc.endpoint = &endpoint;
+    pc.modules = modules;
+    pc.module_count = 3u;
+    pc.links = links;
+    pc.link_count = 2u;
+    pc.endpoint_instance = 0x6051u;
+    pc.stream_instance = 0x6003u;
+    pc.shmem_instance = 0x6001u;
+    pc.endpoint_interface = &intf;
     pc.endpoint_format = &format;
     pc.stream_format = &format;
-    pc.stream_instance = 0x101u;
     pc.buffer_address = 0x8f000000ull;
     pc.buffer_bytes = 0x4000u;
     pc.periods_in_flight = 4u;
@@ -304,6 +315,7 @@ static void test_happy_and_restart(void)
     memset(&packet, 0, sizeof packet);
     packet.dst_domain = GPR_DOMAIN_APPS;
     packet.src_domain = GPR_DOMAIN_ADSP;
+    packet.src_port = GPR_PORT_APM;
     packet.opcode = GPR_OP_BASIC_RESULT;
     packet.token = (1u << 24) | 3u;   /* generation one */
     const uint8_t result[8] = {0};

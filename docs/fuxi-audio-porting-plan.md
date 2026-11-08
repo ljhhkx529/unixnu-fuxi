@@ -522,10 +522,9 @@ unixnu-fuxi
 | QMP / RPMh | `check-qcom-loader-host.py` | 52 | 无 | A0 未完成 |
 | ADSP 加载顺序 | `check-qcom-adsp-host.py` | 33 | 无 | A0 未完成 |
 | GPR（sheng 原样） | `check-gpr-host.py` | 37 | 无 | A1–A2 未完成 |
-| AudioReach 载荷与应答 | `check-qcom-audioreach-host.py` | 57 | 无 | A1–A2 未完成 |
 | AudioReach 构造（sheng 结构） | `check-qcom-audio-graph-host.py` | 67 | 无 | A3 未完成 |
 | 静音数据面（含 period 窗口） | `check-qcom-audio-path-host.py` | 28 | 无 | A1–A2 未完成 |
-| speaker 拓扑 | `check-qcom-audio-topology-host.py` | 31 | 无 | A3 未完成 |
+| speaker 拓扑 | `check-qcom-audio-topology-host.py` | 37 | 无 | A3 未完成 |
 | 共享输出环 | `check-qcom-audio-ring-host.py` | 31 | 无 | A4 未完成 |
 | CS35L41 安全状态机 | `check-cirrus-cs35l41-host.py` | 29 | 无 | M3 未完成 |
 | HAL 共享 ABI | `check-qcom-hal-abi-host.py` | 35 | 无 | A4 未完成 |
@@ -533,7 +532,7 @@ unixnu-fuxi
 | 采集统计 | `check-qcom-audio-capture-host.py` | 30 | 无 | A5 未完成 |
 | 恢复顺序（端到端） | `check-qcom-audio-session-host.py` | 17 | 无 | A6 未完成 |
 
-合计 **2702 项**主机检查，全部在 ASan/UBSan 下运行，且不依赖任何 fuxi 数值。
+合计 **2651 项**主机检查，全部在 ASan/UBSan 下运行，且不依赖任何 fuxi 数值。
 
 | 门禁 | 覆盖 | 状态 |
 | --- | --- | --- |
@@ -702,7 +701,7 @@ A0 仍未完成的部分是 **ADSP 加载器本身**（`adsp.mbn`/`adsp_dtb.mbn`
 
 ## 13. 当前未执行事项
 
-主机侧已经完整：11 个板级无关层与 2 道门禁（9.1），2702 项检查全部在 ASan/UBSan 下通过，且没有一条依赖 fuxi 的数值。
+主机侧已经完整：11 个板级无关层与 2 道门禁（9.1），2651 项检查全部在 ASan/UBSan 下通过，且没有一条依赖 fuxi 的数值。
 每个文件都把自己的板级值做成了入参，`facts/audio/binding.toml` 用 108 个字段记录它们，门禁拒绝未验证值进入构建。
 
 仍然没有做、也无法在主机上做的：

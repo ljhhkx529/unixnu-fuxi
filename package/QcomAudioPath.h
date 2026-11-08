@@ -1,38 +1,35 @@
 /* SPDX-License-Identifier: BSD-2-Clause-Patent */
-/* The silent AudioReach data path: SPF readiness, graph open, endpoint and stream configuration, buffer map,
+/* The silent AudioReach data path: framework readiness, graph open, endpoint and stream configuration, buffer map,
  * graph start, then periods written into the mapped buffer.
  *
- * One transaction is outstanding at a time and carries a token. A reply that does not match it is counted as
- * late instead of being applied to the wrong request, and a restart generation makes every reply from the
- * previous generation stale, so an ADSP restart cannot be mistaken for an answer to the new bring-up.
- *
- * Nothing here is board specific: the graph, the endpoint, the formats and the buffer arrive in
- * QcomAudioPathConfig, and the bytes travel over GLINK through QcomGpr, so the host tests run the real
- * transport with a simulated DSP on the other side. */
+ * Every command is built by QcomAudioGraph, which is sheng's builder with the board taken out, so the packets are
+ * the ones sheng sends and only the instances, the interface and the format differ. One transaction is outstanding
+ * at a time and carries a token whose upper byte is the restart generation, so a reply from before an ADSP restart
+ * can never be applied to the new bring-up. Periods are matched by the address they were written to, and their
+ * window is board configuration. */
 #ifndef QCOM_AUDIOPATH_H
 #define QCOM_AUDIOPATH_H
 
 #include <stdint.h>
 
-#include "QcomAudioReach.h"
+#include "QcomAudioGraph.h"
 #include "QcomGlink.h"
 #include "ShengGpr.h"
-
-/* Periods that may be in the DSP's hands at once. The board chooses how many; one is the safe default. */
-#define QCOM_AUDIOPATH_MAX_PERIODS 4u
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#define QCOM_AUDIOPATH_MAX_PERIODS 4u
+
 enum {
     QcomPathIdle = 0,
-    QcomPathSpf = 1,        /* waiting for the framework to report ready */
-    QcomPathOpen = 2,       /* graph open */
-    QcomPathEndpoint = 3,   /* hardware endpoint configuration */
-    QcomPathStream = 4,     /* stream module configuration */
-    QcomPathMap = 5,        /* buffer map */
-    QcomPathStart = 6,      /* graph start */
+    QcomPathSpf = 1,
+    QcomPathOpen = 2,
+    QcomPathEndpoint = 3,
+    QcomPathStream = 4,
+    QcomPathMap = 5,
+    QcomPathStart = 6,
     QcomPathRunning = 7,
     QcomPathFailed = -1,
 };
@@ -43,24 +40,28 @@ enum {
     QcomPathBadConfig = -1,
     QcomPathSpfTimeout = -2,
     QcomPathSpfError = -3,
-    QcomPathCommandFailed = -4,   /* the DSP answered with a non-zero status */
-    QcomPathTimeout = -5,         /* no answer within the step budget */
+    QcomPathCommandFailed = -4,
+    QcomPathTimeout = -5,
     QcomPathMapFailed = -6,
     QcomPathWrongState = -7,
 };
 
 typedef struct {
-    uint32_t gpr_port;            /* the GPR port the APM answers on */
-    uint32_t token_seed;
-    uint32_t timeout_steps;
-    const QcomArGraph *graph;
-    const QcomArEndpoint *endpoint;
-    const QcomArFormat *endpoint_format;
-    const QcomArFormat *stream_format;
-    uint32_t stream_instance;
+    uint32_t gpr_port, token_seed, timeout_steps;
+    uint32_t apm_iid;
+    /* the graph, from the board's topology */
+    const QcomArGraphSpec *graph;
+    const QcomArGraphModule *modules;
+    uint32_t module_count;
+    const QcomArGraphLink *links;
+    uint32_t link_count;
+    /* the instances inside it, and where the audio leaves the DSP */
+    uint32_t endpoint_instance, stream_instance, shmem_instance;
+    const QcomArI2sInterface *endpoint_interface;
+    const QcomArFormat *endpoint_format, *stream_format;
+    /* the buffer the DSP reads from */
     uint64_t buffer_address;
-    uint32_t buffer_bytes;
-    uint32_t periods_in_flight;   /* 1..QCOM_AUDIOPATH_MAX_PERIODS; zero means one */
+    uint32_t buffer_bytes, periods_in_flight;
 } QcomAudioPathConfig;
 
 typedef struct {
@@ -71,29 +72,19 @@ typedef struct {
     uint32_t token, counter, generation, outstanding_opcode;
     int state, last_error, outstanding;
     uint32_t steps, waits, submitted, completed, late, unknown, timeouts, cancelled;
-    uint32_t map_handle, cursor;   /* how far into the mapped buffer the next period starts */
-    uint32_t stage_sent;   /* the current stage's command went out and its reply is pending */
-    /* The periods the DSP has not answered yet, matched by the address each one was written to. */
+    uint32_t map_handle, cursor;
+    uint32_t stage_sent, tx_bytes, tx_pending;
     struct {uint64_t address; uint32_t bytes; uint8_t active;} period[QCOM_AUDIOPATH_MAX_PERIODS];
     uint32_t periods_in_flight;
-    uint32_t tx_bytes, tx_pending;   /* an encoded frame GLINK has not taken yet */
-    uint8_t apm[GPR_MAX_PACKET];   /* the APM payload the builders write */
-    uint8_t tx[GPR_MAX_PACKET];    /* the GPR packet QcomGpr frames around it */
+    uint8_t tx[GPR_MAX_PACKET];
 } QcomAudioPath;
 
 void qcom_audio_path_init(QcomAudioPath *p, const QcomAudioPathConfig *config, QcomGlink *link,
                           QcomGlinkChannel *channel);
-/* One step. QcomPathAgain when it is waiting for the DSP. */
 int qcom_audio_path_step(QcomAudioPath *p);
-/* Feeds one GLINK message, normally from the channel's receive callback. */
 int qcom_audio_path_receive(QcomAudioPath *p, const uint8_t *data, uint32_t length);
-/* After an ADSP restart: back to the start with a new generation, so replies from the old one are stale. */
 int qcom_audio_path_restart(QcomAudioPath *p, uint32_t generation);
-/* Queues one period once the path runs, up to the configured number in flight. The DSP's answer, matched by the
- * address the period was written to, is counted as a completed period; an answer for an address that is not
- * outstanding is counted as late, and a restart counts whatever was still in flight as cancelled. */
 int qcom_audio_path_period(QcomAudioPath *p, uint32_t bytes);
-/* How many periods the DSP still owes an answer for. */
 uint32_t qcom_audio_path_in_flight(const QcomAudioPath *p);
 
 #ifdef __cplusplus

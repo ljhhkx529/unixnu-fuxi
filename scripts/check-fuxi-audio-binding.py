@@ -23,7 +23,7 @@ PACKAGE = ROOT / "package"
 # them. A pointer to another struct counts as covered by that struct's own section.
 COVERED = {
     "QcomAdsp.h": ("QcomAdspConfig", ("adsp.carveout", "adsp.entries", "adsp.values", "adsp.timeouts"), ()),
-    "QcomAudioPath.h": ("QcomAudioPathConfig", ("path", "path.references"),
+    "QcomAudioPath.h": ("QcomAudioPathConfig", ("path", "path.references", "path.graph", "path.topology"),
                         ("graph", "endpoint", "endpoint_format", "stream_format")),
     "CirrusCs35l41.h": ("Cs35l41Binding", ("amp.registers", "amp.b", "amp.t"), ()),
     "QcomAudioRing.h": ("QcomAudioRingConfig", ("path.ring", "path"), ()),

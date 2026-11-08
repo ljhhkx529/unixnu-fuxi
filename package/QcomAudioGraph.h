@@ -60,6 +60,30 @@ extern "C" {
 #define QCOM_AR_OP_PRM_RELEASE 0x01001010u
 #define QCOM_AR_OP_PRM_REQUEST_DONE 0x02001002u
 #define QCOM_AR_OP_PRM_RELEASE_DONE 0x02001003u
+/* The DSP's module ids, unchanged from sheng: these are protocol constants, not board values. The board chooses
+ * which of them to use and on which instance. */
+#define QCOM_AR_MOD_WR_SHMEM 0x07001000u
+#define QCOM_AR_MOD_RD_SHMEM 0x07001001u
+#define QCOM_AR_MOD_PCM_CNV 0x07001003u
+#define QCOM_AR_MOD_PCM_ENC 0x07001004u
+#define QCOM_AR_MOD_PCM_DEC 0x07001005u
+#define QCOM_AR_MOD_I2S_SINK 0x0700100Au
+#define QCOM_AR_MOD_CODEC_DMA_SOURCE 0x07001024u
+/* The interface words the framework reads, also sheng's. */
+#define QCOM_AR_LPAIF 0u
+#define QCOM_AR_LPAIF_RXTX 1u
+#define QCOM_AR_I2S_SECONDARY 1u
+#define QCOM_AR_I2S_SD1 2u
+#define QCOM_AR_WS_INTERNAL 1u
+#define QCOM_AR_CODEC_TX3 4u
+/* Direction, scenario, performance and the container positions, also sheng's. */
+#define QCOM_AR_DIR_TX 1u
+#define QCOM_AR_DIR_RX 2u
+#define QCOM_AR_SCENARIO_PLAYBACK 1u
+#define QCOM_AR_SCENARIO_RECORD 2u
+#define QCOM_AR_PERF_LOW_LATENCY 2u
+#define QCOM_AR_POS_STREAM 1u
+#define QCOM_AR_POS_GLOBAL_DEV 4u
 #define QCOM_AR_MEDIA_PCM 0x09001000u
 #define QCOM_AR_INTERLEAVED 1u
 #define QCOM_AR_DEINTERLEAVED_UNPACKED 3u

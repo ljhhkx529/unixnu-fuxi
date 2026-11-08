@@ -86,11 +86,14 @@ host_clock_hz = { value = 0, state = "unverified", evidence = "none" }
 stream_instance = { value = 0, state = "unverified", evidence = "none" }
 stream_module = { value = 0, state = "unverified", evidence = "none" }
 endpoint_instance = { value = 0, state = "unverified", evidence = "none" }
+shmem_instance = { value = 0, state = "unverified", evidence = "none" }
 endpoint_module = { value = 0, state = "unverified", evidence = "none" }
 sample_rate = { value = 0, state = "unverified", evidence = "none" }
 slot_mask_a = { value = 0, state = "unverified", evidence = "none" }
 slot_mask_b = { value = 0, state = "unverified", evidence = "none" }
 slot_count = { value = 0, state = "unverified", evidence = "none" }
+shmem_module = { value = 0, state = "unverified", evidence = "none" }
+interface_word = { value = 0, state = "unverified", evidence = "none" }
 
 # The block the kernel service and the user-space HAL share. Offsets are part of the ABI; the values are board facts.
 [hal]

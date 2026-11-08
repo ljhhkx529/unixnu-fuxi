@@ -20,7 +20,7 @@ with tempfile.TemporaryDirectory() as temporary:
         str(PACKAGE / "QcomAudioSession.c"),
         str(PACKAGE / "QcomAdsp.c"),
         str(PACKAGE / "QcomAudioPath.c"),
-        str(PACKAGE / "QcomAudioReach.c"),
+        str(PACKAGE / "QcomAudioGraph.c"),
         str(PACKAGE / "QcomMdt.c"),
         str(PACKAGE / "QcomQmp.c"),
         str(PACKAGE / "QcomSmp2p.c"),

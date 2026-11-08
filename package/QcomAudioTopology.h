@@ -1,17 +1,16 @@
 /* SPDX-License-Identifier: BSD-2-Clause-Patent */
-/* Speaker topology assembled from explicit inputs, and the consistency checks that keep a wrong mapping from
- * reaching the DSP.
+/* The board's speaker topology turned into what QcomAudioGraph opens and QcomAudioPath drives.
  *
- * The board's amplifier count, which slots each one carries, the interface it hangs on and the sample format all
- * arrive as inputs. Nothing here invents a rate, a slot mask or a module id: the builder fills the AudioReach
- * structures the layers below take, and refuses a mapping that cannot be right - overlapping slots, a channel
- * count that disagrees with the masks, a width the endpoint cannot take, two modules sharing an instance. */
+ * The inputs are the board's facts - which modules, on which instances, on which interface, in which format, with
+ * which slots per amplifier - and the output is the graph spec, the module and connection lists, the endpoint
+ * interface and the two formats. Nothing here invents a rate, a slot mask or a module id, and a mapping that cannot
+ * be right is refused rather than passed on. */
 #ifndef QCOM_AUDIOTOPOLOGY_H
 #define QCOM_AUDIOTOPOLOGY_H
 
 #include <stdint.h>
 
-#include "QcomAudioReach.h"
+#include "QcomAudioGraph.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -20,14 +19,16 @@ extern "C" {
 #define QCOM_TOPOLOGY_MAX_MODULES 4u
 
 typedef struct {
-    /* graph identity, from the board */
-    uint32_t graph_id, container_id, container_position, container_stack_bytes;
+    /* where the graph lives */
+    uint32_t apm_iid;
+    uint32_t subgraph_id, container_id, container_position, container_stack_bytes, container_domain;
     uint32_t performance, direction, scenario;
     /* the modules that make the path: the stream side first, then the endpoint */
     uint32_t stream_instance, stream_module;
     uint32_t endpoint_instance, endpoint_module;
+    uint32_t shmem_instance, shmem_module;
     /* the endpoint's interface */
-    uint32_t interface_type, interface_index, secondary, line, ws_source;
+    uint32_t interface_index, interface_word, line, ws_source;
     /* the format both modules carry */
     uint32_t media, sample_rate, bit_width, channels, interleaving, bytes_per_frame;
     /* which slots carry audio, and how many slots the frame has */
@@ -47,18 +48,18 @@ enum {
     QcomTopologySlotRange = -9,
 };
 
-/* The assembled topology: the caller owns it, and the graph points into this same structure, so nothing is
- * static and nothing is thread local. */
 typedef struct {
-    QcomArModule modules[QCOM_TOPOLOGY_MAX_MODULES];
-    QcomArLink links[QCOM_TOPOLOGY_MAX_MODULES];
-    QcomArGraph graph;
-    QcomArEndpoint endpoint;
-    QcomArFormat format;
+    QcomArGraphSpec spec;
+    QcomArGraphModule modules[QCOM_TOPOLOGY_MAX_MODULES];
+    QcomArGraphLink links[QCOM_TOPOLOGY_MAX_MODULES];
+    uint32_t module_count, link_count;
+    QcomArI2sInterface endpoint_interface;
+    QcomArFormat endpoint_format, stream_format;
+    uint32_t endpoint_instance, stream_instance, shmem_instance;
 } QcomAudioTopology;
 
-/* Fills the topology from the inputs: the stream module, the endpoint module, the link between them, and the
- * endpoint and format the layers below take. */
+/* Fills the topology: shmem -> converter -> endpoint, joined by two connections, with the endpoint's interface and
+ * the format the caller supplied. */
 int qcom_audio_topology_build(const QcomAudioTopologyInputs *in, QcomAudioTopology *out);
 
 /* Which amplifier owns a slot, 0 for none: a slot may carry only one amplifier. */
