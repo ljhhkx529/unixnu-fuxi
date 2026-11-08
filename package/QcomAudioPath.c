@@ -69,15 +69,15 @@ static int try_send(QcomAudioPath *p)
  * (p->apm or the caller's), never in p->tx: encoding a packet over its own payload would overwrite it. */
 static int submit(QcomAudioPath *p, uint32_t opcode, const uint8_t *payload, uint32_t bytes)
 {
-    QcomGprPacket packet;
+    GprPacket packet;
     for (uint32_t i = 0; i < sizeof packet; ++i) ((uint8_t *)&packet)[i] = 0;
-    packet.dst_domain = QCOM_GPR_DOMAIN_ADSP;
-    packet.src_domain = QCOM_GPR_DOMAIN_APPS;
+    packet.dst_domain = GPR_DOMAIN_ADSP;
+    packet.src_domain = GPR_DOMAIN_APPS;
     packet.src_port = p->config.gpr_port;
-    packet.dst_port = QCOM_GPR_PORT_APM;
+    packet.dst_port = GPR_PORT_APM;
     packet.token = next_token(p);
     packet.opcode = opcode;
-    const uint32_t size = qcom_gpr_encode(p->tx, sizeof p->tx, &packet, payload, bytes);
+    const uint32_t size = gpr_encode(p->tx, sizeof p->tx, &packet, payload, bytes);
     if (!size) return fail(p, QcomPathBadConfig);
     p->tx_bytes = size;
     p->tx_pending = 1;
@@ -91,12 +91,12 @@ int qcom_audio_path_receive(QcomAudioPath *p, const uint8_t *data, uint32_t leng
     if (!p || !data) return QcomPathBadConfig;
     /* The framework's readiness answers belong to the probe, which tracks its own token sequence. */
     if (p->state == QcomPathSpf) {
-        (void)qcom_gpr_spf_receive(&p->spf, data, length);
+        (void)gpr_spf_receive(&p->spf, data, length);
         return QcomPathOk;
     }
-    QcomGprPacket packet;
-    if (qcom_gpr_decode(data, length, &packet) != QcomGprOk) {++p->unknown; return QcomPathOk;}
-    if (packet.dst_domain != QCOM_GPR_DOMAIN_APPS) {++p->unknown; return QcomPathOk;}
+    GprPacket packet;
+    if (gpr_decode(data, length, &packet) != GprOk) {++p->unknown; return QcomPathOk;}
+    if (packet.dst_domain != GPR_DOMAIN_APPS) {++p->unknown; return QcomPathOk;}
     QcomArAnswer answer;
     if (qcom_ar_parse(&packet, &answer) == QcomArAnswerBad) {++p->unknown; return QcomPathOk;}
     /* A data-done answer belongs to whichever period carries that address; the commands keep a single
@@ -145,19 +145,18 @@ int qcom_audio_path_step(QcomAudioPath *p)
         if (!p->config.graph || !p->config.endpoint || !p->config.endpoint_format ||
             !p->config.stream_format || !p->config.buffer_bytes || !p->link || !p->channel)
             return fail(p, QcomPathBadConfig);
-        qcom_gpr_spf_init(&p->spf, p->config.gpr_port, p->config.token_seed + p->generation,
-                          DEFAULT_SPF_QUERIES);
+        gpr_spf_init(&p->spf, p->config.gpr_port, DEFAULT_SPF_QUERIES);
         p->state = QcomPathSpf;
         return QcomPathOk;
     case QcomPathSpf: {
         if (qcom_glink_poll(p->link) == QcomGlinkCorrupt) return fail(p, QcomPathSpfError);
         const int spf = p->spf.state;
-        if (spf == QcomSpfReady) {p->state = QcomPathOpen; return QcomPathOk;}
-        if (spf == QcomSpfGaveUp) return fail(p, QcomPathSpfTimeout);
+        if (spf == SpfReady) {p->state = QcomPathOpen; return QcomPathOk;}
+        if (spf == SpfGaveUp) return fail(p, QcomPathSpfTimeout);
         /* The probe consumes a query when it hands one out, so the frame is kept until GLINK takes it. */
         if (!p->tx_pending) {
-            uint8_t query[QCOM_GPR_HEADER_BYTES];
-            const uint32_t n = qcom_gpr_spf_next(&p->spf, query);
+            uint8_t query[GPR_HEADER_BYTES];
+            const uint32_t n = gpr_spf_next(&p->spf, query);
             if (n) {
                 for (uint32_t i = 0; i < n; ++i) p->tx[i] = query[i];
                 p->tx_bytes = n;

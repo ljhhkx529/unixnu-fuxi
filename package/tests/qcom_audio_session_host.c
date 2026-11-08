@@ -119,18 +119,18 @@ static void session_receive(void *context, QcomGlinkChannel *channel, const uint
     (void)qcom_audio_path_receive(&g_session->path, data, length);
 }
 
-static void dsp_send(Dsp *d, const QcomGprPacket *request, uint32_t opcode, const uint8_t *payload, uint32_t bytes)
+static void dsp_send(Dsp *d, const GprPacket *request, uint32_t opcode, const uint8_t *payload, uint32_t bytes)
 {
-    QcomGprPacket packet;
+    GprPacket packet;
     memset(&packet, 0, sizeof packet);
-    packet.dst_domain = QCOM_GPR_DOMAIN_APPS;
-    packet.src_domain = QCOM_GPR_DOMAIN_ADSP;
+    packet.dst_domain = GPR_DOMAIN_APPS;
+    packet.src_domain = GPR_DOMAIN_ADSP;
     packet.src_port = request->dst_port;
     packet.dst_port = request->src_port;
     packet.token = request->token;
     packet.opcode = opcode;
-    uint8_t frame[QCOM_GPR_MAX_PACKET];
-    const uint32_t size = qcom_gpr_encode(frame, sizeof frame, &packet, payload, bytes);
+    uint8_t frame[GPR_MAX_PACKET];
+    const uint32_t size = gpr_encode(frame, sizeof frame, &packet, payload, bytes);
     if (!size) return;
     if (qcom_glink_send(&d->link, d->channel, frame, size) == QcomGlinkOk) return;
     if (size <= sizeof d->outbox) {memcpy(d->outbox, frame, size); d->pending_bytes = size;}
@@ -140,13 +140,13 @@ static void dsp_receive(void *context, QcomGlinkChannel *channel, const uint8_t 
 {
     (void)channel;
     Dsp *d = context;
-    QcomGprPacket packet;
-    if (qcom_gpr_decode(data, length, &packet) != QcomGprOk) return;
+    GprPacket packet;
+    if (gpr_decode(data, length, &packet) != GprOk) return;
     ++d->commands;
-    if (packet.opcode == QCOM_GPR_OP_APM_GET_SPF_STATE) {
+    if (packet.opcode == GPR_OP_APM_GET_SPF_STATE) {
         uint8_t state[4] = {0, 0, 0, 0};
         state[0] = (uint8_t)(d->spf_ready ? 1u : 0u);
-        dsp_send(d, &packet, QCOM_GPR_OP_APM_SPF_STATE, state, sizeof state);
+        dsp_send(d, &packet, GPR_OP_APM_SPF_STATE, state, sizeof state);
         return;
     }
     if (packet.opcode == QCOM_AR_OP_MEM_MAP) {
@@ -163,7 +163,7 @@ static void dsp_receive(void *context, QcomGlinkChannel *channel, const uint8_t 
     uint8_t result[8] = {0};
     result[0] = (uint8_t)packet.opcode; result[1] = (uint8_t)(packet.opcode >> 8);
     result[2] = (uint8_t)(packet.opcode >> 16); result[3] = (uint8_t)(packet.opcode >> 24);
-    dsp_send(d, &packet, QCOM_GPR_OP_BASIC_RESULT, result, sizeof result);
+    dsp_send(d, &packet, GPR_OP_BASIC_RESULT, result, sizeof result);
 }
 
 typedef struct {
@@ -189,7 +189,7 @@ static int mute_hook(void *context)
 
 static const QcomArModule modules[] = {{0x101u, QCOM_AR_MOD_SHARED_MEMORY, 0, 1}};
 static const QcomArGraph graph = {0x7001u, 2, QCOM_AR_DIR_RX, QCOM_AR_SCENARIO_PLAYBACK, 0x8001u,
-                                  QCOM_AR_POSITION_STREAM, 8192, QCOM_GPR_DOMAIN_ADSP, modules, 1, 0, 0};
+                                  QCOM_AR_POSITION_STREAM, 8192, GPR_DOMAIN_ADSP, modules, 1, 0, 0};
 static const QcomArEndpoint endpoint = {0x102u, 0x102u, QCOM_AR_INTERFACE_CODEC_DMA, 0x4u, 0, 0, 0, 0x3u};
 static const QcomArFormat format = {QCOM_AR_MEDIA_PCM, 16, 2, QCOM_AR_INTERLEAVED, 4};
 
@@ -300,14 +300,14 @@ static void test_happy_and_restart(void)
 
     /* An answer carrying the previous generation's token is ignored, not applied. */
     uint8_t stale[64];
-    QcomGprPacket packet;
+    GprPacket packet;
     memset(&packet, 0, sizeof packet);
-    packet.dst_domain = QCOM_GPR_DOMAIN_APPS;
-    packet.src_domain = QCOM_GPR_DOMAIN_ADSP;
-    packet.opcode = QCOM_GPR_OP_BASIC_RESULT;
+    packet.dst_domain = GPR_DOMAIN_APPS;
+    packet.src_domain = GPR_DOMAIN_ADSP;
+    packet.opcode = GPR_OP_BASIC_RESULT;
     packet.token = (1u << 24) | 3u;   /* generation one */
     const uint8_t result[8] = {0};
-    const uint32_t n = qcom_gpr_encode(stale, sizeof stale, &packet, result, sizeof result);
+    const uint32_t n = gpr_encode(stale, sizeof stale, &packet, result, sizeof result);
     const uint32_t late_before = r->session.path.late;
     (void)qcom_audio_path_receive(&r->session.path, stale, n);
     check(r->session.path.late == late_before + 1, "an answer from the previous generation is counted as late");

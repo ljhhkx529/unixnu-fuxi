@@ -41,7 +41,7 @@ int qcom_audio_topology_build(const QcomAudioTopologyInputs *in, QcomAudioTopolo
     out->links[0] = (QcomArLink){in->stream_instance, 1u, in->endpoint_instance, 2u};
     out->graph = (QcomArGraph){
         in->graph_id, in->performance, in->direction, in->scenario,
-        in->container_id, in->container_position, in->container_stack_bytes, QCOM_GPR_DOMAIN_ADSP,
+        in->container_id, in->container_position, in->container_stack_bytes, GPR_DOMAIN_ADSP,
         out->modules, 2u, out->links, 1u,
     };
     out->endpoint = (QcomArEndpoint){

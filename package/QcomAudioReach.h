@@ -12,7 +12,7 @@
 #define QCOM_AUDIOREACH_H
 
 #include <stdint.h>
-#include "QcomGpr.h"
+#include "ShengGpr.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -167,7 +167,7 @@ enum {
 };
 
 /* Interprets one decoded GPR packet. Rejects a payload that is too short for what its opcode promises. */
-int qcom_ar_parse(const QcomGprPacket *packet, QcomArAnswer *answer);
+int qcom_ar_parse(const GprPacket *packet, QcomArAnswer *answer);
 
 #ifdef __cplusplus
 }

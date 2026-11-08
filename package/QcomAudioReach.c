@@ -242,7 +242,7 @@ uint32_t qcom_ar_unmap(uint8_t *out, uint32_t capacity, uint32_t instance, uint3
     return w.bad ? 0 : w.n;
 }
 
-int qcom_ar_parse(const QcomGprPacket *packet, QcomArAnswer *answer)
+int qcom_ar_parse(const GprPacket *packet, QcomArAnswer *answer)
 {
     if (!packet || !answer) return QcomArAnswerBad;
     for (uint32_t i = 0; i < sizeof *answer; ++i) ((uint8_t *)answer)[i] = 0;
@@ -251,7 +251,7 @@ int qcom_ar_parse(const QcomGprPacket *packet, QcomArAnswer *answer)
     const uint32_t n = packet->payload_bytes;
 
     switch (packet->opcode) {
-    case QCOM_GPR_OP_BASIC_RESULT:
+    case GPR_OP_BASIC_RESULT:
         if (n < 8u) return QcomArAnswerBad;
         answer->result_opcode = le32(d); answer->status = le32(d + 4);
         return QcomArAnswerBasicResult;
@@ -264,7 +264,7 @@ int qcom_ar_parse(const QcomGprPacket *packet, QcomArAnswer *answer)
         if (n < 4u) return QcomArAnswerBad;
         answer->status = le32(d + (n >= 8u ? 4u : 0u));
         return QcomArAnswerPrmDone;
-    case QCOM_GPR_OP_APM_SPF_STATE:
+    case GPR_OP_APM_SPF_STATE:
         if (n < 4u) return QcomArAnswerBad;
         answer->status = le32(d);
         return QcomArAnswerFrameworkState;

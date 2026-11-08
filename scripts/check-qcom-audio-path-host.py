@@ -19,7 +19,7 @@ with tempfile.TemporaryDirectory() as temporary:
         str(PACKAGE / "tests/qcom_audio_path_host.c"),
         str(PACKAGE / "QcomAudioPath.c"),
         str(PACKAGE / "QcomAudioReach.c"),
-        str(PACKAGE / "QcomGpr.c"),
+        str(PACKAGE / "ShengGpr.c"),
         str(PACKAGE / "QcomGlink.c"),
         "-o", str(executable),
     ], check=True)

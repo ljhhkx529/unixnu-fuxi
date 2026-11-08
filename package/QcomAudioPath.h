@@ -16,7 +16,7 @@
 
 #include "QcomAudioReach.h"
 #include "QcomGlink.h"
-#include "QcomGpr.h"
+#include "ShengGpr.h"
 
 /* Periods that may be in the DSP's hands at once. The board chooses how many; one is the safe default. */
 #define QCOM_AUDIOPATH_MAX_PERIODS 4u
@@ -67,7 +67,7 @@ typedef struct {
     QcomAudioPathConfig config;
     QcomGlink *link;
     QcomGlinkChannel *channel;
-    QcomGprSpfProbe spf;
+    GprSpfProbe spf;
     uint32_t token, counter, generation, outstanding_opcode;
     int state, last_error, outstanding;
     uint32_t steps, waits, submitted, completed, late, unknown, timeouts, cancelled;
@@ -77,8 +77,8 @@ typedef struct {
     struct {uint64_t address; uint32_t bytes; uint8_t active;} period[QCOM_AUDIOPATH_MAX_PERIODS];
     uint32_t periods_in_flight;
     uint32_t tx_bytes, tx_pending;   /* an encoded frame GLINK has not taken yet */
-    uint8_t apm[QCOM_GPR_MAX_PACKET];   /* the APM payload the builders write */
-    uint8_t tx[QCOM_GPR_MAX_PACKET];    /* the GPR packet QcomGpr frames around it */
+    uint8_t apm[GPR_MAX_PACKET];   /* the APM payload the builders write */
+    uint8_t tx[GPR_MAX_PACKET];    /* the GPR packet QcomGpr frames around it */
 } QcomAudioPath;
 
 void qcom_audio_path_init(QcomAudioPath *p, const QcomAudioPathConfig *config, QcomGlink *link,

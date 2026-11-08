@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory() as temporary:
         str(PACKAGE / "QcomQmp.c"),
         str(PACKAGE / "QcomSmp2p.c"),
         str(PACKAGE / "QcomGlink.c"),
-        str(PACKAGE / "QcomGpr.c"),
+        str(PACKAGE / "ShengGpr.c"),
         "-o", str(executable),
     ], check=True)
     result = subprocess.run([str(executable)], capture_output=True, text=True)

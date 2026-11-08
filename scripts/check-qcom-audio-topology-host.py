@@ -19,7 +19,7 @@ with tempfile.TemporaryDirectory() as temporary:
         str(PACKAGE / "tests/qcom_audio_topology_host.c"),
         str(PACKAGE / "QcomAudioTopology.c"),
         str(PACKAGE / "QcomAudioReach.c"),
-        str(PACKAGE / "QcomGpr.c"),
+        str(PACKAGE / "ShengGpr.c"),
         "-o", str(executable),
     ], check=True)
     result = subprocess.run([str(executable)], capture_output=True, text=True)
