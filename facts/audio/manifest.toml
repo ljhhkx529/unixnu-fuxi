@@ -91,6 +91,10 @@ source = "qcom/audio/fuxi-audio-mtp.dtsi:3-55 only lists candidate routes"
 runtime_verified = false
 
 [adsp]
+# The container the peripheral authentication service takes: an ELF whose program headers carry the segment
+# types, with the hash segment it authenticates. This is the protocol, not a fuxi value.
+firmware_container = "elf32-or-elf64-with-hash-segment"
+firmware_container_source = "QcomMdt: qcom_mdt_parse/qcom_mdt_metadata, host-tested by scripts/check-qcom-mdt-host.py"
 firmware_source = "unverified"
 firmware_hash = "unverified"
 carveout = "unverified"

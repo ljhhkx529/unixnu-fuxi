@@ -525,6 +525,11 @@ Host 编译通过、host test 通过和真机观察必须分开报告。对失�
 `scripts/check-qcom-a0-host.py` 在 ASan/UBSan 下跑 **43 项**检查，其中包括**两个 GLINK 实例互为对端**：握手、
 通道建立、intent 交换、一次 `hello` 消息的双向传输与计数、以及一条"不可能成立的消息"必须让链路停止而非继续猜测。
 
+固件容器层（`package/QcomMdt.{h,c}`，同样来自 sheng 公共线）也一并迁入并补了主机测试：
+它解析安全世界接受的 ELF 容器（ELF/程序头、hash 段、可加载范围、carveout 内落位）以及 `.bNN` 分片按整镜像读取。
+`scripts/check-qcom-mdt-host.py` 在 ASan/UBSan 下跑 **43 项**，既构造了一份真实 ELF64 镜像，也逐条验证拒绝：
+坏 magic、大端、无程序头、超表长、段文件大小超内存大小、无 hash 段、无可加载段、越界落位、分片读取越界。
+
 A0 仍未完成的部分是 **ADSP 加载器本身**（`adsp.mbn`/`adsp_dtb.mbn` 的段、内存窗口、代理电源域、SMEM 布局的实际取值），
 它需要 fuxi 的固件与设备证据，按计划保持未验证。
 
