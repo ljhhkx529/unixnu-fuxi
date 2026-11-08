@@ -20,6 +20,7 @@ SUITES = [
     ("SMEM / SMP2P / GLINK", "scripts/check-qcom-a0-host.py", "QcomA0"),
     ("QMP / RPMh", "scripts/check-qcom-loader-host.py", "QcomLoader"),
     ("ADSP 加载顺序", "scripts/check-qcom-adsp-host.py", "QcomAdsp"),
+    ("ADSP 客户端层（sheng 形状）", "scripts/check-qcom-adsp-client-host.py", "QcomAdspClient"),
     ("GPR（sheng 原样）", "scripts/check-gpr-host.py", "GPR"),
     ("AudioReach 构造（sheng 结构）", "scripts/check-qcom-audio-graph-host.py", "QcomAudioGraph"),
     ("静音数据面", "scripts/check-qcom-audio-path-host.py", "QcomAudioPath"),
