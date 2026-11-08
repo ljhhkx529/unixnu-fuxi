@@ -186,3 +186,31 @@ fuxi-buttons: stage 3 irq 442 reports 390 mask 0 pon 560 gpio 583 clears 0 pdc 3
 
 内核命令行已到 1000 字节上限（1024 的限制，超了直接 `unixnu: the kernel command line is 1017 bytes` 失败）。
 为塞入新参数，`fuxi-touch-panic=0`（本来就是默认值）已删除。再加参数前要先腾位置。
+
+### 新证据：电源键有效，音量键无效（2026-11-08 20:25）
+
+这推翻了我此前“数字化器分类会挡掉 Consumer 报文”的判断：**电源键就是 Consumer 0x30，它能生效**，说明报文通路是通的。
+为此给两个 PMIC 外设加了按位累加的取证（`fuxi_buttons_edges`），一次按键都漏不掉：
+
+```
+fuxi-buttons: edges pon c0 last 40 gpio 1 last 1 bits e
+fuxi-buttons: stage 3 irq 245 reports 232 ... submit 232/0
+```
+
+- `pon 0xc0` = bit7（电源）+ bit6（RESIN，音量减）；
+- `gpio 0x1` = 音量加；
+- `bits 0xe` = report 位 1/2/3 全部产生过；`submit 232/0` 全部提交成功。
+
+**结论：驱动与 HID 设备对三个键都正确工作，音量键的报文确实发出去了。**
+
+### 据此改的一处：Consumer 集合独立
+
+原来的四个 Consumer 用法（Menu/Power/Vol+/Vol−）**嵌在键盘应用集合里面**，这不是键盘上报音量键的标准布局。
+现在它们单独成为一个 `Consumer Control` 应用集合（`05 0C 09 01 A1 01` … `C0`），键盘报告 1 与触控报告 3 的布局不变。
+镜像 `sha256 b199bcd7…`：触控仍正常（`hid49`），三个键位仍全部产出（`bits e`），无 panic。
+
+### 如果音量仍无反应，剩下的解释在音频链路
+
+iOS 上音量键由 SpringBoard 处理，但真正的“调音量”要经过 `AVSystemController`/音频路由；本端口没有音频输出，
+音量变更很可能被记为空操作（HUD 也不出现）。这与“电源键（不经音频）有效、音量键无效”的现象一致。
+判定方法：换上新描述符后再按音量键，若仍无变化而 `edges`/`bits` 依旧正常，则 HID 层已交付完成，剩余属音频链路缺失。

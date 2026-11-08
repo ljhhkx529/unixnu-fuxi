@@ -146,6 +146,7 @@ extern volatile int native_touch_error;
 /* The power/volume key driver (FuxiButtons.cpp): stage, interrupts, reports, pressed mask, the two APIDs, cleared foreign
  * interrupts, the PDC version, the last error and spurious interrupts. */
 extern volatile int fuxi_buttons_stats[10];
+extern volatile int fuxi_buttons_edges[6];
 /* What the HID device did with those reports: buttonsAction submissions and the last IOReturn. */
 extern unsigned fuxi_hid_button_submits(void);
 extern unsigned fuxi_hid_button_result(void);
@@ -178,6 +179,9 @@ void fuxi_display_client_report(void) {
            fuxi_buttons_stats[4], fuxi_buttons_stats[5], fuxi_buttons_stats[6], (unsigned)fuxi_buttons_stats[7],
            fuxi_buttons_stats[8], fuxi_buttons_stats[9],
            fuxi_hid_button_submits(), fuxi_hid_button_result());
+    printf("fuxi-buttons: edges pon %x last %x gpio %x last %x bits %x\n",
+           fuxi_buttons_edges[0], fuxi_buttons_edges[1], fuxi_buttons_edges[2], fuxi_buttons_edges[3],
+           fuxi_buttons_edges[4]);
     printf("fuxi-display: clients %u pid %d frames %u\n",
            native_legacy_client_calls, native_legacy_client_pid, native_legacy_frame_count);
     printf("fuxi-display: gop offers %llu done %llu fail %llu abandon %llu\n",

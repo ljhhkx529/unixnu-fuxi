@@ -28,6 +28,10 @@ extern "C" int armcpu_spi_attach(uint32_t, bool, void (*)(void *), void *, uint3
 // [0] stage (1 mapped, 2 configured, 3 armed, -9 masked after an interrupt storm, other negatives: the step that failed), [1] interrupts, [2] reports, [3] pressed mask,
 // [4] power APID, [5] GPIO APID, [6] interrupts of other APIDs cleared, [7] PDC version, [8] last error, [9] spurious interrupts
 extern "C" {volatile int32_t fuxi_buttons_stats[10];}
+/* What the two peripherals actually report, accumulated so a press cannot be missed between samples: [0] every status bit the
+ * PON has ever raised, [1] its last one, [2] the same two for the GPIO APID, [4] every report-bit set the handler produced.
+ * The key bits are the ones this board really asserts, not the ones the devicetree promised. */
+extern "C" {volatile int32_t fuxi_buttons_edges[6];}
 
 namespace {
 constexpr uint64_t kCore = 0xc400000, kObsrvr = 0xc440000, kChnls = 0xc500000, kIntr = 0xc4c0000, kCnfg = 0xc42d000, kPdc = 0xb220000;
@@ -126,7 +130,13 @@ void buttonsIrq(void *) {
             *apidReg(apid, kIrqClear) = status;
             if (status) {
                 br_write8(gChn.va, apid, kLatchedClr, (uint8_t)status);
-                __atomic_fetch_or(&gLatched, reportBits(apid, status), __ATOMIC_RELEASE);
+                const uint32_t bits = reportBits(apid, status);
+                if (apid == gPon) {__atomic_fetch_or(&fuxi_buttons_edges[0], (int32_t)status, __ATOMIC_RELEASE);
+                                   fuxi_buttons_edges[1] = (int32_t)status;}
+                else {__atomic_fetch_or(&fuxi_buttons_edges[2], (int32_t)status, __ATOMIC_RELEASE);
+                      fuxi_buttons_edges[3] = (int32_t)status;}
+                __atomic_fetch_or(&fuxi_buttons_edges[4], (int32_t)bits, __ATOMIC_RELEASE);
+                __atomic_fetch_or(&gLatched, bits, __ATOMIC_RELEASE);
             }
             ours = true;
         }
