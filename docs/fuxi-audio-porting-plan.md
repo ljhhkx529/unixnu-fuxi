@@ -552,6 +552,18 @@ Host 编译通过、host test 通过和真机观察必须分开报告。对失�
 AOP 逐寄存器模拟），以及逐项故障注入——carveout 小于镜像、小于取整后的 span、缺 hook、认证失败、认证需要再来一次、
 内存失败、邮箱无描述符、邮箱永不开启、DSP 永不 ready、DSP 报 fatal、链路永不上、失败后再调用仍返回同一原因。
 
+### A1–A2 静音数据面（完成于本轮）
+
+`package/QcomAudioPath.{h,c}`：框架 readiness → 开图 → 端点配置 → 流配置 → 缓冲映射 → 图启动 → 写 period，
+**一次只有一个未决事务**，token 的高 8 位是重启代次，所以 ADSP 重启后的旧应答永远匹配不上新事务。
+
+`scripts/check-qcom-audio-path-host.py` 在 ASan/UBSan 下跑 **18 项**，底层是**真实的 GLINK、GPR、AudioReach**，
+对端是一个逐条应答的模拟 DSP：完整启动路径、period 提交与完成计数、readiness 永不就绪、配置被拒、命令无应答超时、
+无未决事务却收到应答（计 late 而不套用）、重启后旧代次应答被忽略、重启后能再次起来、缺 graph 拒绝、未运行就写 period 拒绝。
+
+这一轮测试抓出**三个真实缺陷**（都在新写的数据面里，不是测试）：readiness 查询在"发送退避"时被丢弃（探针于是永远等一个
+从未发出的查询）；框架应答没有转交给 readiness 探针（只当未知包计数）；token 比对忽略了高位的代次。
+
 A0 仍未完成的部分是 **ADSP 加载器本身**（`adsp.mbn`/`adsp_dtb.mbn` 的段、内存窗口、代理电源域、SMEM 布局的实际取值），
 它需要 fuxi 的固件与设备证据，按计划保持未验证。
 
