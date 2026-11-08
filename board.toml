@@ -189,6 +189,7 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
           # NativeHidInput::start() reads this name, not fuxi-touch-hid: it enables the digitizer collection in the
           # descriptor, the Built-In/DisplayIntegrated properties and the sink the touch thread notifies.
           "sheng-touch-hid=1",
+          "fuxi-buttons=1",
                # -enable_kprintf_spam is gone: unixnu-fuxi-old does not set it, and the console drops
                # lines under that volume (QCOM USB LOSS contention climbing), which hid the first UFS
                # error behind thousands of repeats.

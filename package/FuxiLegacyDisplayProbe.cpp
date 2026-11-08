@@ -524,9 +524,12 @@ extern "C" void native_hid_input_probe(void);
 extern "C" const char *fuxi_hid_row(char *out, size_t size);
 extern "C" void fuxi_display_client_report(void);
 extern "C" bool fuxi_hid_settled(void);
+extern "C" void fuxi_buttons_probe(void);
 void native_legacy_display_late_probe(void) {
     native_keystore_probe();
     native_touch_probe();
+    /* Power and volume keys: the same probe starts them, behind fuxi-buttons=1 (package/FuxiButtons.cpp). */
+    fuxi_buttons_probe();
     /* The HID stack, as sheng and old start it from this probe: the digitizer device is published before the
      * display so backboardd finds an IOHIDDevice when it starts. */
     native_hid_input_probe();

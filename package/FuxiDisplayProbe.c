@@ -143,6 +143,9 @@ extern char native_touch_rows[4][120];
 extern volatile unsigned int native_touch_loop_step, native_touch_step;
 extern volatile unsigned int native_touch_irq_stats[4];
 extern volatile int native_touch_error;
+/* The power/volume key driver (FuxiButtons.cpp): stage, interrupts, reports, pressed mask, the two APIDs, cleared foreign
+ * interrupts, the PDC version, the last error and spurious interrupts. */
+extern volatile int fuxi_buttons_stats[10];
 extern volatile unsigned int native_adreno_wait_mem[4];
 extern volatile unsigned int native_adreno_patch_walk[6];
 extern volatile unsigned int native_adreno_patch_target[52];
@@ -167,6 +170,10 @@ void fuxi_display_client_report(void) {
     printf("fuxi-display: fence live %d submitted %u retired %u\n", live, submitted, retired);
     printf("fuxi-touch: loop %u step %u err %d irq %u/%u\n%s\n", native_touch_loop_step, native_touch_step,
            native_touch_error, native_touch_irq_stats[1], native_touch_irq_stats[2], native_touch_rows[3]);
+    printf("fuxi-buttons: stage %d irq %d reports %d mask %d pon %d gpio %d clears %d pdc %x err %d spur %d\n",
+           fuxi_buttons_stats[0], fuxi_buttons_stats[1], fuxi_buttons_stats[2], fuxi_buttons_stats[3],
+           fuxi_buttons_stats[4], fuxi_buttons_stats[5], fuxi_buttons_stats[6], (unsigned)fuxi_buttons_stats[7],
+           fuxi_buttons_stats[8], fuxi_buttons_stats[9]);
     printf("fuxi-display: clients %u pid %d frames %u\n",
            native_legacy_client_calls, native_legacy_client_pid, native_legacy_frame_count);
     printf("fuxi-display: gop offers %llu done %llu fail %llu abandon %llu\n",

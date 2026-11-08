@@ -98,3 +98,38 @@ panic 0   smmu fault 0
 
 `fuxi-display` 的周期上报里多了两行：`fuxi-touch: loop/step/err/irq` 和探针自己的 `FTS …` 行。它们挂在**已有**的
 上报点（45 s 起，每 30 s 一次，共 6 次），不在任何热路径上——上一轮把 printf 放进触控循环里曾直接打崩 USB CDC。
+
+## 按键（电源/音量）—— 移植对方的驱动与其短按修复
+
+从 `SadNutWall/unixnu-fuxi` 的 `package/FuxiButtons.cpp`（259 行）整份移植，**包括** `b529c30` 的锁存修复：
+中断处理里锁存自己那几个键的边沿；线程发现当前无键按下时，把锁存的边沿报成一对完整的按下/松开，并撑到
+`kMinPressMs = 60 ms`。没有这个锁存，短于唤醒延迟的一次轻点永远到不了 HID——用户必须按住约两秒。
+
+接线（四处）：
+
+| 位置 | 改动 |
+| --- | --- |
+| `package/FuxiButtons.cpp` | 新文件，定义 `native_buttons_set_sink`（真正注册 sink 的地方） |
+| `package/FuxiHidProbe.cpp` | 删掉原来的空桩，那个桩让 `NativeHidInput` 的呼叫落空 |
+| `package/BootLogExtraStubs.c` | 删掉 `fuxi_buttons_stats[10]` 的占位定义（否则重复符号） |
+| `package/FuxiLegacyDisplayProbe.cpp` | late probe 里调用 `fuxi_buttons_probe()`，板级 `fuxi-buttons=1` 才启动 |
+
+归档加入 `scripts/build-fuxi-touch.py`（与 `FuxiTouchProbe.cpp`、`FuxiHidProbe.cpp` 同一个 `libFuxiTouch.a`）。
+
+### 真机证据（镜像 `sha256 e98a2bfe…`，run 183225）
+
+```
+fuxi-buttons: stage 3 irq 116 reports 98 mask 0 pon 560 gpio 583 clears 0 pdc 30000 err 0 spur 0
+FTS rd566 ev567 in18 mv529 up18 er0/00 c0 10185,785 hid256 irq565/0 xf0
+fuxi-metal: submitted 553 retired 553   gop offers 262 done 262
+panic 0   smmu fault 0
+```
+
+`stage 3` = 已映射、已配置、已装载中断；`pon 560`/`gpio 583` 是两个键所在的 APID；**116 次中断产生 98 条 HID 报文**，
+`err 0`、`spur 0`。同一镜像上触控仍在送报文（`hid256`），GPU 553/553 与 262/262 未受影响。
+
+### 过程中踩到的两个坑
+
+1. `fuxi_buttons_stats` 同时被 `BootLogExtraStubs.c` 定义 → 链接期 `duplicate symbol`；占位定义必须让位给真实驱动。
+2. `ctl reboot-fastboot` 本来就以非零退出（控制 socket 先关闭），在 `set -e` 脚本里会**中断整条刷机链**；
+   该调用必须与 `set -e` 分开。

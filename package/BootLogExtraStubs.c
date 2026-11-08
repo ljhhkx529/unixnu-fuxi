@@ -5,5 +5,5 @@
 // native_data_persist_* moved out: NativeRamBlock now defines them.
 #include <stdint.h>
 
-volatile int32_t fuxi_buttons_stats[10];
+/* fuxi_buttons_stats moved out: FuxiButtons.cpp now defines it (fuxi-buttons=1). */
 volatile uint32_t native_process_wait_port[10];

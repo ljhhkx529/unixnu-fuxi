@@ -37,10 +37,7 @@ extern volatile uint32_t native_touch_edge_stats[4];   // NativeHidInput: [0] ed
 
 extern "C" bool native_hid_input_requested(void) {return false;}   // no Home presses: the combined device is not created
 
-// The combined device would register here for the hardware buttons. fuxi has no button driver and creates only the touch-only
-// device, but the kernel is linked statically, so NativeHidInput's weak import still needs a definition (run 41437861526
-// stopped at the link without it). The sink is accepted and never called.
-extern "C" void native_buttons_set_sink(void (*)(void *, uint32_t), void *) {}
+// native_buttons_set_sink lives in package/FuxiButtons.cpp, which registers the real sink when fuxi-buttons=1 turns that driver on.
 
 extern "C" void native_hid_input_observed(unsigned event, int result) {
     if (event < 8) {native_hid_input_events[event] = native_hid_input_events[event] + 1; native_hid_input_results[event] = result;}
