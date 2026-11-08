@@ -140,6 +140,23 @@ void run()
         }
     }
 
+    /* Stage 6 does what the APPS side does first on sheng: initialise the outbound SMP2P item and put the master-kernel
+     * entry in it, so the DSP finds it when it starts. Still nothing powered and no DSP started. */
+    if (fuxi_audio_probe >= 6 && rc == QcomSmemOk) {
+        uint32_t at = 0, size = 0;
+        if (qcom_smem_find(&smem, &part, kItemOut, &at, &size) == QcomSmemOk && size >= QCOM_SMP2P_ITEM_BYTES) {
+            QcomSmp2p p2p;
+            for (uint32_t i = 0; i < sizeof p2p; ++i) ((uint8_t *)&p2p)[i] = 0;
+            qcom_smp2p_init_out(&p2p, (volatile uint32_t *)(smem.base + at), 0, (uint16_t)kRemotePid);
+            const int entry = qcom_smp2p_add_entry(&p2p, "master-kernel");
+            say("smp2p out: item 429 at 0x%x, master-kernel entry %d\n", at, entry);
+            say("smp2p out: header %08x %08x %08x %08x\n", qcom_smem_read32(&smem, at),
+                qcom_smem_read32(&smem, at + 4), qcom_smem_read32(&smem, at + 8), qcom_smem_read32(&smem, at + 12));
+        } else {
+            say("smp2p out: item 429 is not there to initialise\n");
+        }
+    }
+
     /* Everything the partition holds, not only the six ids the audio line needs: what the boot loader set up is worth
      * knowing before anything is allocated. */
     if (rc == QcomSmemOk) {
