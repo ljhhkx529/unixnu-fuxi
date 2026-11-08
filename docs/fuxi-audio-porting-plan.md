@@ -499,7 +499,12 @@ Host 编译通过、host test 通过和真机观察必须分开报告。对失�
 - [x] 固定 fuxi DTS/DTSI revision，并把两颗 CS35L41、总线、GPIO、TDM 和 WCD938x 声明写入 `facts/audio/manifest.toml`。
 - [x] 阅读 Linux 主线 CS35L41、remoteproc、GLINK、GPR/APR 和 APM/PRM 路径，记录许可证与安全边界。
 - [x] 实现无板级常量的 `QcomGpr` 编解码/SPF readiness 模型，并用 ASan/UBSan 主机测试覆盖。
-- [ ] 以显式 topology 参数实现 AudioReach builder/parser；不内置 sheng 的 graph/endpoint/clock/TDM 常量。
+- [x] 以显式 topology 参数实现 AudioReach builder/parser；不内置 sheng 的 graph/endpoint/clock/TDM 常量。
+  `package/QcomAudioReach.{h,c}`：graph open（SG/container/module list/module prop/connection）、start/stop/close、
+  I2S 与 codec-DMA 端点配置、stream 媒体格式与 PCM 输出、时钟投票、共享内存 map/unmap，以及 APM 应答解析。
+  graph id、module instance、interface index、clock id、slot mask 全部来自调用方传入的 topology；
+  规范常量（`PARAM_*`/`PROP_*`/`OP_*`）才写死。`scripts/check-qcom-audioreach-host.py` 在 ASan/UBSan 下跑 57 项检查，
+  其中两项专门验证"同输入确定性"与"两个 topology 产生两个包、且输出里不出现 sheng 的 0x4005/0x4007/0x30c/0x400"。
 - [ ] 对合法取得的 fuxi ADSP/adsp_dtb 离线文件记录来源、版本、hash 和 segment；在取得前全部保持 `unverified`。
 - [ ] 设计但不运行 UniXNU 只读探针，以后只有用户重新明确授权设备操作时才验证 chip ID、ADSP channel、TDM 和 route。
 - [ ] 找到低于 4 GiB、与现有外设不冲突的音频 buffer 区，并确认 SMMU ownership；在有证据前不借用 sheng 地址。
