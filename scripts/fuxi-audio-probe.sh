@@ -9,10 +9,11 @@
 # The probe reads SMEM and writes nothing. It runs from bsd_init, so its report is in the kernel log before anything else
 # can fail; the USB CDC channel carries that log out, which is why no photograph is needed.
 #
-# Two deliberate differences from a normal image, both confined to a scratch copy of the device repository:
-#   - the boot argument fuxi-audio-probe=1 asks the probe to log its report;
-#   - CONFIG_XNU_OWNER_DATA_MOUNT is off, because the payload step otherwise demands a data ramdisk this machine does not
-#     have. The boot therefore stops in exec after the probe has run, which is enough for a probe run and touches no data.
+# One deliberate difference from a normal image, confined to a scratch copy of the device repository: the boot argument
+# fuxi-audio-probe=1 asks the probe to log its report. Nothing else is changed - in particular the Data mount stays on and
+# the payload is built with the Data seed the tree documents (out/ipsw/21H461/data.dbr), so the phone boots to its desktop
+# as usual and the report is read over the USB CDC channel. An earlier version of this script turned the Data mount off to
+# dodge the seed requirement, and every run then left the owner with a stuck screen.
 set -euo pipefail
 
 DEVICE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -21,6 +22,7 @@ SCRATCH="${FUXI_AUDIO_PROBE_SCRATCH:-/tmp/fuxi-probe2}"
 IMAGE="${FUXI_AUDIO_PROBE_IMAGE:-/tmp/fuxi-probe.img}"
 UNIXNU="$WX/UniXNU"
 PROFILE=out/fuxi/ipados-17.7.11-21H461/fuxi
+SEED="${FUXI_DATA_SEED:-$UNIXNU/out/ipsw/21H461/data.dbr}"
 
 scratch() {
     rm -rf "$SCRATCH"
@@ -35,25 +37,23 @@ text = board.read_text()
 if "fuxi-audio-probe" not in text:
     board.write_text(text.replace('"fuxi-touch=4", "fuxi-touch-hid=1",',
                                   '"fuxi-touch=4", "fuxi-touch-hid=1", "fuxi-audio-probe=1",'))
-conf = root / "configs/fuxi_defconfig"
-conf.write_text(conf.read_text().replace("CONFIG_XNU_OWNER_DATA_MOUNT=y", "# CONFIG_XNU_OWNER_DATA_MOUNT is not set"))
+# The defconfig is left alone: the data mount and its seed are how this board boots to its desktop.
 PY
 }
 
 build() {
     [ -d "$SCRATCH" ] || scratch
     cd "$UNIXNU"
-    # The kernel is configured from the real device repository: a scratch copy without CONFIG_XNU_OWNER_DATA_MOUNT also
-    # drops the display archive that the GPU addon symbols come from, so the link fails. The scratch copy is only needed
-    # for the payload and the boot image, which read board.toml and the defconfig respectively.
+    # The kernel is configured from the real device repository. A scratch copy that changed the defconfig also dropped the
+    # display archive the GPU addon symbols come from, so the link failed - one more reason the scratch copy only carries
+    # board.toml, which is where the probe's boot argument belongs.
     ./unixnu defconfig fuxi_defconfig -D "$DEVICE" >/dev/null
     ./unixnu build kernel
     # The payload step reads the .config, so the scratch copy's defconfig has to be the one in effect here: running the
     # kernel's defconfig last would leave the data-mount requirement on and the payload step would fail, after which
     # bootimg would quietly pack the previous payload.
-    ./unixnu defconfig fuxi_defconfig -D "$SCRATCH" >/dev/null
     ./unixnu build payload -D "$SCRATCH" --uefi ../uefi-fuxi --kernel "$PROFILE/kernel/kernel.macho" \
-        --unique-chip-id 0x0123456789abcdef
+        --unique-chip-id 0x0123456789abcdef --data-ramdisk "$SEED"
     ./unixnu bootimg -D "$SCRATCH" --uefi ../uefi-fuxi --target DEBUG \
         --dtb ../uefi-fuxi/Platforms/Xiaomi/fuxiPkg/FdtBlob/sm8550-xiaomi-fuxi.dtb -o "$IMAGE"
     # The payload carries the kernel it was built with; a stale one has bitten twice, so it is checked rather than assumed.
