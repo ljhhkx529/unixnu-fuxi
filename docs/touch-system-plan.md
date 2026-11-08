@@ -1,0 +1,61 @@
+# 触控接入系统层：现状与验证计划
+
+目标：FTM5 的触点在 SpringBoard / backboardd 里生效（系统层可用），必要时借鉴
+`SadNutWall/unixnu-fuxi`。
+
+## 这条链路在本仓库已经完整
+
+| 环节 | 位置 | 状态 |
+| --- | --- | --- |
+| FTM5 协议（0xA0 扫描、0x87 FIFO、0xFA/0xFB 寄存器） | `drivers/FuxiFtsTouch/FtsProtocol.c` | 已实现，stage 3 在真机读出 chip id `36 40` |
+| 探针分阶段启动、排空 FIFO、发布触点 | `package/FuxiTouchProbe.cpp` | 已实现（`fuxi-touch=1..4`） |
+| 报文描述符 | `package/NativeHidInput.cpp` Report 3 | 十指 Touch Screen 集合（usage page 0x0D / usage 0x04） |
+| 数字化器属性 | 同上 line 420 | `Built-In`、`DisplayIntegrated`、`DigitizerCollectionDispatch` |
+| 挂接系统层 | `package/FuxiHidProbe.cpp` | 载入 IOHIDFamily + IOHIDEventDriver → 等 IOHIDResource → 注册 metaclass → allocate → attach → start |
+| backboardd 过滤器 | 同上 line 74-81 | 在 **IOHIDEventDriver 与它的 interface** 两个平面发布 `Built-In`/`DisplayIntegrated`/`PrimaryUsagePage 0x0d`/`PrimaryUsage 4` |
+
+## 从对方仓库反解出的关键约束
+
+`SadNutWall/unixnu-fuxi` 的 `package/HidInputProbe.cpp` 里记录了一条从 target 反解来的行为：
+
+> `-[BKHIDDirectTouchEventProcessor processEvent:sender:dispatcher:]` 会**丢弃**发送服务的
+> `PrimaryUsagePage` 不是 `0x0D`、`PrimaryUsage` 不是 1 / 4 / 0x20 的数字化器事件
+> （"ignoring digitizer event … from unsupported service"）。合并设备的第一个集合是键盘，服务会发布成
+> (1, 6)，所以要在服务 **matched 之后**把 Digitizer/Touch Screen 写到服务上（写设备会改变驱动匹配）。
+
+我们的 `FuxiHidProbe.cpp` 已经在 driver 与 interface 两个平面设了这四个属性，**与这条要求一致**。
+
+## 对方仓库实际能借鉴的东西
+
+| 项 | 结论 |
+| --- | --- |
+| `drivers/NativeHidInput/NativeHidInput.cpp` | 他**三个分支都没有这个路径**（构建脚本引用了它，仓库里不存在），所以 HID 实现无从借鉴 |
+| `package/HidInputProbe.cpp` | 设计与我们相同（同一套 backboardd 约束、同样用合并设备），另有 `sheng-touch-split` 独立数字化器分支——但他自己的板级并没有打开 |
+| `package/HidInputStub.c` | **死文件**，全仓库没有构建脚本引用它，不参与链接 |
+| `package/FuxiButtons.cpp` | **真正可借鉴**：电源/音量键 → HID，含"短按短于唤醒延迟会丢失"的锁存修复。与触控屏无关，属另一条线 |
+| Novatek（`TouchProbe.cpp` + 生成固件） | 与我们的机器无关：我们是 ST FingerTip FTM5 |
+
+## 还没验证的
+
+**没有任何证据表明触点真的到了 backboardd。** 真机日志里的
+
+```
+FTS rd0 ev0 in0 mv0 up0 er0/00 rdy0 rearm0 c0 -1,-1 hid0 irq0/0 xf0
+```
+
+含义是"数据线从未变低、一次读都没发生"——**没人碰屏时本来就是这个值**，不能据此判断坏了。
+`porting.toml` 记录 2026-11-02 的 stage 4 曾报出过真实触点（轮询与中断两种方式），说明面板那条路至少跑通过一次。
+
+## 验证计划（各一次启动，不新增热路径打印）
+
+1. `fuxi-touch=4 fuxi-touch-hid=0 fuxi-touch-panic=2`，划一次屏：
+   - 出现 `in/mv/up` 计数 → 面板到内核这段是好的，问题在系统层；
+   - `rd` 增长但 `er` 增长 → SPI 读失败；
+   - `rd` 仍 0 → stage 4 的 sensing 没有真正进去。
+   panic 会把四行报告打出来，配合 `fuxi-panic-fastboot=30` 自动回 fastboot。
+2. 若第 1 步通过，改 `fuxi-touch-hid=1 fuxi-touch-panic=0`，读已有的 `fuxi-display: hid` 行
+   （`fuxi_hid_row()`，每 500 ms 轮询至 20 s）看探针走到哪一步、event driver 是否 attached，再判断是否需要动
+   `NativeHidInput` 的报文派发。
+
+**不要再往触控/显示线程里加 printf**：2026-11-08 曾在轮询循环里每 4 秒打印一次，直接把 USB CDC 打崩
+（镜像已回退到 `sha256 9aff0c67…`，与出问题前逐字节相同）。
