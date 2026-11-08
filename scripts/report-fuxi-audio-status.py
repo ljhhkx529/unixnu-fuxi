@@ -30,7 +30,7 @@ SUITES = [
     ("共享音频页（sheng 形状）", "scripts/check-qcom-audio-abi-host.py", "QcomAudioAbi"),
     ("GENI I2C（sheng 原样）", "scripts/check-geni-i2c-host.py", "GENI I2C"),
     ("采集统计", "scripts/check-qcom-audio-capture-host.py", "QcomAudioCapture"),
-    ("恢复顺序（端到端）", "scripts/check-qcom-audio-session-host.py", "QcomAudioSession"),
+    ("服务侧（端到端 + 共享页）", "scripts/check-qcom-audio-service-host.py", "QcomAudioService"),
 ]
 
 
