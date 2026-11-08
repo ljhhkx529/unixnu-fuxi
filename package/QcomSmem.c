@@ -110,3 +110,44 @@ int qcom_smem_alloc(const QcomSmem *smem, const QcomSmemPartition *p, uint16_t i
     qcom_smem_write32(smem, p->offset + 12, at + need);
     return QcomSmemOk;
 }
+
+/* The same walk, once per index: the caller wants a list, not one item it can name. */
+static int nth_uncached(const QcomSmem *smem, const QcomSmemPartition *p, uint32_t index, uint16_t *id,
+                        uint32_t *offset, uint32_t *size)
+{
+    const uint32_t end = rd(smem, p->offset + 12);
+    uint32_t at = PART_HEADER;
+    uint32_t seen = 0;
+    while (at < end) {
+        if (!fits(at, ENTRY, end)) return QcomSmemCorrupt;
+        const uint32_t w0 = rd(smem, p->offset + at), bytes = rd(smem, p->offset + at + 4);
+        const uint32_t pads = rd(smem, p->offset + at + 8);
+        if ((w0 & 0xffff) != CANARY) return QcomSmemCorrupt;
+        const uint32_t padding_header = pads >> 16;
+        if ((uint64_t)at + ENTRY + padding_header + bytes > end) return QcomSmemCorrupt;
+        if (seen == index) {
+            if (id) *id = (uint16_t)(w0 >> 16);
+            if (offset) *offset = p->offset + at + ENTRY + padding_header;
+            if (size) *size = bytes - (pads & 0xffff);
+            return QcomSmemOk;
+        }
+        ++seen;
+        at += ENTRY + padding_header + bytes;
+    }
+    return QcomSmemMissing;
+}
+
+int qcom_smem_item_count(const QcomSmem *smem, const QcomSmemPartition *p)
+{
+    if (!smem || !smem->base || !p) return QcomSmemNoTable;
+    int count = 0;
+    while (qcom_smem_item_at(smem, p, (uint32_t)count, 0, 0, 0) == QcomSmemOk) ++count;
+    return count;
+}
+
+int qcom_smem_item_at(const QcomSmem *smem, const QcomSmemPartition *p, uint32_t index, uint16_t *id,
+                      uint32_t *offset, uint32_t *size)
+{
+    if (!smem || !smem->base || !p) return QcomSmemNoTable;
+    return nth_uncached(smem, p, index, id, offset, size);
+}

@@ -42,6 +42,12 @@ int qcom_smem_find(const QcomSmem *smem, const QcomSmemPartition *part, uint16_t
  * only need it to exist). Hardware mutex held by the caller. */
 int qcom_smem_alloc(const QcomSmem *smem, const QcomSmemPartition *part, uint16_t item, uint32_t size);
 
+/* The uncached items a partition holds, for a caller that has to report what is there rather than ask for a name it
+ * already knows. QcomSmemMissing past the last one, or a negative error from the walk. */
+int qcom_smem_item_count(const QcomSmem *smem, const QcomSmemPartition *part);
+int qcom_smem_item_at(const QcomSmem *smem, const QcomSmemPartition *part, uint32_t index, uint16_t *id,
+                      uint32_t *offset, uint32_t *size);
+
 uint32_t qcom_smem_read32(const QcomSmem *smem, uint32_t offset);
 void qcom_smem_write32(const QcomSmem *smem, uint32_t offset, uint32_t value);
 

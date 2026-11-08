@@ -101,6 +101,18 @@ static void test_smem(void)
           "allocating a new item makes it findable");
     check(qcom_smem_alloc(&smem, &part, ITEM_ID + 3u, PART_BYTES) == QcomSmemNoSpace,
           "allocating more than the partition holds is refused");
+
+    /* The partition can be listed, not only searched: the audio probe reports what is there. */
+    uint16_t enum_id = 0;
+    uint32_t enum_offset = 0, enum_size = 0;
+    const int count_before = qcom_smem_item_count(&smem, &part);
+    check(count_before >= 1, "the partition's items can be counted");
+    (void)qcom_smem_alloc(&smem, &part, 478u, 32u);
+    check(qcom_smem_item_count(&smem, &part) == count_before + 1, "a newly allocated item is counted");
+    check(qcom_smem_item_at(&smem, &part, (uint32_t)count_before, &enum_id, &enum_offset, &enum_size) == QcomSmemOk &&
+          enum_id == 478u && enum_size == 32u, "and enumerated with its id and size");
+    check(qcom_smem_item_at(&smem, &part, (uint32_t)count_before + 1u, 0, 0, 0) == QcomSmemMissing,
+          "past the last item is Missing, not an error");
 }
 
 static void test_smp2p(void)

@@ -109,6 +109,20 @@ void run()
         }
     }
 
+    /* Everything the partition holds, not only the six ids the audio line needs: what the boot loader set up is worth
+     * knowing before anything is allocated. */
+    if (rc == QcomSmemOk) {
+        const int items = qcom_smem_item_count(&smem, &part);
+        say("partition holds %d uncached items:", items);
+        for (int i = 0; i < items && i < 24; ++i) {
+            uint16_t id = 0;
+            uint32_t at = 0, bytes = 0;
+            if (qcom_smem_item_at(&smem, &part, (uint32_t)i, &id, &at, &bytes) == QcomSmemOk)
+                say(" %u@0x%x/%u", id, at, bytes);
+        }
+        say("\n");
+    }
+
     /* The global partition carries the item table itself; its presence confirms the base is right. */
     QcomSmemPartition global;
     const int grc = qcom_smem_partition(&smem, QCOM_SMEM_HOST_GLOBAL, QCOM_SMEM_HOST_GLOBAL, &global);
