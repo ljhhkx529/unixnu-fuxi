@@ -201,6 +201,7 @@ procedure = [
   "Run scripts/check-qcom-loader-host.py after changing the AOSS QMP handshake or the RPMh vote.",
   "Run scripts/check-qcom-mdt-host.py after changing the signed firmware container parser.",
   "Run scripts/report-fuxi-audio-status.py to regenerate the plan's status table from the suites themselves.",
+  "Run scripts/report-fuxi-audio-probe-reads.py to list what a device session has to read to settle the fields that have no source yet.",
   "Run scripts/report-fuxi-hal-audit.py to list what the plug-in tells the audio server and what the 21H461 audit must confirm.",
   "Run scripts/build-fuxi-audio-hal.py to build and ad-hoc sign the plug-in (needs Xcode's iPhoneOS and macOS SDKs).",
 ]
