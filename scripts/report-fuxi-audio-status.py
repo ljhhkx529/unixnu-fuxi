@@ -31,6 +31,7 @@ SUITES = [
     ("GENI I2C（sheng 原样）", "scripts/check-geni-i2c-host.py", "GENI I2C"),
     ("采集统计", "scripts/check-qcom-audio-capture-host.py", "QcomAudioCapture"),
     ("服务侧（端到端 + 共享页）", "scripts/check-qcom-audio-service-host.py", "QcomAudioService"),
+    ("解析器模糊测试", "scripts/check-qcom-audio-fuzz-host.py", "QcomAudioFuzz"),
 ]
 
 
