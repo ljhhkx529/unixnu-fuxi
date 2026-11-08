@@ -116,6 +116,17 @@ void run()
         }
     }
 
+    /* Stage 5 asks for the writable mapping and reports what it got, without writing: the mapping is the one thing the
+     * host cannot check, and stage 4 died on it. If this says the map is writable, the allocation is worth trying; if it
+     * does not, nothing has been touched. */
+    if (fuxi_audio_probe >= 5) {
+        say("map: options 0x%x length 0x%llx readonly %d\n", map->getMapOptions(),
+            (unsigned long long)map->getLength(), writing ? 0 : 1);
+        say("map: first word reads 0x%08x (a read, not a write)\n", qcom_smem_read32(&smem, 0));
+        map->release();
+        return;
+    }
+
     /* Stage 4 creates the items the audio bring-up needs and nothing else. It is the first thing this probe does that
      * writes: an allocation inside the partition the boot loader already reserved, no clock, no rail, no DSP start. The
      * SMEM hardware mutex is sheng's to take and this probe does not, because the DSP is not running to race with. */
