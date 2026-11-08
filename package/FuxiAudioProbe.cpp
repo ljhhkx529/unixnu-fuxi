@@ -15,12 +15,12 @@
 #include <IOKit/IOMemoryDescriptor.h>
 #include <libkern/libkern.h>
 #include <kern/task.h>
+#include <kern/thread.h>
 #include <pexpert/pexpert.h>
 #include <stdarg.h>
 
 extern "C" {
 #include "QcomSmem.h"
-#include "QcomSmp2p.h"
 
 /* Boot argument fuxi-audio-probe=N: 0 off, 1 log the report, 2 also end the boot with it on the panic screen. */
 int fuxi_audio_probe = 0;
@@ -39,7 +39,7 @@ static const uint16_t kAudioItems[] = {kItemOut, kItemIn, kItemCrash, kItemGlink
 
 namespace {
 
-char gReport[4096];
+char gReport[1600];
 size_t gUsed;
 
 void say(const char *format, ...)
@@ -76,15 +76,9 @@ void sayBytes(const QcomSmem *smem, uint32_t offset, uint32_t limit)
 void run()
 {
     say("audio probe: smem 0x%llx + 0x%x\n", kSmemBase, kSmemSize);
-    /* A write stage needs a writable mapping; a read-only one faults the moment qcom_smem_alloc stores its entry, which
-     * is exactly how the first attempt at stage 4 took the phone down. The mapping is chosen by what the caller asked
-     * for, so a read-only probe stays read-only. */
-    const bool writing = fuxi_audio_probe >= 4;
-    IOMemoryDescriptor *descriptor = IOMemoryDescriptor::withPhysicalAddress(
-        kSmemBase, kSmemSize, writing ? kIODirectionInOut : kIODirectionIn);
+    IOMemoryDescriptor *descriptor = IOMemoryDescriptor::withPhysicalAddress(kSmemBase, kSmemSize, kIODirectionIn);
     if (!descriptor) {say("smem: no descriptor\n"); return;}
-    IOMemoryMap *map = descriptor->createMappingInTask(
-        kernel_task, 0, kIOMapAnywhere | (writing ? 0 : kIOMapReadOnly));
+    IOMemoryMap *map = descriptor->createMappingInTask(kernel_task, 0, kIOMapAnywhere | kIOMapReadOnly);
     descriptor->release();
     if (!map || !map->getVirtualAddress()) {say("smem: not mapped\n"); if (map) map->release(); return;}
 
@@ -116,48 +110,6 @@ void run()
         }
     }
 
-    /* Stage 5 asks for the writable mapping and reports what it got, without writing: the mapping is the one thing the
-     * host cannot check, and stage 4 died on it. If this says the map is writable, the allocation is worth trying; if it
-     * does not, nothing has been touched. */
-    if (fuxi_audio_probe >= 5) {
-        /* Only values this probe already holds: calling into IOMemoryMap here is what the first attempt at this stage
-         * crashed on, so the report says what the mapping was asked for and shows one word reads. */
-        say("map: asked for %s, length 0x%x, word0 0x%08x\n", writing ? "read-write" : "read-only", kSmemSize,
-            qcom_smem_read32(&smem, 0));
-        map->release();
-        return;
-    }
-
-    /* Stage 4 creates the items the audio bring-up needs and nothing else. It is the first thing this probe does that
-     * writes: an allocation inside the partition the boot loader already reserved, no clock, no rail, no DSP start. The
-     * SMEM hardware mutex is sheng's to take and this probe does not, because the DSP is not running to race with. */
-    if (fuxi_audio_probe >= 4 && rc == QcomSmemOk) {
-        const uint16_t want[] = {kItemOut, kItemIn, kItemCrash, kItemGlinkRx};
-        const uint32_t sizes[] = {QCOM_SMP2P_ITEM_BYTES, QCOM_SMP2P_ITEM_BYTES, 0x1000u, 0x4000u};
-        for (unsigned i = 0; i < sizeof want / sizeof want[0]; ++i) {
-            const int alloc = qcom_smem_alloc(&smem, &part, want[i], sizes[i]);
-            say("alloc %u (%u bytes): rc %d%s\n", want[i], sizes[i], alloc,
-                alloc == QcomSmemExists ? " (already there)" : "");
-        }
-    }
-
-    /* Stage 6 does what the APPS side does first on sheng: initialise the outbound SMP2P item and put the master-kernel
-     * entry in it, so the DSP finds it when it starts. Still nothing powered and no DSP started. */
-    if (fuxi_audio_probe >= 6 && rc == QcomSmemOk) {
-        uint32_t at = 0, size = 0;
-        if (qcom_smem_find(&smem, &part, kItemOut, &at, &size) == QcomSmemOk && size >= QCOM_SMP2P_ITEM_BYTES) {
-            QcomSmp2p p2p;
-            for (uint32_t i = 0; i < sizeof p2p; ++i) ((uint8_t *)&p2p)[i] = 0;
-            qcom_smp2p_init_out(&p2p, (volatile uint32_t *)(smem.base + at), 0, (uint16_t)kRemotePid);
-            const int entry = qcom_smp2p_add_entry(&p2p, "master-kernel");
-            say("smp2p out: item 429 at 0x%x, master-kernel entry %d\n", at, entry);
-            say("smp2p out: header %08x %08x %08x %08x\n", qcom_smem_read32(&smem, at),
-                qcom_smem_read32(&smem, at + 4), qcom_smem_read32(&smem, at + 8), qcom_smem_read32(&smem, at + 12));
-        } else {
-            say("smp2p out: item 429 is not there to initialise\n");
-        }
-    }
-
     /* Everything the partition holds, not only the six ids the audio line needs: what the boot loader set up is worth
      * knowing before anything is allocated. */
     if (rc == QcomSmemOk) {
@@ -184,15 +136,31 @@ void run()
 
 }  // namespace
 
+/* The probe must never block the boot or the serial channel: the boot path only starts this thread, and the thread waits
+ * long enough for userland and the USB CDC channel to be up before it touches anything. A report that arrives late is
+ * worth more than a boot that does not arrive at all. */
+#define kProbeDelayMs 20000u
+
+static void audioProbeThread(void *, wait_result_t)
+{
+    IOSleep(kProbeDelayMs);
+    gUsed = 0;
+    gReport[0] = 0;
+    run();
+    IOLog("fuxi-audio-probe:\n%s", gReport);
+    if (fuxi_audio_probe >= 2) panic("fuxi-audio-probe:\n%s", gReport);
+}
+
 extern "C" void native_audio_probe(void)
 {
     /* The argument is read here so the patch that calls this stays one line. */
     int value = 0;
     if (PE_parse_boot_argn("fuxi-audio-probe", &value, sizeof value)) fuxi_audio_probe = value;
     if (!fuxi_audio_probe) return;
-    gUsed = 0;
-    gReport[0] = 0;
-    run();
-    IOLog("fuxi-audio-probe:\n%s", gReport);
-    if (fuxi_audio_probe >= 2) panic("fuxi-audio-probe:\n%s", gReport);
+    thread_t thread = nullptr;
+    if (kernel_thread_start(audioProbeThread, nullptr, &thread) != KERN_SUCCESS) {
+        IOLog("fuxi-audio-probe: no thread, skipped\n");
+        return;
+    }
+    thread_deallocate(thread);
 }
