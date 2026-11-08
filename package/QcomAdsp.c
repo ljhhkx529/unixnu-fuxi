@@ -11,7 +11,15 @@ static int fail(QcomAdsp *a, int reason)
 {
     a->last_error = reason;
     a->state = QcomAdspFailed;
+    /* The stage it stopped in, as sheng records it: the log then says where, not only what. */
+    if (!a->failed_stage) a->failed_stage = -(int32_t)(a->stage ? a->stage : 1u);
     return reason;
+}
+
+void qcom_adsp_stage(QcomAdsp *a, uint32_t stage)
+{
+    if (!a || a->state == QcomAdspFailed) return;
+    if (stage > a->stage) a->stage = stage;
 }
 
 /* The two SMP2P entries this state machine reads; looked up once, then cached by index. */
@@ -69,6 +77,7 @@ static int placement(QcomAdsp *a)
         a->segment_offset[i] = at;
         a->segment_placed[i] = 1;
     }
+    qcom_adsp_stage(a, QcomAdspStFirmware);
     a->state = QcomAdspAuth;
     return QcomAdspOk;
 }
@@ -115,6 +124,7 @@ int qcom_adsp_step(QcomAdsp *a)
         /* One request: the AOP starts the DSP on it. Reaching the ready stage means the mailbox accepted it. */
         const int sent = qcom_qmp_send(a->mailbox, a->config.load_state_message);
         if (sent != QcomQmpSending) return fail(a, QcomAdspMailboxFailed);
+        qcom_adsp_stage(a, QcomAdspStLoadState);
         a->waits = 0;
         a->state = QcomAdspReady;
         return QcomAdspOk;
@@ -124,7 +134,12 @@ int qcom_adsp_step(QcomAdsp *a)
         const int ready = inbound_bits(a, a->config.ready_entry, a->config.ready_value, &ready_present);
         const int fatal = inbound_bits(a, a->config.fatal_entry, a->config.fatal_value, &fatal_present);
         if (fatal_present && fatal) return fail(a, QcomAdspFatal);
-        if (ready_present && ready) {a->waits = 0; a->state = QcomAdspLink; return QcomAdspOk;}
+        if (ready_present && ready) {
+            qcom_adsp_stage(a, QcomAdspStReady);
+            a->waits = 0;
+            a->state = QcomAdspLink;
+            return QcomAdspOk;
+        }
         if (++a->waits > steps_or(a->config.ready_timeout, DEFAULT_READY_STEPS)) return fail(a, QcomAdspReadyTimeout);
         return QcomAdspAgain;
     }
@@ -132,7 +147,13 @@ int qcom_adsp_step(QcomAdsp *a)
         if (!a->link || !a->channel) return fail(a, QcomAdspBadConfig);
         const int rc = qcom_glink_poll(a->link);
         if (rc == QcomGlinkCorrupt) return fail(a, QcomAdspLinkFailed);
-        if (a->channel->up) {a->waits = 0; a->state = QcomAdspUp; return QcomAdspOk;}
+        if (a->channel->up) {
+            qcom_adsp_stage(a, QcomAdspStChannel);
+            a->waits = 0;
+            a->state = QcomAdspUp;
+            return QcomAdspOk;
+        }
+        qcom_adsp_stage(a, QcomAdspStGlink);
         if (++a->waits > steps_or(a->config.link_timeout, DEFAULT_LINK_STEPS)) return fail(a, QcomAdspLinkFailed);
         return QcomAdspAgain;
     }

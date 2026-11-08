@@ -22,6 +22,32 @@
 extern "C" {
 #endif
 
+/* The bring-up as one ladder of stages, numbered as sheng numbers them so a log from either board reads the same.
+ * The board owns the stages that touch hardware - mapping the windows, surveying SMEM, attaching the doorbells, voting
+ * the rails, loading the DTB and the image - and reports them with qcom_adsp_stage(); this layer owns the stages it can
+ * judge itself: the image is placed, the mailbox carried the request, the DSP reported ready, the link agreed a version,
+ * the channel came up. A failure records the stage it failed in as a negative number, as sheng's stats[0] does.
+ *
+ * The ladder only rises, and the stages this layer reports are the ones it judges itself: the image is placed, the
+ * mailbox carried the load-state request, the DSP reported ready, the link agreed, the channel came up. The stages in
+ * between - surveying SMEM, the doorbells, the rails, the DTB, the load and the start - are the board's and it reports
+ * them itself, in its own order, which is why this layer never moves the ladder back. */
+enum {
+    QcomAdspStMapped = 1,
+    QcomAdspStSurveyed = 2,
+    QcomAdspStFirmware = 3,
+    QcomAdspStSmp2p = 4,
+    QcomAdspStDoorbells = 5,
+    QcomAdspStLoadState = 6,
+    QcomAdspStRails = 7,
+    QcomAdspStDtb = 8,
+    QcomAdspStLoaded = 9,
+    QcomAdspStStarted = 10,
+    QcomAdspStReady = 11,
+    QcomAdspStGlink = 12,
+    QcomAdspStChannel = 13,
+};
+
 enum {
     QcomAdspIdle = 0,
     QcomAdspPlacement = 1,  /* every loadable segment must land inside the carveout */
@@ -76,6 +102,8 @@ typedef struct {
     QcomGlinkChannel *channel;
     int state, last_error;
     uint32_t steps, waits, ready_entries, fatal_entries;
+    uint32_t stage;        /* how far the ladder got; on failure, the stage it failed in */
+    int32_t failed_stage;  /* negative when the bring-up stopped, zero while it has not */
     uint64_t segment_offset[QCOM_MDT_MAX_SEGMENTS];
     uint8_t segment_placed[QCOM_MDT_MAX_SEGMENTS];
     uint64_t span;
@@ -88,6 +116,8 @@ void qcom_adsp_init(QcomAdsp *a, const QcomAdspConfig *config, const QcomAdspHoo
 /* One step. QcomAdspOk when it moved (or finished), QcomAdspAgain when it is waiting for something, and a
  * negative reason when the bring-up failed; the state then stays QcomAdspFailed. */
 int qcom_adsp_step(QcomAdsp *a);
+/* Reports a stage the board performed itself; a stage behind the current one is ignored, so the ladder only rises. */
+void qcom_adsp_stage(QcomAdsp *a, uint32_t stage);
 
 /* Where a loadable segment goes inside the carveout, once placement has run. */
 int qcom_adsp_segment(const QcomAdsp *a, unsigned index, uint64_t *offset);

@@ -215,6 +215,12 @@ static void test_happy(void)
     check(r->adsp.state == QcomAdspUp, "the state machine is up");
     check(auth_calls == 1 && memory_calls == 1, "authentication and memory setup each ran once");
 
+    check(r->adsp.stage == QcomAdspStChannel, "the ladder ends at the channel");
+    check(r->adsp.failed_stage == 0, "and nothing failed");
+    /* A board that performed a hardware stage itself reports it, and the ladder only rises. */
+    qcom_adsp_stage(&r->adsp, QcomAdspStRails);
+    check(r->adsp.stage == QcomAdspStChannel, "a later report of an earlier stage does not move it back");
+
     uint64_t at = 0;
     check(qcom_adsp_segment(&r->adsp, 1, &at) == QcomAdspOk && at == 0, "the first loadable segment lands at the carveout base");
     check(qcom_adsp_segment(&r->adsp, 2, &at) == QcomAdspOk && at == 0x1000, "the second lands by its offset from the lowest");
@@ -275,6 +281,21 @@ static void test_failures(void)
     r = &(Rig){0};
     rig_init(r, &config, 1);
     check(drive(r, 200, 0, 0, 1) == QcomAdspReadyTimeout, "a DSP that never reports ready times out");
+    check(r->adsp.stage == QcomAdspStLoadState, "the ladder says it got as far as the load-state request");
+    check(r->adsp.failed_stage == -(int32_t)QcomAdspStLoadState,
+          "and records that the DSP never reported ready");
+    check(r->adsp.stage < QcomAdspStReady, "the ladder did not climb past the request");
+
+    /* A board that reports its own stages fills the lower half of the ladder, and a failure after them is recorded
+     * against the last one that was reached. */
+    r = &(Rig){0};
+    QcomAdspConfig tight = base_config();
+    tight.carveout_size = 0x100;
+    rig_init(r, &tight, 1);
+    qcom_adsp_stage(&r->adsp, QcomAdspStRails);
+    check(r->adsp.stage == QcomAdspStRails, "a stage the board performed is recorded");
+    check(drive(r, 8, 0, 0, 0) == QcomAdspBadImage && r->adsp.failed_stage == -(int32_t)QcomAdspStRails,
+          "a failure after the rails is recorded against them");
 
     /* The DSP reports a fatal condition while it is coming up. */
     r = &(Rig){0};
@@ -299,6 +320,7 @@ static void test_failures(void)
     check(drive(r, 8, 0, 0, 0) == QcomAdspBadImage, "the first failure is reported");
     check(qcom_adsp_step(&r->adsp) == QcomAdspBadImage && r->adsp.state == QcomAdspFailed,
           "a failed bring-up stays failed with its reason");
+    check(r->adsp.failed_stage < 0, "and records the stage it stopped in as a negative number");
 }
 
 int main(void)
