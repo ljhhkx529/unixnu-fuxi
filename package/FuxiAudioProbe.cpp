@@ -20,6 +20,7 @@
 
 extern "C" {
 #include "QcomSmem.h"
+#include "QcomSmp2p.h"
 
 /* Boot argument fuxi-audio-probe=N: 0 off, 1 log the report, 2 also end the boot with it on the panic screen. */
 int fuxi_audio_probe = 0;
@@ -75,9 +76,15 @@ void sayBytes(const QcomSmem *smem, uint32_t offset, uint32_t limit)
 void run()
 {
     say("audio probe: smem 0x%llx + 0x%x\n", kSmemBase, kSmemSize);
-    IOMemoryDescriptor *descriptor = IOMemoryDescriptor::withPhysicalAddress(kSmemBase, kSmemSize, kIODirectionIn);
+    /* A write stage needs a writable mapping; a read-only one faults the moment qcom_smem_alloc stores its entry, which
+     * is exactly how the first attempt at stage 4 took the phone down. The mapping is chosen by what the caller asked
+     * for, so a read-only probe stays read-only. */
+    const bool writing = fuxi_audio_probe >= 4;
+    IOMemoryDescriptor *descriptor = IOMemoryDescriptor::withPhysicalAddress(
+        kSmemBase, kSmemSize, writing ? kIODirectionInOut : kIODirectionIn);
     if (!descriptor) {say("smem: no descriptor\n"); return;}
-    IOMemoryMap *map = descriptor->createMappingInTask(kernel_task, 0, kIOMapAnywhere | kIOMapReadOnly);
+    IOMemoryMap *map = descriptor->createMappingInTask(
+        kernel_task, 0, kIOMapAnywhere | (writing ? 0 : kIOMapReadOnly));
     descriptor->release();
     if (!map || !map->getVirtualAddress()) {say("smem: not mapped\n"); if (map) map->release(); return;}
 
@@ -106,6 +113,19 @@ void run()
                 sayWords(&smem, offset, 8u);
                 say("\n");
             }
+        }
+    }
+
+    /* Stage 4 creates the items the audio bring-up needs and nothing else. It is the first thing this probe does that
+     * writes: an allocation inside the partition the boot loader already reserved, no clock, no rail, no DSP start. The
+     * SMEM hardware mutex is sheng's to take and this probe does not, because the DSP is not running to race with. */
+    if (fuxi_audio_probe >= 4 && rc == QcomSmemOk) {
+        const uint16_t want[] = {kItemOut, kItemIn, kItemCrash, kItemGlinkRx};
+        const uint32_t sizes[] = {QCOM_SMP2P_ITEM_BYTES, QCOM_SMP2P_ITEM_BYTES, 0x1000u, 0x4000u};
+        for (unsigned i = 0; i < sizeof want / sizeof want[0]; ++i) {
+            const int alloc = qcom_smem_alloc(&smem, &part, want[i], sizes[i]);
+            say("alloc %u (%u bytes): rc %d%s\n", want[i], sizes[i], alloc,
+                alloc == QcomSmemExists ? " (already there)" : "");
         }
     }
 
