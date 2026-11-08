@@ -67,6 +67,27 @@ def manifest_value(manifest: dict, key: str):
     return table.get(field)
 
 
+def manifest_measured(manifest: dict, key: str) -> bool:
+    """Whether the fact behind a key was measured rather than read off a source."""
+    match = re.fullmatch(r"amplifier\[(\d+)\]\.(\w+)", key)
+    if match:
+        amplifiers = manifest.get("amplifier", [])
+        index = int(match.group(1))
+        if index < len(amplifiers):
+            return bool(amplifiers[index].get("runtime_verified", False))
+        return False
+    section, _, _field = key.partition(".")
+    table = manifest.get(section)
+    if isinstance(table, dict):
+        return bool(table.get("runtime_verified", False))
+    return False
+    section, _, field = key.partition(".")
+    table = manifest.get(section)
+    if not isinstance(table, dict):
+        return None
+    return table.get(field)
+
+
 def struct_fields(header: str, name: str) -> list[str]:
     text = (PACKAGE / header).read_text()
     # A file may hold several typedefs; take the one whose name matches, not the span up to the first match.
@@ -120,11 +141,15 @@ def main() -> int:
                 continue
             if value in ("unverified", False) or value is None:
                 problems.append(f"{path}: verified on {evidence!r}, which is still unverified")
+            elif not manifest_measured(manifest, evidence):
+                problems.append(f"{path}: verified on {evidence!r}, which was read from a source, not measured")
         else:
             if evidence not in (None, "", "none"):
                 value = manifest_value(manifest, evidence)
                 if value is None:
                     problems.append(f"{path}: evidence {evidence!r} is not in the manifest")
+                elif value not in ("unverified", False) and value is not None and value != entry.get("value"):
+                    problems.append(f"{path}: carries {entry.get('value')!r} but its evidence {evidence!r} says {value!r}")
 
     # Every configuration field of every layer must appear in the binding.
     covered = 0
@@ -150,8 +175,12 @@ def main() -> int:
     if problems:
         print(f"{len(problems)} problem(s)")
         return 1
+    cited = sum(1 for _p, e in entries if e.get("evidence") not in (None, "", "none") and e.get("evidence") != "sheng.sm8550")
+    predicted = sum(1 for _p, e in entries if e.get("evidence") == "sheng.sm8550")
+    unsourced = len(entries) - cited - predicted
     print(f"PASS fuxi audio binding: {len(entries)} fields ({covered} layer fields covered), "
           f"{verified} verified, {len(entries) - verified} unverified")
+    print(f"     {cited} cite a recorded fact, {predicted} are predictions from sheng, {unsourced} have no source yet")
     return 0
 
 

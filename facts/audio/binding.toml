@@ -134,8 +134,8 @@ device_id_value = { value = 0, state = "unverified", evidence = "none" }
 revision_value = { value = 0, state = "unverified", evidence = "none" }
 enable_value = { value = 0, state = "unverified", evidence = "none" }
 asp_slot_value = { value = 0, state = "unverified", evidence = "none" }
-boost_peak_value = { value = 0, state = "unverified", evidence = "none" }
-boost_cap_value = { value = 0, state = "unverified", evidence = "none" }
+boost_peak_value = { value = 4000, state = "unverified", evidence = "amplifier[0].boost_peak_milliamp" }
+boost_cap_value = { value = 15, state = "unverified", evidence = "amplifier[0].boost_cap_microfarad" }
 pll_value = { value = 0, state = "unverified", evidence = "none" }
 irq_mask_value = { value = 0, state = "unverified", evidence = "none" }
 mute_on = { value = 0, state = "unverified", evidence = "none" }
@@ -143,12 +143,12 @@ mute_off = { value = 0, state = "unverified", evidence = "none" }
 clock_settle_ms = { value = 0, state = "unverified", evidence = "none" }
 
 [amp.b]
-i2c_address = { value = 0, state = "unverified", evidence = "amplifier[0].i2c_address" }
-reset_gpio = { value = 0, state = "unverified", evidence = "amplifier[0].reset_gpio" }
-irq_gpio = { value = 0, state = "unverified", evidence = "amplifier[0].irq_gpio" }
+i2c_address = { value = 0x40, state = "unverified", evidence = "amplifier[0].i2c_address" }
+reset_gpio = { value = 183, state = "unverified", evidence = "amplifier[0].reset_gpio" }
+irq_gpio = { value = 99, state = "unverified", evidence = "amplifier[0].irq_gpio" }
 
 [amp.t]
-i2c_address = { value = 0, state = "unverified", evidence = "amplifier[1].i2c_address" }
-reset_gpio = { value = 0, state = "unverified", evidence = "amplifier[1].reset_gpio" }
-irq_gpio = { value = 0, state = "unverified", evidence = "amplifier[1].irq_gpio" }
+i2c_address = { value = 0x42, state = "unverified", evidence = "amplifier[1].i2c_address" }
+reset_gpio = { value = 182, state = "unverified", evidence = "amplifier[1].reset_gpio" }
+irq_gpio = { value = 98, state = "unverified", evidence = "amplifier[1].irq_gpio" }
 
