@@ -536,8 +536,12 @@ void native_legacy_display_late_probe(void) {
         if (kernel_thread_start([](void *, wait_result_t) -> void {
                 IOSleep(45000);
                 fuxi_display_client_report();
-                IOSleep(30000);
-                fuxi_display_client_report();
+                /* Repeat while a person can still be touching the panel: the touch row only moves when a contact
+                 * arrives, and one report 30 s apart is not enough to catch a deliberate touch. */
+                for (int sample = 0; sample < 5; ++sample) {
+                    IOSleep(30000);
+                    fuxi_display_client_report();
+                }
                 return;
             }, nullptr, &c) == KERN_SUCCESS) thread_deallocate(c);
     }

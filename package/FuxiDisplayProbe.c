@@ -137,6 +137,12 @@ extern volatile unsigned int native_adreno_amble[16];
 extern volatile unsigned int native_adreno_ib_bufs[8][10];
 extern volatile unsigned int native_adreno_ib_bufs_count;
 extern volatile unsigned int native_adreno_ib_hist[16][6];
+/* The touch probe's own report row and where its thread is (FuxiTouchProbe.cpp): the row is refreshed by the probe, so
+ * reading it here costs the touch thread nothing. */
+extern char native_touch_rows[4][120];
+extern volatile unsigned int native_touch_loop_step, native_touch_step;
+extern volatile unsigned int native_touch_irq_stats[4];
+extern volatile int native_touch_error;
 extern volatile unsigned int native_adreno_wait_mem[4];
 extern volatile unsigned int native_adreno_patch_walk[6];
 extern volatile unsigned int native_adreno_patch_target[52];
@@ -159,6 +165,8 @@ void fuxi_display_client_report(void) {
     unsigned int submitted = 0, retired = 0;
     const int live = native_adreno_fences(&submitted, &retired);
     printf("fuxi-display: fence live %d submitted %u retired %u\n", live, submitted, retired);
+    printf("fuxi-touch: loop %u step %u err %d irq %u/%u\n%s\n", native_touch_loop_step, native_touch_step,
+           native_touch_error, native_touch_irq_stats[1], native_touch_irq_stats[2], native_touch_rows[3]);
     printf("fuxi-display: clients %u pid %d frames %u\n",
            native_legacy_client_calls, native_legacy_client_pid, native_legacy_frame_count);
     printf("fuxi-display: gop offers %llu done %llu fail %llu abandon %llu\n",

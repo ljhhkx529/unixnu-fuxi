@@ -186,6 +186,9 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                # from the panic screen while no display driver ran. The panel shows the picture now and the
                # rows are in the serial log, so the probe reports without panicking: 0.
                "fuxi-touch-panic=0",
+          # NativeHidInput::start() reads this name, not fuxi-touch-hid: it enables the digitizer collection in the
+          # descriptor, the Built-In/DisplayIntegrated properties and the sink the touch thread notifies.
+          "sheng-touch-hid=1",
                # -enable_kprintf_spam is gone: unixnu-fuxi-old does not set it, and the console drops
                # lines under that volume (QCOM USB LOSS contention climbing), which hid the first UFS
                # error behind thousands of repeats.
@@ -246,7 +249,7 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
           "sheng-gpu-wc=0",
           # Required in tiled mode for a reason other than thread selection: with the BV emitters fixed the stream
           # carries no BV/BOTH at all (bv_seen all zero) and the first submission still does not retire.
-          "sheng-tu-debug=",
+          "sheng-tu-debug=sysmem",
           "sheng-gpu-dcvs=1",
                "sheng-fb-gpu=1",
                "sheng-gpu-addon=1",
