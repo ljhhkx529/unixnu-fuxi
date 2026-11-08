@@ -587,7 +587,14 @@ static void touchThread(void *, wait_result_t) {
     }
 }
 
+/* The audio probe runs first and does nothing unless its own boot argument is set: it only reads SMEM, so it cannot
+ * interfere with the touch bring-up that follows. Both live behind the same bsd_init call, which keeps the kernel patch
+ * count unchanged. */
+extern "C" void native_audio_probe(void);
+
 extern "C" void native_touch_probe(void) {
+    native_audio_probe();
+
     unsigned stage = 0;
     if (!PE_parse_boot_argn("fuxi-touch", &stage, sizeof stage) || stage < 1 || native_touch_stage_req) return;
     if (stage > 4) stage = 4;

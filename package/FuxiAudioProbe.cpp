@@ -13,10 +13,10 @@
  */
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
-#include <mach/kernel.h>
+#include <libkern/libkern.h>
+#include <kern/task.h>
 #include <pexpert/pexpert.h>
 #include <stdarg.h>
-#include <stdio.h>
 
 extern "C" {
 #include "QcomSmem.h"

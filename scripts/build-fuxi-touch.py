@@ -58,9 +58,12 @@ def main():
     includes = ['-I', KIT, '-I', ROOT / 'drivers/FuxiFtsTouch', '-I', ROOT / 'drivers/QcomGeniSpi']
     jobs = [(cxx, KIT / 'FuxiTouchProbe.cpp', CXX_FLAGS + osfmk + includes),
             (cxx, KIT / 'FuxiHidProbe.cpp', CXX_FLAGS + osfmk + includes),
-            (cxx, KIT / 'FuxiButtons.cpp', CXX_FLAGS + osfmk + includes)]
+            (cxx, KIT / 'FuxiButtons.cpp', CXX_FLAGS + osfmk + includes),
+            # The audio probe reads SMEM through the ported driver and does nothing without its own boot argument; it
+            # lives in this archive so the kernel needs no second link entry and no second patch.
+            (cxx, KIT / 'FuxiAudioProbe.cpp', CXX_FLAGS + osfmk + includes)]
     for source in (ROOT / 'drivers/FuxiFtsTouch/FtsProtocol.c', ROOT / 'drivers/FuxiFtsTouch/FtsTouchCore.c',
-                   ROOT / 'drivers/QcomGeniSpi/GeniSpi.c', KIT / 'QcomRpmh.c'):
+                   ROOT / 'drivers/QcomGeniSpi/GeniSpi.c', KIT / 'QcomRpmh.c', KIT / 'QcomSmem.c'):
         jobs.append((c, source, C_FLAGS + osfmk))
     objects = []
     for rec, source, flags in jobs:
