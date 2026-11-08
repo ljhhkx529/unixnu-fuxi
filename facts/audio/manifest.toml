@@ -133,4 +133,5 @@ global_partition_size = 0xb0000
 item_glink_descriptor = "allocated: 32 bytes at offset 0x19f030"
 item_glink_tx = "allocated: 16384 bytes at offset 0x19f060"
 items_absent = "429 (SMP2P out), 443 (SMP2P in), 423 (crash) and 480 (GLINK rx) are not allocated, which is what a read-only probe sees before the APPS side creates them"
-note = "The boot loader already provisioned the GLINK descriptor and the transmit FIFO, at the size the platform documents (0x4000). The probe also exercised package/QcomSmem.c against this board's table, which had only ever run against the host model."
+note = "The boot loader already allocated the GLINK descriptor and the transmit FIFO, at the size the platform documents (0x4000), but both read back all zeros on 2026-11-09 (words: 00000000 x8 each): the items exist and are empty, because the GLINK protocol has never run on this board. The probe also exercised package/QcomSmem.c against this board's table, which had only ever run against the host model."
+second_run = "2026-11-09, kernel e227629d, hex dump of items 478 and 479"

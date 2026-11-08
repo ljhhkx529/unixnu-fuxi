@@ -52,6 +52,12 @@ void say(const char *format, ...)
     if (gUsed >= sizeof gReport) gUsed = sizeof gReport - 1u;
 }
 
+/* The same bytes as words, which is what a descriptor is: eight of them for the GLINK header, the first few of a FIFO. */
+void sayWords(const QcomSmem *smem, uint32_t offset, uint32_t words)
+{
+    for (uint32_t i = 0; i < words; ++i) say(" %08x", qcom_smem_read32(smem, offset + 4u * i));
+}
+
 /* The first bytes of an item as text, so a name or a descriptor can be recognised without trusting it. */
 void sayBytes(const QcomSmem *smem, uint32_t offset, uint32_t limit)
 {
@@ -94,6 +100,12 @@ void run()
             say("item %u: at 0x%x size %u first 32 ", kAudioItems[i], offset, size);
             sayBytes(&smem, offset, 32u);
             say("\n");
+            /* Words as well: a descriptor or a FIFO header is numbers, not text. */
+            if (size >= 32u && offset < smem.size) {
+                say("  words:");
+                sayWords(&smem, offset, 8u);
+                say("\n");
+            }
         }
     }
 
