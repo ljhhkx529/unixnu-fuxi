@@ -103,6 +103,14 @@ sample_rate = { value = 0, state = "unverified", evidence = "none" }
 host_clock_hz = { value = 0, state = "unverified", evidence = "none" }
 zero_timestamp_ticks = { value = 0, state = "unverified", evidence = "none" }
 
+# The first microphone path: one mono period stream, accounted the way the plan accepts it.
+[capture]
+channels = { value = 0, state = "unverified", evidence = "none" }
+bit_width = { value = 0, state = "unverified", evidence = "none" }
+period_frames = { value = 0, state = "unverified", evidence = "none" }
+sample_rate = { value = 0, state = "unverified", evidence = "none" }
+expected_periods = { value = 0, state = "unverified", evidence = "none" }
+
 [amp.registers]
 reg_chip_id = { value = 0, state = "unverified", evidence = "none" }
 reg_revision = { value = 0, state = "unverified", evidence = "none" }
