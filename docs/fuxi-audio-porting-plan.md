@@ -550,6 +550,14 @@ unixnu-fuxi
 `FuxiAudio.driver`（CDHash `8c96f3ca41761825098d1d9f82d7ad0bc1ca1159`）。**这只是"能编译"，不是"能工作"**：21H461 的 HAL ABI
 审计与真机验证都没做，插件从未在手机上运行过。
 
+
+### 9.1c HAL 插件与 21H461 审计表
+
+`hal/FuxiAudioPlugIn.c` 是 sheng 的插件换 fuxi 身份（bundle id、IOKit 类、设备/型号 UID、共享页），机制未变。
+`scripts/report-fuxi-hal-audit.py` 从源码里提取它实现的**17 个驱动函数、87 个属性选择器、2 个 IO 操作**，并把其中
+**24 项属于音频服务器语义**的列为审计对象——这些的"意思"不由我们决定，必须在 21H461 上实测确认。表由源码生成，
+所以它不会与插件脱节（某个选择器从代码消失时脚本会直接失败）。
+
 ### 9.2 主机检查能证明什么、不能证明什么
 
 主机侧证明的是**顺序、条件与计数**：识别先于配置、故障先清后配、配置写回读、PLL 锁定后才算 ready、mute 先于重启、
@@ -582,6 +590,24 @@ unixnu-fuxi
 | TDM/BCLK/FS 极性、slot 与左右声道映射 | speaker、HAL output | 设备测量 |
 | 21H461 的 HAL ABI 与 host timer 实现 | HAL output | 反解 + 设备 |
 | WCD938x 的 SoundWire 枚举与主麦 route | WCD/SoundWire | 设备枚举 |
+
+
+### 9.5 按等级的收束：每级还缺哪一条真机证据
+
+主机侧 2723 项检查按等级归属如下。**同一套件可能横跨两级**，下表按它主要服务的那一级归类。
+
+| 等级 | 套件（项数） | 主机侧证明了 | 还缺的真机证据 |
+| --- | --- | --- | --- |
+| A0 | `qcom-mdt` 43、`qcom-a0` 43、`qcom-loader` 52、`qcom-adsp` 43、`qcom-adsp-client` 30 | 容器解析、SMEM/SMP2P/GLINK、QMP/RPMh、加载顺序与阶段梯、客户端注册与排队 | `adsp.mbn`/`adsp_dtb.mbn` 能解析；carveout 与 PAS id；SMP2P entry 名与 ready/fatal 位；GLINK 通道名；QMP 描述符位置 |
+| A1 | `gpr` 37 | 24 字节头、编解码、basic result、SPF readiness | GPR 端口号、APM 实例号、固件版本与 SPF 就绪时序 |
+| A2 | `qcom-audio-graph` 67、`qcom-audio-path` 28 | 开图/config/命令/map/write/read/PRM 的报文形状；事务与 period 窗口 | graph/endpoint/转换器实例号；缓冲地址与 map handle 的真实回值；1000 个静音 period |
+| A3 | `qcom-audio-topology` 37 | 拓扑装配与一致性拒绝、slot 归属 | TDM/BCLK/FS 极性、slot 与左右声道实测、两颗功放的地址与 revision |
+| M3 | `geni-i2c` 2169、`cirrus-cs35l41` 38 | 传输层运行器与状态分类；功放步骤表、身份/故障/PLL 门 | 引擎寄存器实测、两颗功放 chip id/revision/OTP、100 次复位循环、IRQ 分类 |
+| A4 | `qcom-audio-ring` 31、`qcom-audio-abi` 36、`qcom-audio-service` 39（含 A5/A6） | 环的计数与满空区分；共享页布局与时间轴；服务的 IO 周期与发布 | **21H461 的 HAL ABI 审计（24 项，见 9.1c）**、host clock 实测、10 分钟无 underrun |
+| A5 | `qcom-audio-capture` 30 | 200 周期的验收形状：非零率、RMS、peak、削波、DC 偏置 | WCD938x 枚举、micbias/ADC、目标麦的 slot、200 个真实 period |
+| A6 | （含在服务套件内） | mute→代次→重建的顺序；在飞取消；旧代次应答被忽略 | SSR 20 次、100 次启停、长稳运行 |
+
+**一句话**：主机侧能证明的都已经证明了；上表右列每一项都需要设备或固件，没有一条能靠继续写主机测试推进。
 
 ## 10. 日志和验收记录格式
 
