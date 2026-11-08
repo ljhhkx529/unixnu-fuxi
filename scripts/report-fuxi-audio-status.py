@@ -26,6 +26,7 @@ SUITES = [
     ("speaker 拓扑", "scripts/check-qcom-audio-topology-host.py", "QcomAudioTopology"),
     ("共享输出环", "scripts/check-qcom-audio-ring-host.py", "QcomAudioRing"),
     ("CS35L41 安全状态机", "scripts/check-cirrus-cs35l41-host.py", "CirrusCs35l41"),
+    ("HAL 共享 ABI", "scripts/check-qcom-hal-abi-host.py", "QcomHalAbi"),
     ("恢复顺序（端到端）", "scripts/check-qcom-audio-session-host.py", "QcomAudioSession"),
 ]
 

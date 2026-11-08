@@ -27,6 +27,7 @@ COVERED = {
                         ("graph", "endpoint", "endpoint_format", "stream_format")),
     "CirrusCs35l41.h": ("Cs35l41Binding", ("amp.registers", "amp.b", "amp.t"), ()),
     "QcomAudioRing.h": ("QcomAudioRingConfig", ("path.ring", "path"), ()),
+    "QcomHalAbi.h": ("QcomHalConfig", ("hal",), ()),
     "QcomAudioTopology.h": ("QcomAudioTopologyInputs",
                             ("path", "path.references", "path.topology", "path.graph", "path.endpoint", "path.format"),
                             ()),
@@ -66,11 +67,12 @@ def manifest_value(manifest: dict, key: str):
 
 def struct_fields(header: str, name: str) -> list[str]:
     text = (PACKAGE / header).read_text()
-    match = re.search(r"typedef struct \{(.*?)\} " + name + r";", text, re.S)
-    if not match:
+    # A file may hold several typedefs; take the one whose name matches, not the span up to the first match.
+    found = [m for m in re.finditer(r"typedef struct \{(.*?)\} (\w+);", text, re.S) if m.group(2) == name]
+    if not found:
         problems.append(f"{header}: {name} not found")
         return []
-    body = re.sub(r"/\*.*?\*/", "", match.group(1), flags=re.S)
+    body = re.sub(r"/\*.*?\*/", "", found[0].group(1), flags=re.S)
     body = re.sub(r"//[^\n]*", "", body)
     fields = []
     for statement in body.split(";"):

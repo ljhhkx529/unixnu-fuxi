@@ -90,6 +90,19 @@ slot_mask_a = { value = 0, state = "unverified", evidence = "none" }
 slot_mask_b = { value = 0, state = "unverified", evidence = "none" }
 slot_count = { value = 0, state = "unverified", evidence = "none" }
 
+# The block the kernel service and the user-space HAL share. Offsets are part of the ABI; the values are board facts.
+[hal]
+output_ring_address = { value = 0, state = "unverified", evidence = "none" }
+output_ring_bytes = { value = 0, state = "unverified", evidence = "none" }
+output_frames = { value = 0, state = "unverified", evidence = "none" }
+output_period_frames = { value = 0, state = "unverified", evidence = "none" }
+output_periods_in_flight = { value = 0, state = "unverified", evidence = "none" }
+channels = { value = 0, state = "unverified", evidence = "none" }
+bytes_per_sample = { value = 0, state = "unverified", evidence = "none" }
+sample_rate = { value = 0, state = "unverified", evidence = "none" }
+host_clock_hz = { value = 0, state = "unverified", evidence = "none" }
+zero_timestamp_ticks = { value = 0, state = "unverified", evidence = "none" }
+
 [amp.registers]
 reg_chip_id = { value = 0, state = "unverified", evidence = "none" }
 reg_revision = { value = 0, state = "unverified", evidence = "none" }
