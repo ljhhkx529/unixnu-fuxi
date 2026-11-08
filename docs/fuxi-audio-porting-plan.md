@@ -404,6 +404,19 @@ graph id、两个模块 instance 与 slot 掩码——即"模板产出的东西�
 这 7 个新字段（`frames`/`period_frames`/`channels`/`bytes_per_sample`/`sample_rate`/`host_clock_hz`）
 已进绑定，门禁现覆盖 **93 项 / 74 个层字段**；校验器同时改为**跳过指针字段**（共享缓冲与索引属运行时接线，不是板级事实）。
 
+### A6 的恢复顺序（主机部分，完成于本轮）
+
+`package/QcomAudioSession.{h,c}`：把 ADSP 与数据面组成一个会话，并规定**重启的顺序**——
+
+1. **先 mute 功放**（hook）：mute 失败则**重启根本不发生**，会话标记失败、代次不变，绝不让功放在重启中保持未静音；
+2. 代次 +1；
+3. 重建 ADSP 层与数据面（数据面的事务 token 高 8 位即代次，因此旧代次应答永远匹配不上）；
+4. 清空共享环的两个索引。
+
+`scripts/check-qcom-audio-session-host.py` 在 ASan/UBSan 下跑 **17 项**，**底层是完整栈**（Mdt / Qmp / Smp2p / Glink / Gpr /
+AudioReach / Adsp / Path），AOP 与 DSP 均为模拟：端到端起来、跑起来、重启（mute 一次、代次推进、在飞周期取消、环复位）、
+**再次起来**、旧代次应答只计 `late` 不套用、mute 失败时重启被拒且代次不变、carveout 装不下镜像时 bring-up 失败。
+
 ### Phase 7：WCD938x 和麦克风（A5）
 
 目标：先完成一个明确的主麦 mono 48 kHz 路径，再增加其他麦克风。
