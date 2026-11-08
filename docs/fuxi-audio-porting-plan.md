@@ -714,3 +714,21 @@ A0 仍未完成的部分是 **ADSP 加载器本身**（`adsp.mbn`/`adsp_dtb.mbn`
 
 需要的外部输入见 9.4：ADSP 固件（或来源说明）与设备授权。在这两样到位之前，等级停在"A0–A6 均未完成"，
 但**结构上已经没有任何未知**：剩下的是数值与证据，而不是设计。
+
+## 14. 与 sheng 音频线的对齐
+
+原则：**机制仿 sheng**。sheng 的音频线是 `package/` 下 13 个文件、3329 行；本轮之前我在同一件事上另立了一套划分
+（11 个文件、1642 行），机制不同、命名不同，这不符合"机制仿 sheng"。下表是逐项对照与动作，顺序即实施顺序。
+
+| sheng | 行数 | fuxi 现状 | 机制差异 | 动作 |
+| --- | --- | --- | --- | --- |
+| `GeniI2c.{c,h}` + `tests/geni_i2c_host.c` | 154+101+218 | **已原样移植**（sha256 相同） | 我曾自造"可配置寄存器/值宽度 + 两段式读"，已删除 | ✅ 完成 |
+| `ShengGpr.{c,h}` | 106+60 | `QcomGpr` 188 行 | 机制相同（encode/decode/basic_result/spf_init/next/receive/timeout），但**符号与签名不同** | 按 sheng 的接口对齐，删除自造签名 |
+| `ShengAudioReach.{c,h}` | 375+109 | `QcomAudioReach` 280 行 | **机制不同**：sheng 每方向**两张图**（device graph 拥有硬件端点、stream graph 拥有共享内存端点，连接由 stream graph 的 open 携带）；我只有一个 graph 结构 | 按双图机制重写；图 id/实例号作为绑定值传入，不写死 sheng 的 0x4005/0x4007/TX3 |
+| `AdspFirmware.c` + `AdspProbe.cpp` + `ShengAdsp.h` | 182+690+30 | `QcomMdt` 157 + `QcomAdsp` 142 | 缺 sheng 的**客户端注册表**（`sheng_adsp_channel`/`sheng_adsp_send`：发送排队、回调不得阻塞、weak_import），以及 AdspProbe 的分阶段结构 | 补客户端层，把加载顺序搬进 AdspProbe 的形状 |
+| `ShengCs35l43.{c,h}` | 141+92 | `CirrusCs35l41` 183 行 | **机制不同**：sheng 是**脚本化步骤表**（`Cs35Step` 表 + `cs35_run_start/next/result`，8 位寄存器/值，`cs35_wire_value` 做端序交换）；我的是相位状态机 + 32 位 hook | 改成步骤表机制；表内容按 CS35L41 事实填，不抄 CS35L43 的寄存器程序 |
+| `ShengAudioAbi.h` | 88 | `QcomHalAbi` 64 行 | **机制不同**：sheng 是 control page + 输出/输入**两个环** + `ticks_per_frame_q32` + 两个 anchor + `out_seq/in_seq` + `lead_frames` + `*_late` + 四个方法号 | 按 sheng 的 ABI 重写；rate/channels/period/ring/lead 作为绑定值 |
+| `AudioProbe.cpp` + `ShengAudioService.cpp` + HAL | 1159+143 | `QcomAudioPath`/`QcomAudioRing`/`QcomAudioCapture`/`QcomAudioSession` | 我自划分层，与 sheng 的服务/探针/HAL 三分不同 | 把已有能力（period 窗口、事务代次、采集统计、SSR 恢复）**搬进** sheng 的结构，而不是并列 |
+
+保留的判断：上述能力本身仍然有用（period 窗口与 late/underrun 计数、采集统计、重启代次隔离），它们不删除，但要落在
+sheng 的文件与机制里。删除的是**与 sheng 冲突的自造机制**（已删：`QcomGeniI2c`）。
