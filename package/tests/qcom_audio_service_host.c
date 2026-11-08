@@ -110,6 +110,7 @@ typedef struct {
     QcomGlinkChannel *channel;
     uint8_t outbox[256];
     uint32_t pending_bytes, commands, spf_ready, handle;
+    uint32_t opcodes[64], opcode_count;
 } Dsp;
 
 static QcomAudioService *g_session;
@@ -396,10 +397,22 @@ static void test_happy_and_restart(void)
 
     /* Stopping clears the page's state and cancels what was in flight. */
     (void)qcom_audio_service_start_output(&r->session, 0x2000u);
-    check(qcom_audio_service_stop_output(&r->session) == QcomServiceOk, "the output stops");
+    const uint32_t before_stop = r->dsp.opcode_count;
+    const int stop_rc = qcom_audio_service_stop_output(&r->session);
+    check(stop_rc == QcomServiceOk || stop_rc == QcomServiceAgain, "the output stops");
     check((page.state & (QcomAudioOutputRunning | QcomAudioOutputReady)) == 0u,
           "the page says the output is neither running nor ready");
+    for (int i = 0; i < 200 && r->session.path.state != QcomPathIdle; ++i) {
+        aop_turn(1, 1);
+        (void)qcom_audio_service_step(&r->session);
+        pump_dsp(r);
+    }
     check(r->session.path.state == QcomPathIdle, "the path is back at the start");
+    check(r->session.path.map_handle == 0, "the buffer is unmapped");
+    check(r->session.path.period[0].active == 0, "and no period is left in flight");
+
+    /* The order itself is asserted in the data path's suite, where the bring-up is controlled directly. */
+    (void)before_stop;
 }
 
 static void test_failures(void)

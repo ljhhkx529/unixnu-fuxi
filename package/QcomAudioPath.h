@@ -31,6 +31,7 @@ enum {
     QcomPathMap = 5,
     QcomPathStart = 6,
     QcomPathRunning = 7,
+    QcomPathStopping = 8,   /* the teardown: stop the graph, close it, unmap the buffer */
     QcomPathFailed = -1,
 };
 
@@ -73,6 +74,7 @@ typedef struct {
     int state, last_error, outstanding;
     uint32_t steps, waits, submitted, completed, late, unknown, timeouts, cancelled;
     uint32_t map_handle, cursor;
+    uint32_t stopping;     /* which teardown step is in flight, zero when not stopping */
     uint32_t stage_sent, tx_bytes, tx_pending;
     struct {uint64_t address; uint32_t bytes; uint8_t active;} period[QCOM_AUDIOPATH_MAX_PERIODS];
     uint32_t periods_in_flight;
@@ -85,6 +87,9 @@ int qcom_audio_path_step(QcomAudioPath *p);
 int qcom_audio_path_receive(QcomAudioPath *p, const uint8_t *data, uint32_t length);
 int qcom_audio_path_restart(QcomAudioPath *p, uint32_t generation);
 int qcom_audio_path_period(QcomAudioPath *p, uint32_t bytes);
+/* Begins the teardown: stop the graph, close it, unmap the buffer. The caller keeps stepping until the path reports
+ * QcomPathIdle, so the order is the same one the acceptance record asks for and is not skipped when a stop is early. */
+int qcom_audio_path_stop(QcomAudioPath *p);
 uint32_t qcom_audio_path_in_flight(const QcomAudioPath *p);
 
 #ifdef __cplusplus

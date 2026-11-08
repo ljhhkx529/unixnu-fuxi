@@ -30,6 +30,7 @@ typedef struct {
     int drop_opcode;      /* never answer this opcode */
     uint32_t handle;
     uint32_t commands, pending_bytes, retries;
+    uint32_t opcodes[64], opcode_count;
 } Dsp;
 
 static QcomAudioPath *g_path;   /* the path under test, for our side's receive callback */
@@ -72,6 +73,7 @@ static void dsp_receive(void *context, QcomGlinkChannel *channel, const uint8_t 
     GprPacket packet;
     if (gpr_decode(data, length, &packet) != GprOk) return;
     ++d->commands;
+    if (d->opcode_count < 64) d->opcodes[d->opcode_count++] = packet.opcode;
     if (d->drop_opcode && (int)packet.opcode == d->drop_opcode) return;
 
     if (packet.opcode == GPR_OP_APM_GET_SPF_STATE) {
@@ -211,6 +213,41 @@ static void test_happy(void)
     check(qcom_audio_path_period(&r->path, 0) == QcomPathBadConfig, "a zero-length period is refused");
 }
 
+/* The teardown: stop the graph, close it, unmap the buffer, in that order. */
+static void test_teardown(void)
+{
+    Rig *r = &(Rig){0};
+    rig_init(r);
+    check(run_until(r, QcomPathRunning, 400) == QcomPathOk, "the path runs before the teardown");
+    check(r->path.map_handle != 0, "the buffer is mapped");
+
+    const uint32_t before = r->dsp.opcode_count;
+    check(qcom_audio_path_stop(&r->path) == QcomPathOk, "the teardown starts from a running path");
+    for (int i = 0; i < 200 && r->path.state != QcomPathIdle; ++i) {
+        pump(r, 1);
+        (void)qcom_audio_path_step(&r->path);
+    }
+    check(r->path.state == QcomPathIdle, "the path reaches idle");
+    check(r->path.map_handle == 0, "the handle is cleared");
+
+    uint32_t seen[3] = {0, 0, 0};
+    unsigned found = 0;
+    for (uint32_t i = before; i < r->dsp.opcode_count && found < 3u; ++i) {
+        const uint32_t op = r->dsp.opcodes[i];
+        if (op == QCOM_AR_OP_GRAPH_STOP && found == 0u) seen[found++] = op;
+        else if (op == QCOM_AR_OP_GRAPH_CLOSE && found == 1u) seen[found++] = op;
+        else if (op == QCOM_AR_OP_MEM_UNMAP && found == 2u) seen[found++] = op;
+    }
+    check(found == 3u, "the graph was stopped, then closed, then the buffer unmapped");
+
+    /* A stopped path can be brought up again, which is what a hundred start/stop cycles ask of it. */
+    check(run_until(r, QcomPathRunning, 400) == QcomPathOk, "and it comes back up");
+    check(r->path.map_handle != 0, "with a fresh mapping");
+    (void)qcom_audio_path_stop(&r->path);
+    for (int i = 0; i < 200 && r->path.state != QcomPathIdle; ++i) {pump(r, 1); (void)qcom_audio_path_step(&r->path);}
+    check(r->path.state == QcomPathIdle, "and stops again");
+}
+
 static void test_failures(void)
 {
     /* The framework never reports ready. */
@@ -333,6 +370,7 @@ static void test_multiple_periods(void)
 int main(void)
 {
     test_happy();
+    test_teardown();
     test_multiple_periods();
     test_failures();
     printf("PASS QcomAudioPath: %d checks\n", checks);

@@ -164,6 +164,46 @@ int qcom_audio_path_step(QcomAudioPath *p)
         if (++p->waits > budget * 4u) return fail(p, QcomPathSpfTimeout);
         return QcomPathAgain;
     }
+    case QcomPathStopping: {
+        if (qcom_glink_poll(p->link) == QcomGlinkCorrupt) return fail(p, QcomPathCommandFailed);
+        if (p->tx_pending) return try_send(p);
+        if (p->outstanding) {
+            if (++p->waits > budget) {++p->timeouts; return fail(p, QcomPathTimeout);}
+            return QcomPathAgain;
+        }
+        if (p->stage_sent) {
+            /* One teardown step answered; on to the next. */
+            p->stage_sent = 0;
+            p->waits = 0;
+            ++p->stopping;
+        }
+        const uint32_t token = next_token(p);
+        if (p->stopping == 1u) {
+            const uint32_t n = qcom_ar_graph_command(p->tx, sizeof p->tx, p->config.gpr_port, token,
+                                                     p->config.apm_iid, QCOM_AR_OP_GRAPH_STOP,
+                                                     p->config.graph->subgraph_id);
+            return built(p, n ? 0 : QcomPathBadConfig, n, QCOM_AR_OP_GRAPH_STOP);
+        }
+        if (p->stopping == 2u) {
+            const uint32_t n = qcom_ar_graph_command(p->tx, sizeof p->tx, p->config.gpr_port, token,
+                                                     p->config.apm_iid, QCOM_AR_OP_GRAPH_CLOSE,
+                                                     p->config.graph->subgraph_id);
+            return built(p, n ? 0 : QcomPathBadConfig, n, QCOM_AR_OP_GRAPH_CLOSE);
+        }
+        if (p->stopping == 3u && p->map_handle) {
+            const uint32_t n = qcom_ar_unmap(p->tx, sizeof p->tx, p->config.gpr_port, token, p->config.apm_iid,
+                                             p->map_handle);
+            return built(p, n ? 0 : QcomPathBadConfig, n, QCOM_AR_OP_MEM_UNMAP);
+        }
+        /* Teardown over: nothing is left mapped, and the periods that were in flight are cancelled. */
+        p->cancelled += qcom_audio_path_in_flight(p);
+        for (uint32_t i = 0; i < QCOM_AUDIOPATH_MAX_PERIODS; ++i) p->period[i].active = 0;
+        p->map_handle = 0;
+        p->cursor = 0;
+        p->stopping = 0;
+        p->state = QcomPathIdle;
+        return QcomPathOk;
+    }
     case QcomPathOpen:
     case QcomPathEndpoint:
     case QcomPathStream:
@@ -220,6 +260,18 @@ int qcom_audio_path_step(QcomAudioPath *p)
     default:
         return fail(p, QcomPathWrongState);
     }
+}
+
+int qcom_audio_path_stop(QcomAudioPath *p)
+{
+    if (!p) return QcomPathBadConfig;
+    if (p->state != QcomPathRunning) return QcomPathWrongState;
+    if (p->tx_pending || p->outstanding) return QcomPathAgain;
+    p->stopping = 1;
+    p->stage_sent = 0;
+    p->waits = 0;
+    p->state = QcomPathStopping;
+    return QcomPathOk;
 }
 
 int qcom_audio_path_period(QcomAudioPath *p, uint32_t bytes)

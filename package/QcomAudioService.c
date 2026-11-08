@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: BSD-2-Clause-Patent */
 #include "QcomAudioService.h"
 
+static void publish(QcomAudioService *s);
+
 static void rebuild(QcomAudioService *s)
 {
     qcom_adsp_init(&s->adsp, &s->adsp_config, &s->adsp_hooks, s->image, s->mailbox, s->smp2p, s->link, s->channel);
@@ -38,6 +40,13 @@ int qcom_audio_service_step(QcomAudioService *s)
     if (!s) return QcomServiceBadConfig;
     if (s->state == QcomServiceFailed) return s->last_error;
     ++s->steps;
+
+    if (s->stopping) {
+        const int rc = qcom_audio_path_step(&s->path);
+        if (rc < 0) {s->last_error = QcomServiceBringUpFailed; s->state = QcomServiceFailed; return s->last_error;}
+        if (s->path.state == QcomPathIdle) {s->stopping = 0; s->state = QcomServiceIdle; publish(s); return QcomServiceOk;}
+        return QcomServiceAgain;
+    }
 
     if (s->adsp.state != QcomAdspUp) {
         s->state = QcomServiceBringUp;
@@ -147,10 +156,14 @@ int qcom_audio_service_stop_output(QcomAudioService *s)
 {
     if (!s) return QcomServiceBadConfig;
     if (s->control) s->control->state &= ~(uint32_t)(QcomAudioOutputRunning | QcomAudioOutputReady);
-    /* The periods in flight are cancelled through the path's own restart, so nothing is left half-written. */
-    const uint32_t generation = s->generation;
-    (void)qcom_audio_path_restart(&s->path, generation + 1u);
-    s->generation = generation + 1u;
+    /* The graph is stopped, closed and the buffer unmapped by the path itself; the caller keeps stepping until it
+     * reports idle, so the teardown order is the one the acceptance record asks for. */
+    if (s->path.state == QcomPathRunning) {
+        s->stopping = 1;
+        const int rc = qcom_audio_path_stop(&s->path);
+        if (rc == QcomPathAgain) {publish(s); return QcomServiceAgain;}
+        if (rc != QcomPathOk) {publish(s); return QcomServiceBadConfig;}
+    }
     publish(s);
     return QcomServiceOk;
 }

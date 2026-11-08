@@ -63,6 +63,7 @@ typedef struct {
     int state, last_error;
     uint32_t generation, steps, recoveries, mutes, failures;
     uint32_t periods_taken, cycles, starved;
+    uint32_t stopping;   /* the teardown is under way and the path is closing down */
 } QcomAudioService;
 
 void qcom_audio_service_init(QcomAudioService *s, const QcomAdspConfig *adsp_config,
