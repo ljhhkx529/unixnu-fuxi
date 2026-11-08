@@ -39,7 +39,7 @@ static const uint16_t kAudioItems[] = {kItemOut, kItemIn, kItemCrash, kItemGlink
 
 namespace {
 
-char gReport[1600];
+char gReport[4096];
 size_t gUsed;
 
 void say(const char *format, ...)
@@ -120,9 +120,10 @@ void run()
      * host cannot check, and stage 4 died on it. If this says the map is writable, the allocation is worth trying; if it
      * does not, nothing has been touched. */
     if (fuxi_audio_probe >= 5) {
-        say("map: options 0x%x length 0x%llx readonly %d\n", map->getMapOptions(),
-            (unsigned long long)map->getLength(), writing ? 0 : 1);
-        say("map: first word reads 0x%08x (a read, not a write)\n", qcom_smem_read32(&smem, 0));
+        /* Only values this probe already holds: calling into IOMemoryMap here is what the first attempt at this stage
+         * crashed on, so the report says what the mapping was asked for and shows one word reads. */
+        say("map: asked for %s, length 0x%x, word0 0x%08x\n", writing ? "read-write" : "read-only", kSmemSize,
+            qcom_smem_read32(&smem, 0));
         map->release();
         return;
     }
