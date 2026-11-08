@@ -127,6 +127,9 @@ extern volatile unsigned int native_adreno_ib_log[4][4+256];
 extern volatile unsigned int native_adreno_ib_log_count;
 extern volatile unsigned int native_adreno_ib_peek;
 extern volatile unsigned int native_adreno_bv_patched[4];
+extern volatile unsigned int native_adreno_bv_seen[8];
+extern volatile unsigned int native_adreno_wc_audit[6];
+extern volatile unsigned int native_adreno_wc_distrusted;
 extern volatile unsigned int native_adreno_ib_ind[16];
 extern volatile unsigned int native_adreno_empty_ib[4];
 extern void native_gpu_ib_state(unsigned int *out);
@@ -135,6 +138,8 @@ extern volatile unsigned int native_adreno_ib_bufs[8][10];
 extern volatile unsigned int native_adreno_ib_bufs_count;
 extern volatile unsigned int native_adreno_ib_hist[16][6];
 extern volatile unsigned int native_adreno_wait_mem[4];
+extern volatile unsigned int native_adreno_patch_walk[6];
+extern volatile unsigned int native_adreno_patch_target[52];
 extern volatile unsigned int native_adreno_prologue[96];
 extern volatile unsigned int native_adreno_prologue_info[4];
 /* The fence event ring (Adreno740 NativeAdrenoSubmit.cpp): type 1 submit, 2 wait-enter, 3 wait-complete, 4 wait-timeout. */
@@ -143,9 +148,11 @@ extern volatile unsigned int native_adreno_fence_events_count;
 /* The CP stall snapshot Adreno740 keeps when a fence wait times out (NativeAdrenoSubmit.cpp): the ring words, the CP's
  * own state and the last command it fetched. */
 extern volatile unsigned int native_adreno_stall[29];
+extern volatile unsigned int native_adreno_stall_mem[59];
+extern volatile unsigned int native_adreno_ring_log[4][4 + 112];
+extern volatile unsigned int native_adreno_ring_log_count;
 extern int native_adreno_fences(unsigned int *submitted, unsigned int *retired);
 extern volatile unsigned long long native_gop_wait_stats[4];
-extern volatile unsigned long long native_gop_handoff_stat[4];
 /* What the display and the GPU hand-off have done, for the boot log. One line per counter so a failing path
  * is named rather than inferred. */
 void fuxi_display_client_report(void) {
@@ -157,21 +164,56 @@ void fuxi_display_client_report(void) {
     printf("fuxi-display: gop offers %llu done %llu fail %llu abandon %llu\n",
            native_gop_gpu_offers, native_gop_gpu_completions, native_gop_gpu_failures, native_gop_gpu_abandoned);
     {
-        unsigned int ib[16] = {0};
+        unsigned int ib[28] = {0};
         native_gpu_ib_state(ib);
-        printf("fuxi-metal: wait_mem dropped %u last_at %u seen %u drop_knob %u\n",
-           native_adreno_wait_mem[0], native_adreno_wait_mem[1], native_adreno_wait_mem[2],
-           native_adreno_wait_mem[3]);
+        printf("fuxi-metal: audit wait_mem seen %u (the runtime must emit none)\n", native_adreno_wait_mem[0]);
+    printf("fuxi-metal: wc audit n%u lines%u dirty%u stale%u last%x rewc%u distrusted%u\n",
+           native_adreno_wc_audit[0], native_adreno_wc_audit[1], native_adreno_wc_audit[2],
+           native_adreno_wc_audit[3], native_adreno_wc_audit[4], native_adreno_wc_audit[5],
+           native_adreno_wc_distrusted);
+        printf("fuxi-metal: patch_walk streams %u links %u skipped %u bounded %u tctrl %u changed %u\n",
+               native_adreno_patch_walk[0], native_adreno_patch_walk[1],
+               native_adreno_patch_walk[2], native_adreno_patch_walk[3],
+               native_adreno_patch_walk[4], native_adreno_patch_walk[5]);
+        if (native_adreno_patch_target[2]) {
+            printf("fuxi-metal: patch_target %x%08x words %u peek %x:", native_adreno_patch_target[1],
+                   native_adreno_patch_target[0], native_adreno_patch_target[2], native_adreno_patch_target[3]);
+            for (unsigned base = 0; base < native_adreno_patch_target[2] && base < 48; base += 12) {
+                printf("\nfuxi-metal:   target+%u:", base);
+                for (unsigned k = base; k < base + 12 && k < native_adreno_patch_target[2] && k < 48; ++k)
+                    printf(" %x", native_adreno_patch_target[4 + k]);
+            }
+            printf("\n");
+        }
     printf("fuxi-display: cp ib1 %x%08x rem %x ib2 %x%08x rem %x sds %x%08x rem %x\n",
                ib[1], ib[0], ib[2], ib[4], ib[3], ib[5], ib[7], ib[6], ib[8]);
         printf("fuxi-display: cp mrb %x%08x rem %x vsd %x wptr %x rptr %x\n",
                ib[10], ib[9], ib[11], ib[12], ib[13], ib[14]);
+        printf("fuxi-display: cp status %x %x %x %x fault %x status1 %x protect %x\n",
+               ib[15], ib[16], ib[17], ib[18], ib[19], ib[20], ib[21]);
+        printf("fuxi-display: cp roq rb %x ib1 %x ib2 %x sds %x mrb %x vsd %x\n",
+               ib[24], ib[22], ib[23], ib[25], ib[26], ib[27]);
+        if (native_adreno_ring_log_count) {
+            volatile unsigned int *r = native_adreno_ring_log[(native_adreno_ring_log_count - 1) & 3];
+            printf("fuxi-display: ring f%u %x..%x n%u:", r[0], r[1], r[2], r[3]);
+            for (unsigned k = 0; k < r[3] && k < 16; ++k) printf(" %x", r[4 + k]);
+            printf("\n");
+        }
+        if (native_adreno_stall[0]) {
+            volatile unsigned int *s = native_adreno_stall;
+            volatile unsigned int *m = native_adreno_stall_mem;
+            printf("fuxi-display: stall f%u waits %u rptr %x wptr %x ib1 %x%08x rem %x ib2 %x%08x rem %x\n",
+                   s[0], s[1], s[10], s[11], s[13], s[12], s[14], s[16], s[15], s[17]);
+            printf("fuxi-display: stall fault %x %x %x %x br_at %x:", m[0], m[1], m[2], m[3], m[4]);
+            for (unsigned k = 0; k < 8; ++k) printf(" %x", m[5 + k]);
+            printf("\n");
+            printf("fuxi-display: stall bv_at %x:", m[21]);
+            for (unsigned k = 0; k < 8; ++k) printf(" %x", m[22 + k]);
+            printf("\n");
+        }
     }
     printf("fuxi-display: gop_wait calls %llu timeouts %llu last_ms %llu\n",
            native_gop_wait_stats[0], native_gop_wait_stats[1], native_gop_wait_stats[2]);
-    printf("fuxi-display: gop_handoff calls %llu op %llu memory %llu status %x\n",
-           native_gop_handoff_stat[0], native_gop_handoff_stat[1], native_gop_handoff_stat[2],
-           (unsigned)native_gop_handoff_stat[3]);
     {
         struct FuxiMetalDiagFields *d = &native_adreno_metal_diag;
         printf("fuxi-metal: opens %u busy %u bad %u name_reads %u reader %s starter %s\n",
@@ -247,6 +289,9 @@ void fuxi_display_client_report(void) {
            native_adreno_amble[4], native_adreno_amble[5], native_adreno_amble[6], native_adreno_amble[7],
            native_adreno_amble[8], native_adreno_amble[9], native_adreno_amble[10], native_adreno_amble[11]);
     printf("fuxi-metal: empty_ib dropped %u last %x\n", native_adreno_empty_ib[0], native_adreno_empty_ib[1]);
+    printf("fuxi-metal: bv_seen sel3 %u sel2 %u sel1_nobin %u other %u last %x %x %x %x\n",
+           native_adreno_bv_seen[0], native_adreno_bv_seen[1], native_adreno_bv_seen[2], native_adreno_bv_seen[3],
+           native_adreno_bv_seen[4], native_adreno_bv_seen[5], native_adreno_bv_seen[6], native_adreno_bv_seen[7]);
     printf("fuxi-metal: bv_patch ok %u last_bytes %u refused %u back %x\n",
            native_adreno_bv_patched[0], native_adreno_bv_patched[1], native_adreno_bv_patched[2],
            native_adreno_bv_patched[3]);

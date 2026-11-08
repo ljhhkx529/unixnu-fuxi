@@ -230,18 +230,24 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                "sheng-gpu-power=9",
           "sheng-gpu-zap=4",
           "fuxi-probe-prologue=1",
-          "fuxi-probe-fence=4",
           "fuxi-probe-tctrl=0x08000001",
           # This board's CP refuses SYNC_THREADS (fixed in the driver) and cannot switch its page table from the
           # ring, so clients are served on the kernel's own table and submissions go out without the framed
           # prologue. Together those two make every fence retire; see docs/gpu-bringup.md.
-          "sheng-gpu-single-table=1",
           "fuxi-cp-protect=0",
           # The client fills its IB through a write-combining mapping and the command processor then reads zeros.
           # Serve those mappings write-back instead and see whether the submission survives.
-          "sheng-gpu-wc=0",
+          # Force Turnip onto the sysmem path while the A740 GMEM/bin-resolve path is under bring-up.
+          # nocb/nobin also prevent concurrent and explicit binning work from reaching the stalled BV path.
                "sheng-gpu-metal=1",
-               "sheng-gpu-dcvs=1",
+          # Write-combined client BOs: the driver's own audit finds 8 dirty IB lines and distrusts them, and the
+          # per-submission clean that follows still does not make the words visible to the command processor
+          # (submitted 10 / retired 9, no GOP frames). Not a transition workaround: a real defect.
+          "sheng-gpu-wc=0",
+          # Required in tiled mode for a reason other than thread selection: with the BV emitters fixed the stream
+          # carries no BV/BOTH at all (bv_seen all zero) and the first submission still does not retire.
+          "sheng-tu-debug=",
+          "sheng-gpu-dcvs=1",
                "sheng-fb-gpu=1",
                "sheng-gpu-addon=1",
                # Jobs that cannot run here, with unixnu-fuxi-old s list. liveactivitiesd is the one that

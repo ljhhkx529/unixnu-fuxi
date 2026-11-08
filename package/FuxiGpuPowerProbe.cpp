@@ -62,7 +62,17 @@ extern "C" {
 
 #include "NativeAdrenoGmuContext.h"
 #include "NativeAdrenoGpuContext.h"
+#include "NativeAdrenoPublishPolicy.h"
 #include "NativeAdrenoRing.h"
+
+/* What this board asks the published client for, as data: every user connection shares the kernel address space
+ * (this command processor cannot switch TTBR0 in the ring) and submissions go out unframed (its prologue's packets
+ * stop it). Both are transition states; docs/upstream-clean-gpu-plan.md has the order they are retired in. */
+static const NativeAdrenoPublishPolicy gGpuPublishPolicy = {
+    1, sizeof(NativeAdrenoPublishPolicy),
+    /* Phase C: every flag withdrawn in turn. 0 is the default path — per-process page tables and framed
+     * submissions — which is what docs/upstream-clean-gpu-plan.md aims at. */
+    0, 0};
 #include "NativeAdrenoMemory.h"
 #include "NativeAdrenoVm.h"
 #include "NativeAdrenoUserClient.h"
@@ -92,6 +102,8 @@ extern "C" IOReturn NativeAdrenoGpuContextBringup(volatile uint8_t *, size_t, un
     unsigned, void (*)(uint32_t), NativeAdrenoGmuContextReport *) __attribute__((weak));
 extern "C" IOReturn NativeAdrenoGpuContextBuffers(NativeAdrenoGpuBuffer out[5]) __attribute__((weak));
 extern "C" NativeAdrenoVm *NativeAdrenoGpuContextVm() __attribute__((weak));
+extern "C" IOReturn native_adreno_publish_with_policy(NativeAdrenoVm *, NativeAdrenoSubmit *, NativeAdrenoRing *, const NativeAdrenoRingClock *,
+    const NativeAdrenoTimer *, const NativeAdrenoAbiDeviceInfo *, const NativeAdrenoPublishPolicy *, uint32_t, uint32_t);
 extern "C" IOReturn native_adreno_publish(NativeAdrenoVm *, NativeAdrenoSubmit *, NativeAdrenoRing *, const NativeAdrenoRingClock *,
     const NativeAdrenoTimer *, const NativeAdrenoAbiDeviceInfo *, uint32_t, uint32_t) __attribute__((weak));
 extern "C" uint32_t native_adreno_publish_stats(uint32_t *) __attribute__((weak));
@@ -995,7 +1007,8 @@ NativeAdrenoTimer gTimer;
 // values hw_init programs above. The VA window keeps clear of the kernel buffers (below 0x302000+) and the GMEM window
 // (0x1000000..0x12fffff) and ends at the 4 GiB aperture.
 NativeAdrenoAbiDeviceInfo gDeviceInfo = {0x43050a01u, 3u << 20, 0x1000000ull, 0x1fffffffff000ull, GpuClientVaStart,
-                                               0xE0000000ull, 16, 6, 1, 4, NativeAdrenoDeviceClientIova, 0};
+                                               0xE0000000ull, 16, 6, 1, 4,
+        NativeAdrenoDeviceClientIova | NativeAdrenoDeviceSingleRenderThread, 0};
 int timerRead(void *, uint32_t reg, uint32_t *value) {*value = gpuRd(reg); return 0;}
 const NativeAdrenoTimeIo gTimerIo{nullptr, timerRead};
 IOReturn wcall(IOUserClient *uc, uint32_t method, const void *in, void *out) {
@@ -1233,11 +1246,6 @@ extern "C" volatile uint32_t native_adreno_prologue_level;
 extern "C" volatile uint32_t native_adreno_no_bv;
 extern "C" volatile uint32_t native_adreno_fence_level;
 extern "C" volatile uint32_t native_adreno_bv_ring;
-extern "C" volatile uint32_t native_adreno_plain_submit;
-extern "C" volatile uint32_t native_adreno_no_thread_sync;
-extern "C" volatile uint32_t native_adreno_bv_to_br;
-extern "C" volatile uint32_t native_adreno_drop_empty_ib;
-extern "C" volatile uint32_t native_adreno_drop_wait_mem;
 extern "C" int (*native_adreno_dram_write32)(uint64_t, uint32_t);
 /* What the command processor itself reports about the indirect buffer it is inside: [0]/[1] CP_IB1_BASE, [2] its
  * remaining budget in dwords, [3]/[4] CP_IB2_BASE, [5] its budget, [6]/[7] CP_RB_WPTR/CP_RB_RPTR. A budget that
@@ -1253,6 +1261,10 @@ extern "C" void native_gpu_ib_state(uint32_t *out) {
     out[9] = gpuRd(0x0931); out[10] = gpuRd(0x0932); out[11] = gpuRd(0x0933);
     out[12] = gpuRd(0x0934);
     out[13] = gpuRd(0x0807); out[14] = gpuRd(0x0806);
+    out[15] = gpuRd(0x0210); out[16] = gpuRd(0x0211); out[17] = gpuRd(0x0212); out[18] = gpuRd(0x0213);
+    out[19] = gpuRd(0x0821); out[20] = gpuRd(0x0825); out[21] = gpuRd(0x0824);
+    out[22] = gpuRd(0x0949); out[23] = gpuRd(0x094a);
+    out[24] = gpuRd(0x0948); out[25] = gpuRd(0x094b); out[26] = gpuRd(0x094c); out[27] = gpuRd(0x094d);
 }
 void framedSubmitProbe() {
     /* One framed submission per boot, which is all a stopped command processor allows: a refused submission
@@ -1344,7 +1356,8 @@ void publishAndWrapperTest(bool rounds) {
     // zero window with kIOReturnNoResources, so a hardcoded 32 left every Metal client unable to mount.
     const unsigned ias = NativeAdrenoGpuContextInputBits ? NativeAdrenoGpuContextInputBits() : 0;
     gDeviceInfo.va_size = ias > 32 ? (1ull << ias) - GpuClientVaStart : 0;
-    const IOReturn published = native_adreno_publish(vm, &gSubmit, &gRing, &clock, timer ? nullptr : &gTimer, &gDeviceInfo, ias, 40);
+    const IOReturn published = native_adreno_publish_with_policy(vm, &gSubmit, &gRing, &clock, timer ? nullptr : &gTimer,
+        &gDeviceInfo, &gGpuPublishPolicy, ias, 40);
     IOService *svc = published ? nullptr : native_adreno_published_service();
     int ok = 0, n = 0, errAt = -1, v1 = -1, v2 = -1;
     IOReturn err = 0;
@@ -1695,16 +1708,9 @@ void gpuStart() {
     native_adreno_fence_phys = gGpuBuffers[2].physical;   // the page the CP writes its timestamps to, for the UFS log
     /* native_adreno_bv_ring stays 0: programming a BV ring at 0xa60 with PIPE_BV selected stops the bring-up
      * before it finishes at all (fence live 0, marks 0). See docs/gpu-bringup.md. */
-    native_adreno_no_thread_sync = 1;   /* SYNC_THREADS hangs this CP; the init's own payload has bit 27 only */
-    native_adreno_bv_to_br = 1;   /* the BV thread has no runnable ring here, and naming it stops the CP */
-    native_adreno_drop_wait_mem = 1;   /* the CP sits on the stream's final CP_WAIT_MEM_WRITES */
-    /* native_adreno_drop_empty_ib stays 0: decoding the stream showed those indirect buffers are filled by the
-     * command processor itself (CP_MEM_WRITE then CP_INDIRECT_BUFFER), so they are empty at submit time by
-     * design and rewriting them to NOP destroys the idiom. See docs/gpu-bringup.md. */
     /* The framed path is unusable on this board even with SYNC_THREADS gone: with it the system stops reporting
      * altogether (the boot log ends where the display reports would start), so the client's IB goes straight to
      * the ring. */
-    native_adreno_plain_submit = 1;
     const IOReturn attached = gRing.attach(&rio, &cache, const_cast<uint8_t *>(gGpuCpu[1]), gGpuBuffers[1].bytes,
         gGpuBuffers[1].iova, const_cast<uint8_t *>(gGpuCpu[2]), gGpuBuffers[2].bytes, gGpuBuffers[2].iova);
     if (attached) {snprintf(row, sizeof row, "C4 ring attach %x", unsigned(attached)); setRow(7, row); { printf("fuxi-gpu: gpuStart exit %u cp %u\n", __LINE__, c[0]); return; }}
