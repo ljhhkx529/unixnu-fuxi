@@ -1,6 +1,6 @@
 # Xiaomi 13（fuxi / SM8550）音频移植方案
 
-状态：设计方案，尚未实施或进行设备测试
+状态：实施中；已完成静态证据审计和板级无关 GPR 主机模型，尚未接入内核或进行设备测试
 
 目标系统：UniXNU + iPadOS 17.7.11（21H461）
 
@@ -30,7 +30,7 @@ fuxi ADSP firmware
 与 sheng 相比，最重要的修正是：
 
 1. fuxi 的公开 Android 下游 DTS 线索是 **2 颗 CS35L41**，不是 sheng 的 6 颗 CS35L43。CS35L43 的寄存器表、reset 拓扑和 slot 分配均不得照抄。
-2. 两台设备都使用 GPIO121--124 一组 secondary 音频引脚，但 fuxi DTS 把它声明为最多 4 slot 的 TDM 接口。实际 frame sync、slot width、slot mask、左右声道映射必须由 fuxi stock runtime 或波形确认。
+2. 两台设备都使用 GPIO121--124 一组 secondary 音频引脚，但 fuxi DTS 把它声明为最多 4 slot 的 TDM 接口。实际 frame sync、slot width、slot mask、左右声道映射必须由 UniXNU 观测或波形确认。
 3. 两台设备都处于 WCD938x + TX SoundWire 的 SM8550 音频体系中，但这并不能证明主麦路径相同。sheng 已确认的 AMIC3/ADC2/port 2/TX3 只能作为查找模板。
 4. sheng 的 AudioReach、共享环、19.2 MHz timeline 和 CoreAudio object model 可以作为移植起点；sheng 的 iPadOS 26/27 arm64e 细节不能直接当作 fuxi 的 21H461 ABI 事实。
 5. fuxi stock DTS 存在 CS35L41 `fast-switch` profile。首声可暂时采用低功率、短时的安全固定配置，但日用音频不能以“永久绕过功放 DSP/保护”为完成状态。
@@ -43,7 +43,7 @@ fuxi ADSP firmware
 
 | 等级 | 含义 | 可否进入 fuxi 板级配置 |
 | --- | --- | --- |
-| `confirmed-device` | 来自 fuxi stock live DT、Android 真机运行状态、总线读回或测量 | 可以 |
+| `confirmed-device` | 来自 fuxi 在 UniXNU 下的总线读回、波形或其他直接测量 | 可以 |
 | `confirmed-source` | 来自固定 commit 的 fuxi 源码，且与目标硬件明确匹配 | 可以，但关键电气值仍应真机复核 |
 | `reference-sheng` | 来自 sheng 的已验证实现 | 只能指导架构和调查方法 |
 | `hypothesis` | 来自同 SoC、其他 Xiaomi 机型或未验证静态 DTS | 不可以，只能生成下一项测量 |
@@ -52,11 +52,11 @@ fuxi ADSP firmware
 
 - `porting.toml` 中 `audio` 仍是 `planned`，没有选择音频组件。
 - `dts/fuxi.dts` 尚未描述 ADSP 或板级音频设备。
-- 当前没有 fuxi 真机音频事实集，也没有 fuxi 音频设备测试结果。
+- 当前没有 fuxi 真机音频事实集，也没有 fuxi 音频设备测试结果；项目没有可供采集的 Android boot/runtime。
 - `docs/dtb_diff_report.txt` 中的 `audio_cma_region`、ADSP 和 SMMU 差异只能提示调查方向，不能据此确定地址、IRQ 或路由。
 
 当前 fuxi 硬件线索来自 LineageOS `android_kernel_xiaomi_sm8550-devicetrees` commit
-`43b5ada5654ed84c25f74789bc8f6326b7bacd20`。这些值在 stock live DT/Android runtime 复核前仍按
+`43b5ada5654ed84c25f74789bc8f6326b7bacd20`。这些值在 UniXNU 只读探针或直接测量复核前仍按
 `confirmed-source` 或 `hypothesis` 管理：
 
 - 扬声器功放：2 x CS35L41，I2C 地址 `0x40` 和 `0x42`。
@@ -75,7 +75,7 @@ fuxi ADSP firmware
 | 层 | sheng 已验证状态 | fuxi 当前结论 | 处理方式 |
 | --- | --- | --- | --- |
 | SoC | SM8550 | SM8550 | 通用 transport/协议优先抽到公共层 |
-| ADSP 固件 | 从 `modem_a` FAT `/image` 读取 `adsp`、`adsp_dtb` | 路径、版本、分段和 carveout 待真机确认 | 复用 loader 结构，不复制 manifest |
+| ADSP 固件 | 从 `modem_a` FAT `/image` 读取 `adsp`、`adsp_dtb` | 来源、版本、分段和 carveout 未确认；不得假设存在 Android boot | 复用 loader 结构，不复制 manifest |
 | IPC | SMEM/SMP2P/IPCC/GLINK 已工作 | 理论上同族，所有 ID/IRQ/地址待确认 | 参数化公共实现 |
 | GPR | `adsp_apps` 已工作 | channel 和 intent 行为待确认 | 先做只读 discovery/echo |
 | AudioReach | APM graph、PRM vote、共享内存已工作 | 模块/实例/endpoint ID 待确认 | 复用 builder，板级 graph 由事实生成 |
@@ -86,10 +86,10 @@ fuxi ADSP firmware
 | 数字音频 | secondary MI2S，48 kHz/16-bit，SoC master | secondary TDM/MI2S，最多 4 slots | 实测 BCLK/FS/slot/word width |
 | slot | top 三颗 slot 0、bottom 三颗 slot 1 | B/T 映射未知 | 分别单开功放并验证声道 |
 | 功放 DSP | bypass，无功放 firmware | stock 有 fast-switch profile | bypass 只允许低功率 bring-up；日用前补保护/校准 |
-| 麦克风 codec | WCD938x | WCD938x 线索 | codec transport 可参考，route 必须重测 |
+| 麦克风 codec | WCD938x | WCD938x 线索 | codec transport 可参考，route 必须由 UniXNU 探针或测量确定 |
 | 主麦 route | AMIC3 -> bias3 -> ADC2 -> SWR -> TX3 | 未知 | 从 mixer diff、DAPM 和 capture 实测获得 |
 | 音频 DMA | 低于 4 GiB，sheng 默认 `0xd0000000` | 可用低地址空洞未知 | 重新做内存地图和所有权审计 |
-| SMMU | translating context 会 reset，使用 pass-through | 未验证 | 先复现 stock ownership，不能假定相同 |
+| SMMU | translating context 会 reset，使用 pass-through | 未验证 | 从主线语义、固定源码和 UniXNU 观测确定 ownership，不能假定与 sheng 相同 |
 | CoreAudio HAL | stereo output + mono input | 可复用 ABI 设计 | 重审 21H461 ABI、bundle identity 和签名 |
 | timeline | 19.2 MHz host timer，修正 CoreAudio 24 MHz 假设 | SM8550 很可能相同，仍需测量 | 在 fuxi 上用真实计数器验证 |
 
@@ -116,7 +116,7 @@ fuxi ADSP firmware
 5. receiver GPIO68 的含义未由真机确认前不切换；它可能改变听筒/上扬声器电气路径。
 6. 麦克风 bring-up 先只输出 period 数、非零率、RMS/peak，不保存私人录音；需要保存时必须由设备所有者明确选择。
 7. 音频 carveout、DMA 和 SMMU 配置必须先与 GPU、显示、UFS、USB 的地址窗口核对，不能借用 sheng 的低地址。
-8. 遵循设备仓库规则：设备测试只在所有者明确要求后进行，并优先使用可恢复的临时启动；本方案本身不授权刷写。
+8. 当前禁止一切 boot、fastboot、ADB、刷写和其他设备操作；只有设备所有者后续重新明确授权，才可设计独立的 UniXNU 测试步骤。
 
 ## 6. 代码所有权与上游更新策略
 
@@ -162,41 +162,27 @@ sheng 中以 `Sheng*` 命名且包含板级常量的文件不应整体复制。�
 
 验收：任何拟写入代码的地址、GPIO、IRQ、SID、clock ID 或 route 都能追溯到 fuxi 证据；未知值保持未知。
 
-### Phase 1：采集 fuxi stock 黄金基线
+### Phase 1：建立无 Android runtime 的证据基线
 
-目标：得到可重放的 Android 正常路径和完整硬件拓扑，不凭 sheng 猜参数。
+目标：只用固定 fuxi 源码、许可证兼容的芯片资料、Linux 主线语义和可合法取得的离线固件清单建立边界，不凭 sheng 猜参数，也不假设存在 Android boot。
 
-#### 1.1 静态输入
+#### 1.1 当前可执行的静态审计
 
-- `/sys/firmware/fdt` 和最终应用后的 overlay；同时记录 stock build fingerprint。
-- `/proc/iomem`、reserved-memory、ADSP/ADSP-DTB carveout、audio CMA、SMEM 和 SMMU 节点。
-- `/vendor/etc/mixer_paths*.xml`、`audio_policy_configuration.xml` 及其 include。
-- `/vendor/etc/acdb*`、`/vendor/etc/audio*`、Cirrus firmware/profile 文件名、大小和 hash。
-- `/proc/asound/cards`、`/proc/asound/pcm`、codec/component/DAI link 列表。
-- remoteproc/PAS/ADSP firmware 名、分区来源、启动时序和 crash/SSR 节点。
-- I2C、SoundWire、regulator、clock、pinctrl、interconnect 和 SMMU 的最终节点。
+- 固定并逐项引用 fuxi DTS/DTSI commit，记录 I2C、GPIO、TDM、WCD/SoundWire 和候选 route；源码声明与运行事实分栏保存。
+- 阅读 Linux 主线的 remoteproc、GLINK、GPR/APR、APM/PRM、WCD938x 和 CS35L41 状态机，只提取协议语义和安全约束，不复制 GPL 实现、OTP map 或 revision patch table。
+- 对用户以后提供的、可合法使用的离线固件或配置只记录文件来源、大小、版本、SHA-256 和许可证；没有文件就保持 `unverified`。
+- 对 carveout、SMEM/SMP2P、IRQ、SID、endpoint、clock 和 graph ID 建立待证表；不得从 sheng 或其他 SM8550 设备回填。
+- 为 GPR、AudioReach builder/parser、超时和 SSR generation 建立 host sanitizer 测试，这些测试只证明编码和状态机，不证明 fuxi runtime。
 
-#### 1.2 动态差分
+#### 1.2 后续设备测量入口（当前不执行）
 
-对以下每个场景分别保存开始前、运行中和停止后的 `tinymix`、DAPM、clock/regulator、I2C/SoundWire 状态差分：
+若设备所有者以后明确授权设备测试，另行编写 UniXNU 只读探针；不得依赖 Android、ADB 或所谓 stock boot。探针应按风险递增采集：
 
-1. bottom speaker 单独播放。
-2. top speaker 单独播放。
-3. receiver/handset 播放。
-4. speakerphone 播放。
-5. 主麦录音。
-6. 副麦/降噪麦录音。
-7. 视频录音或 camcorder route。
-
-同时采集：
-
-- `dumpsys media.audio_flinger` 和 `dumpsys media.audio_policy`。
-- `dmesg` 中 ADSP、GPR、APM、LPASS、CS35L41、WCD938x、SWR、SSR、SMMU 事件。
-- `/sys/bus/i2c/devices` 和允许读取的 regmap/debugfs，只读记录 chip ID、revision、PLL/fault 状态。
-- SoundWire slave enumeration、manufacturer/part ID、logical device number、data port 和 channel mask。
-- TDM/MI2S sample rate、BCLK、FS、word length、slot count、slot mask、SoC/codec master 关系。
-
-若软件状态无法唯一确定 frame format，使用逻辑分析仪观察 GPIO121/123/122/124；先不接触扬声器输出电气端。
+1. I2C 只读 chip ID/revision/fault；功放保持 reset 或 global mute。
+2. ADSP/SMEM/SMP2P/GLINK discovery 与错误码，不创建 speaker graph。
+3. SoundWire enumeration、clock/rail 状态和共享内存边界。
+4. 逻辑分析仪观察 GPIO121/123/122/124 的 BCLK/FS/DATA，确认 slot/word width/master。
+5. 只有安全门全部满足后，才进入后续低音量扬声器和麦克风阶段。
 
 #### 1.3 产出
 
@@ -205,21 +191,18 @@ sheng 中以 `Sheng*` 命名且包含板级常量的文件不应整体复制。�
 ```text
 facts/audio/
   manifest.toml
-  stock-build.txt
-  live.dtb
+  source-revisions.toml
   adsp-firmware.sha256
   topology.md
-  speaker-bottom/
-  speaker-top/
-  receiver/
-  mic-main/
-  mic-secondary/
+  unverified-fields.toml
+  mainline-audit.md
+  unixnu-probes/
   tdm-waveform/
 ```
 
-验收：能画出 stock 中从 AudioFlinger 到两个功放、从主麦到录音 PCM 的完整 route；每个板级值都有来源。
+验收：每个已经使用的板级值都有 fuxi 来源；每个缺失的 runtime 值仍明确标为 `unverified`；主机测试与设备事实严格分开。
 
-停止条件：live DT 与固定源码冲突但未解释；关键 GPIO/rail 被其他设备复用；无法确认哪个 profile/calibration 属于本机。
+停止条件：固定源码互相冲突但未解释；固件/profile/calibration 的来源或许可证不清楚；实现需要未经确认的 endpoint/clock/slot/SMMU 常量。
 
 ### Phase 2：ADSP 固件、SMEM 和 GLINK（A0）
 
@@ -228,7 +211,7 @@ facts/audio/
 实施包：
 
 1. 从 fuxi manifest 读取 `adsp`/`adsp_dtb`，校验 hash、分段范围、对齐和 carveout。
-2. 按 stock 顺序完成 PAS authenticate/load/start；保留每一个真实错误码。
+2. 按许可证兼容资料和 fuxi 实测确认的顺序完成 PAS authenticate/load/start；保留每一个真实错误码。
 3. 建立 SMEM、SMP2P 和 IPCC；确认 ready、stop-ack、fatal、watchdog 和 crash reason。
 4. 建立 GLINK edge，观察 channel negotiation；对 `adsp_apps` 的 channel open、intent request/grant、close 做统计。
 5. ADSP SSR 时使旧 channel、旧 transaction 和旧 buffer generation 全部失效，然后重建。
@@ -279,7 +262,7 @@ OFF
 
 fuxi binding 的候选输入为：
 
-- controller `qupv3_se8_i2c`，MMIO `0x00880000` 待 live DT 确认。
+- controller `qupv3_se8_i2c`，MMIO `0x00880000` 来自固定 fuxi/SM8550 源码，仍待 UniXNU 只读探针确认。
 - amp B：I2C `0x40`、reset GPIO183、IRQ GPIO99。
 - amp T：I2C `0x42`、reset GPIO182、IRQ GPIO98。
 - GPIO68：只在 stock route 差分明确它与 `T-handset`/receiver 的关系后使用。
@@ -487,7 +470,7 @@ Host 编译通过、host test 通过和真机观察必须分开报告。对失�
 
 | 里程碑 | 前置 | 主要交付物 | 推荐优先级 |
 | --- | --- | --- | --- |
-| M0 事实集 | stock Android 可访问 | live DT、mixer/route diff、firmware/profile hash | 立即 |
+| M0 事实集 | 固定 fuxi 源码与主线审计 | source manifest、未验证字段表、可用离线 firmware/profile hash | 立即 |
 | M1 A0 | M0 的 ADSP 事实 | 通用 ADSP + fuxi binding | 高 |
 | M2 A1/A2 | M1 | GPR/APM + 静音 periods | 高 |
 | M3 CS35L41 安全状态机 | M0 的总线和电气事实 | 通用 CS35L41 + fuxi binding | 高，可与 M1/M2 分支并行设计 |
@@ -499,7 +482,7 @@ Host 编译通过、host test 通过和真机观察必须分开报告。对失�
 最短关键路径是：
 
 ```text
-stock 事实集
+静态证据边界
  -> ADSP/GLINK
  -> GPR/APM 静音数据面
  -> CS35L41 mute-ready
@@ -507,34 +490,31 @@ stock 事实集
  -> CoreAudio output
 ```
 
-麦克风可以在 A2 后与 speaker/CoreAudio output 并行调查，但在主麦 route 未由 fuxi runtime 确认前不应写板级配置。
+麦克风可以在 A2 后与 speaker/CoreAudio output 并行调查，但在主麦 route 未由 fuxi 的 UniXNU 探针或直接测量确认前不应写板级配置。
 
 ## 12. 第一轮实际执行清单
 
-在开始写驱动前，先完成以下清单：
+当前只执行主机和源码工作：
 
-- [ ] 保存 fuxi stock live DT 和 build fingerprint。
-- [ ] 确认 ADSP/adsp_dtb 来源、版本、hash、carveout 和启动状态。
-- [ ] 确认 `adsp_apps` channel、intent 行为和 GPR/APM version。
-- [ ] 保存音频 policy、mixer path、ALSA card/PCM 和 DAPM 状态。
-- [ ] 分别对 bottom、top、receiver、main mic 做 runtime mixer diff。
-- [ ] 在 live DT 确认 CS35L41 的 bus/address/reset/IRQ 和 GPIO68。
-- [ ] 只读确认两颗 CS35L41 chip ID/revision 和 stock profile hash。
-- [ ] 确认 TDM BCLK/FS/SD、slot count/width/mask 和 master/slave。
-- [ ] 确认 WCD938x reset/rails、TX SWR enumeration 和主麦完整 route。
-- [ ] 找到低于 4 GiB、与现有外设不冲突的音频 buffer 区，并确认 SMMU ownership。
-- [ ] 为所有值写入 `facts/audio/manifest.toml`；未确认值不进入代码。
+- [x] 固定 fuxi DTS/DTSI revision，并把两颗 CS35L41、总线、GPIO、TDM 和 WCD938x 声明写入 `facts/audio/manifest.toml`。
+- [x] 阅读 Linux 主线 CS35L41、remoteproc、GLINK、GPR/APR 和 APM/PRM 路径，记录许可证与安全边界。
+- [x] 实现无板级常量的 `QcomGpr` 编解码/SPF readiness 模型，并用 ASan/UBSan 主机测试覆盖。
+- [ ] 以显式 topology 参数实现 AudioReach builder/parser；不内置 sheng 的 graph/endpoint/clock/TDM 常量。
+- [ ] 对合法取得的 fuxi ADSP/adsp_dtb 离线文件记录来源、版本、hash 和 segment；在取得前全部保持 `unverified`。
+- [ ] 设计但不运行 UniXNU 只读探针，以后只有用户重新明确授权设备操作时才验证 chip ID、ADSP channel、TDM 和 route。
+- [ ] 找到低于 4 GiB、与现有外设不冲突的音频 buffer 区，并确认 SMMU ownership；在有证据前不借用 sheng 地址。
+- [ ] 所有值继续写入 `facts/audio/manifest.toml`；未确认值不进入板级配置。
 
 完成以上清单后，才适合决定 sheng 文件中哪些逻辑应先抽到 UniXNU 公共层，以及 fuxi 的最小 binding 具体包含哪些字段。
 
 ## 13. 当前未执行事项
 
-本方案只完成了源码/设备树对比和移植设计，没有：
+当前只完成了源码/设备树对比、主线审计、移植设计和板级无关的 GPR 主机模型，没有：
 
-- 修改音频源码、`dts/fuxi.dts`、`board.toml` 或 `porting.toml`；
+- 把音频组件接入 `dts/fuxi.dts`、`board.toml` 或内核构建；
 - 编译 kernel/payload；
 - 启动、刷写或测试设备；
 - 读取 fuxi 的功放寄存器或播放声音；
 - 证明任何 fuxi 音频等级 A0--A6 已完成。
 
-因此当前准确状态仍是：**sheng 提供了经过验证的参考架构；fuxi 的音频硬件线索已经足以规划工作，但真机事实采集尚未开始。**
+因此当前准确状态仍是：**sheng 只提供参考架构；fuxi 已有静态 wiring 证据和通过主机测试的 GPR 模型，但没有 Android runtime、没有设备音频证据，A0--A6 均未完成。**
