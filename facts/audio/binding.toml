@@ -45,6 +45,8 @@ stream_format = { value = "", state = "unverified", evidence = "none" }
 
 [path.graph]
 graph_id = { value = 0, state = "unverified", evidence = "none" }
+apm_iid = { value = 0, state = "unverified", evidence = "none" }
+subgraph_id = { value = 0, state = "unverified", evidence = "none" }
 performance = { value = 0, state = "unverified", evidence = "none" }
 direction = { value = 0, state = "unverified", evidence = "none" }
 scenario = { value = 0, state = "unverified", evidence = "none" }

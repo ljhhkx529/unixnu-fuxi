@@ -22,6 +22,7 @@ SUITES = [
     ("ADSP 加载顺序", "scripts/check-qcom-adsp-host.py", "QcomAdsp"),
     ("GPR（sheng 原样）", "scripts/check-gpr-host.py", "GPR"),
     ("AudioReach 载荷与应答", "scripts/check-qcom-audioreach-host.py", "QcomAudioReach"),
+    ("AudioReach 开图（sheng 结构）", "scripts/check-qcom-audio-graph-host.py", "QcomAudioGraph"),
     ("静音数据面", "scripts/check-qcom-audio-path-host.py", "QcomAudioPath"),
     ("speaker 拓扑", "scripts/check-qcom-audio-topology-host.py", "QcomAudioTopology"),
     ("共享输出环", "scripts/check-qcom-audio-ring-host.py", "QcomAudioRing"),

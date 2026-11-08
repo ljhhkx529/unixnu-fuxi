@@ -523,6 +523,7 @@ unixnu-fuxi
 | ADSP 加载顺序 | `check-qcom-adsp-host.py` | 33 | 无 | A0 未完成 |
 | GPR（sheng 原样） | `check-gpr-host.py` | 37 | 无 | A1–A2 未完成 |
 | AudioReach 载荷与应答 | `check-qcom-audioreach-host.py` | 57 | 无 | A1–A2 未完成 |
+| AudioReach 开图（sheng 结构） | `check-qcom-audio-graph-host.py` | 30 | 无 | A3 未完成 |
 | 静音数据面（含 period 窗口） | `check-qcom-audio-path-host.py` | 28 | 无 | A1–A2 未完成 |
 | speaker 拓扑 | `check-qcom-audio-topology-host.py` | 31 | 无 | A3 未完成 |
 | 共享输出环 | `check-qcom-audio-ring-host.py` | 31 | 无 | A4 未完成 |
@@ -532,7 +533,7 @@ unixnu-fuxi
 | 采集统计 | `check-qcom-audio-capture-host.py` | 30 | 无 | A5 未完成 |
 | 恢复顺序（端到端） | `check-qcom-audio-session-host.py` | 17 | 无 | A6 未完成 |
 
-合计 **2635 项**主机检查，全部在 ASan/UBSan 下运行，且不依赖任何 fuxi 数值。
+合计 **2665 项**主机检查，全部在 ASan/UBSan 下运行，且不依赖任何 fuxi 数值。
 
 | 门禁 | 覆盖 | 状态 |
 | --- | --- | --- |
@@ -701,7 +702,7 @@ A0 仍未完成的部分是 **ADSP 加载器本身**（`adsp.mbn`/`adsp_dtb.mbn`
 
 ## 13. 当前未执行事项
 
-主机侧已经完整：11 个板级无关层与 2 道门禁（9.1），2635 项检查全部在 ASan/UBSan 下通过，且没有一条依赖 fuxi 的数值。
+主机侧已经完整：11 个板级无关层与 2 道门禁（9.1），2665 项检查全部在 ASan/UBSan 下通过，且没有一条依赖 fuxi 的数值。
 每个文件都把自己的板级值做成了入参，`facts/audio/binding.toml` 用 108 个字段记录它们，门禁拒绝未验证值进入构建。
 
 仍然没有做、也无法在主机上做的：
@@ -724,7 +725,7 @@ A0 仍未完成的部分是 **ADSP 加载器本身**（`adsp.mbn`/`adsp_dtb.mbn`
 | --- | --- | --- | --- | --- |
 | `GeniI2c.{c,h}` + `tests/geni_i2c_host.c` | 154+101+218 | **已原样移植**（sha256 相同） | 我曾自造"可配置寄存器/值宽度 + 两段式读"，已删除 | ✅ 完成 |
 | `ShengGpr.{c,h}` | 106+60 | `QcomGpr` 188 行 | 机制相同（encode/decode/basic_result/spf_init/next/receive/timeout），但**符号与签名不同** | 按 sheng 的接口对齐，删除自造签名 |
-| `ShengAudioReach.{c,h}` | 375+109 | `QcomAudioReach` 280 行 | **机制不同**：sheng 每方向**两张图**（device graph 拥有硬件端点、stream graph 拥有共享内存端点，连接由 stream graph 的 open 携带）；我只有一个 graph 结构 | 按双图机制重写；图 id/实例号作为绑定值传入，不写死 sheng 的 0x4005/0x4007/TX3 |
+| `ShengAudioReach.{c,h}` | 375+109 | `QcomAudioGraph` 开图已按 sheng 结构参数化（30 项）；双图的 per-direction 构造待接 | sheng 每方向**两张图**（device graph 拥有硬件端点、stream graph 拥有共享内存端点，连接由 stream graph 的 open 携带） | 接入会话后按双图重写 config 构造 |
 | `AdspFirmware.c` + `AdspProbe.cpp` + `ShengAdsp.h` | 182+690+30 | `QcomMdt` 157 + `QcomAdsp` 142 | 缺 sheng 的**客户端注册表**（`sheng_adsp_channel`/`sheng_adsp_send`：发送排队、回调不得阻塞、weak_import），以及 AdspProbe 的分阶段结构 | 补客户端层，把加载顺序搬进 AdspProbe 的形状 |
 | `ShengCs35l43.{c,h}` | 141+92 | `CirrusCs35l41` 183 行 | **机制不同**：sheng 是**脚本化步骤表**（`Cs35Step` 表 + `cs35_run_start/next/result`，8 位寄存器/值，`cs35_wire_value` 做端序交换）；我的是相位状态机 + 32 位 hook | 改成步骤表机制；表内容按 CS35L41 事实填，不抄 CS35L43 的寄存器程序 |
 | `ShengAudioAbi.h` | 88 | `QcomHalAbi` 64 行 | **机制不同**：sheng 是 control page + 输出/输入**两个环** + `ticks_per_frame_q32` + 两个 anchor + `out_seq/in_seq` + `lead_frames` + `*_late` + 四个方法号 | 按 sheng 的 ABI 重写；rate/channels/period/ring/lead 作为绑定值 |

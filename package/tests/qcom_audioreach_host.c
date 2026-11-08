@@ -46,7 +46,7 @@ static const QcomArLink links_a[] = {
 };
 static const QcomArGraph graph_a = {
     0x11110001u, 2, QCOM_AR_DIR_RX, QCOM_AR_SCENARIO_PLAYBACK,
-    0x22220001u, QCOM_AR_POSITION_STREAM, 8192, QCOM_GPR_DOMAIN_ADSP,
+    0x22220001u, QCOM_AR_POSITION_STREAM, 8192, GPR_DOMAIN_ADSP,
     modules_a, 3, links_a, 2,
 };
 
@@ -58,7 +58,7 @@ static const QcomArModule modules_b[] = {
 static const QcomArLink links_b[] = {{0x201u, 1, 0x202u, 2}};
 static const QcomArGraph graph_b = {
     0x33330001u, 1, QCOM_AR_DIR_TX, QCOM_AR_SCENARIO_RECORD,
-    0x44440001u, QCOM_AR_POSITION_STREAM, 4096, QCOM_GPR_DOMAIN_ADSP,
+    0x44440001u, QCOM_AR_POSITION_STREAM, 4096, GPR_DOMAIN_ADSP,
     modules_b, 2, links_b, 1,
 };
 
@@ -171,10 +171,10 @@ int main(void)
 
     /* Answers: each opcode has its own shape, and a short payload is refused. */
     uint8_t payload[16] = {0};
-    QcomGprPacket packet;
+    GprPacket packet;
     QcomArAnswer answer;
     memset(&packet, 0, sizeof packet);
-    packet.opcode = QCOM_GPR_OP_BASIC_RESULT;
+    packet.opcode = GPR_OP_BASIC_RESULT;
     payload[0] = 0x00; payload[1] = 0x10; payload[2] = 0x00; payload[3] = 0x01;   /* AR_OP_GRAPH_OPEN */
     payload[7] = 0x00;                                                              /* status 0 */
     packet.payload = payload; packet.payload_bytes = 8;
@@ -188,13 +188,13 @@ int main(void)
     check(qcom_ar_parse(&packet, &answer) == QcomArAnswerMapped && answer.handle == 0xabcdu,
           "map done parses and carries the handle");
 
-    packet.opcode = QCOM_GPR_OP_APM_SPF_STATE;
+    packet.opcode = GPR_OP_APM_SPF_STATE;
     memset(payload, 0, sizeof payload);
     payload[0] = 1;
     check(qcom_ar_parse(&packet, &answer) == QcomArAnswerFrameworkState && answer.status == 1,
           "framework state parses");
 
-    packet.opcode = QCOM_GPR_OP_BASIC_RESULT; packet.payload_bytes = 4;
+    packet.opcode = GPR_OP_BASIC_RESULT; packet.payload_bytes = 4;
     check(qcom_ar_parse(&packet, &answer) == QcomArAnswerBad, "a short basic result is refused");
     packet.opcode = 0x03000000u; packet.payload_bytes = 8;
     check(qcom_ar_parse(&packet, &answer) == QcomArAnswerUnknown, "an unmodelled opcode is reported, not guessed");

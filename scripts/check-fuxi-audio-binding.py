@@ -29,6 +29,7 @@ COVERED = {
     "QcomAudioRing.h": ("QcomAudioRingConfig", ("path.ring", "path"), ()),
     "QcomHalAbi.h": ("QcomHalConfig", ("hal",), ()),
     "QcomAudioCapture.h": ("QcomAudioCaptureConfig", ("capture",), ()),
+    "QcomAudioGraph.h": ("QcomArGraphSpec", ("path.graph",), ()),
     "QcomAudioTopology.h": ("QcomAudioTopologyInputs",
                             ("path", "path.references", "path.topology", "path.graph", "path.endpoint", "path.format"),
                             ()),
