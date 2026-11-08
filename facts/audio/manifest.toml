@@ -116,3 +116,21 @@ first_tone_requires_attenuation = true
 [sheng]
 sm8550 = "unverified"
 reference = "UniXNU-sheng package/AdspProbe.cpp: kAdspBase 0x9ea00000 + 0x4680000, kDtbBase 0x9e980000 + 0x80000, PAS 1 and 36, remote pid 2, SMP2P entries master-kernel (stop, bit 0) and slave-kernel (fatal 0, ready 1, handover 2, stop ack 3), GLINK channel adsp_apps, SMEM items in 443 / out 429 / crash 423 / glink 478-480, glink FIFO 0x4000, load-state request {class: image, res: load_state, name: adsp, val: on}"
+
+# The first device evidence: the read-only SMEM probe (package/FuxiAudioProbe.cpp) run on 2026-11-09 with
+# fuxi-audio-probe=1, read out of the USB CDC capture (/tmp/fuxi-usb/run-20261109-004302). It writes nothing.
+[probe]
+runtime_verified = true
+when = "2026-11-09"
+image = "probe build of the fuxi tree, kernel.macho sha256 afb4edb6, boot argument fuxi-audio-probe=1"
+smem_base = 0x81d00000
+smem_parsed = true
+apps_adsp_partition_offset = 0x19f000
+apps_adsp_partition_size = 0x60000
+apps_adsp_cacheline = 32
+global_partition_offset = 0x1000
+global_partition_size = 0xb0000
+item_glink_descriptor = "allocated: 32 bytes at offset 0x19f030"
+item_glink_tx = "allocated: 16384 bytes at offset 0x19f060"
+items_absent = "429 (SMP2P out), 443 (SMP2P in), 423 (crash) and 480 (GLINK rx) are not allocated, which is what a read-only probe sees before the APPS side creates them"
+note = "The boot loader already provisioned the GLINK descriptor and the transmit FIFO, at the size the platform documents (0x4000). The probe also exercised package/QcomSmem.c against this board's table, which had only ever run against the host model."
