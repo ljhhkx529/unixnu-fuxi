@@ -111,23 +111,6 @@ period_frames = { value = 0, state = "unverified", evidence = "none" }
 sample_rate = { value = 0, state = "unverified", evidence = "none" }
 expected_periods = { value = 0, state = "unverified", evidence = "none" }
 
-# The GENI I2C controller the amplifiers hang on; the register map and the wire order are facts.
-[i2c]
-reg_cmd0 = { value = 0, state = "unverified", evidence = "none" }
-reg_cmd1 = { value = 0, state = "unverified", evidence = "none" }
-reg_status = { value = 0, state = "unverified", evidence = "none" }
-reg_status_clear = { value = 0, state = "unverified", evidence = "none" }
-reg_tx_fifo = { value = 0, state = "unverified", evidence = "none" }
-reg_rx_fifo = { value = 0, state = "unverified", evidence = "none" }
-bit_done = { value = 0, state = "unverified", evidence = "none" }
-bit_nack = { value = 0, state = "unverified", evidence = "none" }
-bit_timeout = { value = 0, state = "unverified", evidence = "none" }
-bit_arbitration = { value = 0, state = "unverified", evidence = "none" }
-fifo_bytes = { value = 0, state = "unverified", evidence = "none" }
-register_bytes = { value = 0, state = "unverified", evidence = "none" }
-value_bytes = { value = 0, state = "unverified", evidence = "none" }
-little_endian = { value = 0, state = "unverified", evidence = "none" }
-poll_limit = { value = 0, state = "unverified", evidence = "none" }
 
 [amp.registers]
 reg_chip_id = { value = 0, state = "unverified", evidence = "none" }

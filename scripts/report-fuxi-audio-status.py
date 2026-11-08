@@ -27,7 +27,7 @@ SUITES = [
     ("共享输出环", "scripts/check-qcom-audio-ring-host.py", "QcomAudioRing"),
     ("CS35L41 安全状态机", "scripts/check-cirrus-cs35l41-host.py", "CirrusCs35l41"),
     ("HAL 共享 ABI", "scripts/check-qcom-hal-abi-host.py", "QcomHalAbi"),
-    ("GENI I2C 传输", "scripts/check-qcom-geni-i2c-host.py", "QcomGeniI2c"),
+    ("GENI I2C（sheng 原样）", "scripts/check-geni-i2c-host.py", "GENI I2C"),
     ("采集统计", "scripts/check-qcom-audio-capture-host.py", "QcomAudioCapture"),
     ("恢复顺序（端到端）", "scripts/check-qcom-audio-session-host.py", "QcomAudioSession"),
 ]
