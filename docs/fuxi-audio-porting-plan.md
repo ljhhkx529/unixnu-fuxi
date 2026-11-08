@@ -295,6 +295,21 @@ fuxi binding 的候选输入为：
 
 真机部分（两颗功放的真实寄存器值与 revision、100 次读写循环、IRQ 分类）仍待设备授权。
 
+### period 窗口与计数（完成于本轮）
+
+`QcomAudioPath` 现在允许**最多 4 个 period 同时在 DSP 手里**（板上选 1..4，默认 1）。每个 period 用**写入的缓冲地址**识别，
+应答按地址匹配：完成后 `completed++`、地址不在飞则计 `late`、重启时在飞的计 `cancelled`。游标按字节数推进并在缓冲末尾回绕，
+因此两个 period 永不携带相同地址——这正是匹配能成立的前提。
+
+这一轮测试抓出**两个真缺陷**与**两个测试缺陷**：
+
+1. `submit()` 把 GPR 包头编码进 `p->tx`，而载荷就在同一个缓冲区里——**自我覆盖**，载荷前 16 字节被包头毁掉。
+   之前"固定地址"的模拟 DSP 掩盖了它；改成载荷用 `p->apm`、编码包用 `p->tx`。
+2. period 的偏移量从未推进（`period_bytes` 恒为 0），四次写的是同一个地址，应答只能匹配一次。改成游标推进。
+3. ASan 抓到测试自身的**悬垂指针**：给 GLINK 通道传的是复合字面量 `(uint8_t[4*512]){0}`，生存期在 `rig_init` 返回时结束；
+   `qcom_adsp_host.c` 里同样的写法也一并改成静态存储。
+4. 绑定门禁立刻发现新增的 `periods_in_flight` 字段未被覆盖——即它的设计目的。
+
 ### A3 的参数化 speaker 拓扑（完成于本轮）
 
 `package/QcomAudioTopology.{h,c}`：从**显式输入**装配 speaker 的 graph/endpoint/format —— 模块 instance 与 type、

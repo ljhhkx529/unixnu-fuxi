@@ -35,6 +35,7 @@ timeout_steps = { value = 0, state = "unverified", evidence = "none" }
 stream_instance = { value = 0, state = "unverified", evidence = "none" }
 buffer_address = { value = 0, state = "unverified", evidence = "none" }
 buffer_bytes = { value = 0, state = "unverified", evidence = "none" }
+periods_in_flight = { value = 1, state = "unverified", evidence = "none" }
 
 [path.references]
 graph = { value = "", state = "unverified", evidence = "none" }

@@ -17,16 +17,19 @@ static void check(int condition, const char *what)
 
 #define FIFO_BYTES 1024u
 static uint32_t h_ab, t_ab, h_ba, t_ba;
+/* The channels' receive storage outlives the rig: a compound literal here would dangle as soon as rig_init returned. */
+static uint8_t storage_ours[4 * 512], storage_dsp[4 * 512];
 static uint8_t d_ab[FIFO_BYTES], d_ba[FIFO_BYTES];
 
 typedef struct {
     QcomGlink link;
+    uint8_t outbox[256];
     QcomGlinkChannel *channel;
     int spf_ready;        /* 1 answers ready, 0 answers "not ready", 2 never answers */
     int fail_opcode;      /* answer this opcode with a non-zero status */
     int drop_opcode;      /* never answer this opcode */
     uint32_t handle;
-    uint32_t commands;
+    uint32_t commands, pending_bytes, retries;
 } Dsp;
 
 static QcomAudioPath *g_path;   /* the path under test, for our side's receive callback */
@@ -51,7 +54,14 @@ static void dsp_send(Dsp *d, const QcomGprPacket *request, uint32_t opcode, cons
     packet.opcode = opcode;
     uint8_t frame[QCOM_GPR_MAX_PACKET];
     const uint32_t size = qcom_gpr_encode(frame, sizeof frame, &packet, payload, bytes);
-    if (size) (void)qcom_glink_send(&d->link, d->channel, frame, size);
+    if (!size) return;
+    const int rc = qcom_glink_send(&d->link, d->channel, frame, size);
+    if (rc == QcomGlinkOk) return;
+    /* A real DSP waits for an intent instead of dropping the answer: keep it and try again on the next poll. */
+    if (rc == QcomGlinkAgain && size <= sizeof d->outbox) {
+        memcpy(d->outbox, frame, size);
+        d->pending_bytes = size;
+    }
 }
 
 /* Answers one command the way the DSP would. */
@@ -79,8 +89,10 @@ static void dsp_receive(void *context, QcomGlinkChannel *channel, const uint8_t 
         return;
     }
     if (packet.opcode == QCOM_AR_OP_DATA_WRITE) {
+        /* The DSP echoes the buffer address it was given: that, not the token, identifies the period. */
+        /* A data-write payload starts with the address itself: there is no APM command header in front of it. */
         uint8_t done[16] = {0};
-        done[0] = 0x40; done[4] = 0x00; done[8] = 0x00; done[12] = 0x00;
+        for (unsigned i = 0; i < 8 && i < packet.payload_bytes; ++i) done[i] = packet.payload[i];
         dsp_send(d, &packet, QCOM_AR_OP_DATA_WRITE_DONE, done, sizeof done);
         return;
     }
@@ -136,17 +148,25 @@ static void rig_init(Rig *r)
 
     const QcomGlinkClient ours_client = {0, path_receive};
     const QcomGlinkClient dsp_client = {0, dsp_receive};
-    r->channel = qcom_glink_channel(&r->ours, "adsp_apps", 512, 4, (uint8_t[4 * 512]){0}, &ours_client, 0, 1);
-    r->dsp.channel = qcom_glink_channel(&r->dsp.link, "adsp_apps", 512, 4, (uint8_t[4 * 512]){0}, &dsp_client,
-                                        &r->dsp, 0);
+    r->channel = qcom_glink_channel(&r->ours, "adsp_apps", 512, 4, storage_ours, &ours_client, 0, 1);
+    r->dsp.channel = qcom_glink_channel(&r->dsp.link, "adsp_apps", 512, 4, storage_dsp, &dsp_client, &r->dsp, 0);
     const QcomAudioPathConfig c = config();
     g_path = &r->path;
     qcom_audio_path_init(&r->path, &c, &r->ours, r->channel);
 }
 
+static void dsp_flush(Dsp *d)
+{
+    if (!d->pending_bytes) return;
+    if (qcom_glink_send(&d->link, d->channel, d->outbox, d->pending_bytes) != QcomGlinkOk) return;
+    d->pending_bytes = 0;
+    ++d->retries;
+}
+
 static void pump(Rig *r, int rounds)
 {
     for (int i = 0; i < rounds; ++i) {
+        dsp_flush(&r->dsp);
         (void)qcom_glink_poll(&r->dsp.link);
         (void)qcom_glink_poll(&r->ours);
     }
@@ -247,9 +267,64 @@ static void test_failures(void)
     check(qcom_audio_path_period(&bare.path, 1024) == QcomPathWrongState, "a period before running is refused");
 }
 
+/* Several periods in the DSP's hands at once, answered out of order. */
+static void test_multiple_periods(void)
+{
+    Rig *r = &(Rig){0};
+    QcomAudioPathConfig c = config();
+    c.periods_in_flight = QCOM_AUDIOPATH_MAX_PERIODS;
+    rig_init(r);
+    qcom_audio_path_init(&r->path, &c, &r->ours, r->channel);
+    g_path = &r->path;
+    check(run_until(r, QcomPathRunning, 400) == QcomPathOk, "the path runs with several periods configured");
+
+    int queued = 0;
+    for (int i = 0; i < (int)QCOM_AUDIOPATH_MAX_PERIODS; ++i)
+        if (qcom_audio_path_period(&r->path, 1024) == QcomPathOk) ++queued;
+    check(queued == (int)QCOM_AUDIOPATH_MAX_PERIODS, "as many periods as the window allows are queued");
+    check(qcom_audio_path_in_flight(&r->path) == QCOM_AUDIOPATH_MAX_PERIODS, "all of them are in flight");
+    check(qcom_audio_path_period(&r->path, 1024) == QcomPathAgain, "one more is refused while the window is full");
+    check(r->path.submitted == QCOM_AUDIOPATH_MAX_PERIODS, "each queued period is counted as submitted");
+
+    /* Pump until every period is answered; the DSP answers in whatever order the link delivers. */
+    const uint32_t before = r->path.completed;
+    for (int i = 0; i < 200 && r->path.completed < before + QCOM_AUDIOPATH_MAX_PERIODS; ++i) {
+        pump(r, 1);
+        (void)qcom_audio_path_step(&r->path);
+    }
+    check(r->path.completed == before + QCOM_AUDIOPATH_MAX_PERIODS, "every period is completed");
+    check(qcom_audio_path_in_flight(&r->path) == 0, "the window empties as the answers arrive");
+
+    /* An answer for a buffer that is not outstanding is late, not a completion. */
+    uint8_t stale[64];
+    QcomGprPacket packet;
+    memset(&packet, 0, sizeof packet);
+    packet.dst_domain = QCOM_GPR_DOMAIN_APPS;
+    packet.src_domain = QCOM_GPR_DOMAIN_ADSP;
+    packet.opcode = QCOM_AR_OP_DATA_WRITE_DONE;
+    packet.token = 1u;
+    uint8_t payload[16] = {0};
+    payload[0] = 0x77;   /* an address no period used */
+    const uint32_t n = qcom_gpr_encode(stale, sizeof stale, &packet, payload, sizeof payload);
+    const uint32_t late_before = r->path.late;
+    (void)qcom_audio_path_receive(&r->path, stale, n);
+    check(r->path.late == late_before + 1 && r->path.completed == before + QCOM_AUDIOPATH_MAX_PERIODS,
+          "an answer for nothing outstanding is late");
+
+    /* A restart counts what was still in flight as cancelled. */
+    (void)qcom_audio_path_period(&r->path, 1024);
+    (void)qcom_audio_path_period(&r->path, 1024);
+    check(qcom_audio_path_in_flight(&r->path) == 2, "two periods are in flight before the restart");
+    const uint32_t cancelled_before = r->path.cancelled;
+    (void)qcom_audio_path_restart(&r->path, 3);
+    check(r->path.cancelled == cancelled_before + 2 && qcom_audio_path_in_flight(&r->path) == 0,
+          "a restart cancels the periods that were in flight");
+}
+
 int main(void)
 {
     test_happy();
+    test_multiple_periods();
     test_failures();
     printf("PASS QcomAudioPath: %d checks\n", checks);
     return failed ? 1 : 0;

@@ -107,6 +107,9 @@ static void build_smp2p(void)
 #define FIFO_BYTES 512u
 static uint32_t h_ab, t_ab, h_ba, t_ba;
 static uint8_t d_ab[FIFO_BYTES], d_ba[FIFO_BYTES];
+/* The channels' receive storage outlives the rig; a compound literal would dangle once rig_init returned. */
+static uint8_t storage_ours[2 * 256], storage_peer[2 * 256];
+
 static void state_noop(void *c, QcomGlinkChannel *ch, int up) {(void)c; (void)ch; (void)up;}
 static void recv_noop(void *c, QcomGlinkChannel *ch, const uint8_t *d, uint32_t n) {(void)c; (void)ch; (void)d; (void)n;}
 
@@ -154,8 +157,8 @@ static void rig_init(Rig *r, const QcomAdspConfig *config, int with_hooks)
     qcom_glink_init(&r->link, o_tx, o_rx, 0, 0);
     qcom_glink_init(&r->peer, p_tx, p_rx, 0, 0);
     const QcomGlinkClient client = {state_noop, recv_noop};
-    r->channel = qcom_glink_channel(&r->link, "adsp_apps", 256, 2, (uint8_t[2 * 256]){0}, &client, 0, 1);
-    r->peer_channel = qcom_glink_channel(&r->peer, "adsp_apps", 256, 2, (uint8_t[2 * 256]){0}, &client, 0, 0);
+    r->channel = qcom_glink_channel(&r->link, "adsp_apps", 256, 2, storage_ours, &client, 0, 1);
+    r->peer_channel = qcom_glink_channel(&r->peer, "adsp_apps", 256, 2, storage_peer, &client, 0, 0);
 
     QcomAdspHooks hooks = {0};
     if (with_hooks) {hooks.auth = hook_auth; hooks.memory = hook_memory;}

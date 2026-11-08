@@ -18,6 +18,9 @@
 #include "QcomGlink.h"
 #include "QcomGpr.h"
 
+/* Periods that may be in the DSP's hands at once. The board chooses how many; one is the safe default. */
+#define QCOM_AUDIOPATH_MAX_PERIODS 4u
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -57,6 +60,7 @@ typedef struct {
     uint32_t stream_instance;
     uint64_t buffer_address;
     uint32_t buffer_bytes;
+    uint32_t periods_in_flight;   /* 1..QCOM_AUDIOPATH_MAX_PERIODS; zero means one */
 } QcomAudioPathConfig;
 
 typedef struct {
@@ -66,11 +70,15 @@ typedef struct {
     QcomGprSpfProbe spf;
     uint32_t token, counter, generation, outstanding_opcode;
     int state, last_error, outstanding;
-    uint32_t steps, waits, submitted, completed, late, unknown, timeouts;
-    uint32_t map_handle, period_bytes;
+    uint32_t steps, waits, submitted, completed, late, unknown, timeouts, cancelled;
+    uint32_t map_handle, cursor;   /* how far into the mapped buffer the next period starts */
     uint32_t stage_sent;   /* the current stage's command went out and its reply is pending */
+    /* The periods the DSP has not answered yet, matched by the address each one was written to. */
+    struct {uint64_t address; uint32_t bytes; uint8_t active;} period[QCOM_AUDIOPATH_MAX_PERIODS];
+    uint32_t periods_in_flight;
     uint32_t tx_bytes, tx_pending;   /* an encoded frame GLINK has not taken yet */
-    uint8_t tx[QCOM_GPR_MAX_PACKET];
+    uint8_t apm[QCOM_GPR_MAX_PACKET];   /* the APM payload the builders write */
+    uint8_t tx[QCOM_GPR_MAX_PACKET];    /* the GPR packet QcomGpr frames around it */
 } QcomAudioPath;
 
 void qcom_audio_path_init(QcomAudioPath *p, const QcomAudioPathConfig *config, QcomGlink *link,
@@ -81,8 +89,12 @@ int qcom_audio_path_step(QcomAudioPath *p);
 int qcom_audio_path_receive(QcomAudioPath *p, const uint8_t *data, uint32_t length);
 /* After an ADSP restart: back to the start with a new generation, so replies from the old one are stale. */
 int qcom_audio_path_restart(QcomAudioPath *p, uint32_t generation);
-/* Queues one period once the path runs. The DSP's answer is counted as a completed period. */
+/* Queues one period once the path runs, up to the configured number in flight. The DSP's answer, matched by the
+ * address the period was written to, is counted as a completed period; an answer for an address that is not
+ * outstanding is counted as late, and a restart counts whatever was still in flight as cancelled. */
 int qcom_audio_path_period(QcomAudioPath *p, uint32_t bytes);
+/* How many periods the DSP still owes an answer for. */
+uint32_t qcom_audio_path_in_flight(const QcomAudioPath *p);
 
 #ifdef __cplusplus
 }
