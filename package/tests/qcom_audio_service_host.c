@@ -434,9 +434,75 @@ static void test_failures(void)
     check(r->session.state == QcomServiceFailed, "the session stays failed");
 }
 
+/* A stop, driven to completion: the path closes the graph and unmaps the buffer. */
+static int stop_and_settle(Rig *r)
+{
+    int rc = qcom_audio_service_stop_output(&r->session);
+    if (rc != QcomServiceOk && rc != QcomServiceAgain) return rc;
+    for (int i = 0; i < 200 && r->session.path.state != QcomPathIdle; ++i) {
+        aop_turn(1, 1);
+        (void)qcom_audio_service_step(&r->session);
+        pump_dsp(r);
+    }
+    return r->session.path.state == QcomPathIdle ? QcomServiceOk : QcomServiceAgain;
+}
+
+/* The plan's hundred start/stop cycles: each one opens the graph, plays a period and takes it down again. */
+static void test_start_stop_cycles(void)
+{
+    Rig *r = &(Rig){0};
+    rig_init(r, 0x02000000ull);
+    static uint8_t samples[480u * 2u * 2u];
+    memset(samples, 0x11, sizeof samples);
+
+    int cycles = 0, periods = 0;
+    for (int i = 0; i < 100; ++i) {
+        if (bring_up(r, 400) != QcomServiceOk) break;
+        if (qcom_audio_ring_write(&r->ring, samples, 480u) != 480u) break;
+        if (qcom_audio_service_cycle(&r->session) != 480u) break;
+        ++periods;
+        for (int k = 0; k < 40; ++k) pump_dsp(r);
+        if (stop_and_settle(r) != QcomServiceOk) break;
+        if (r->session.path.map_handle != 0 || qcom_audio_path_in_flight(&r->session.path) != 0) break;
+        ++cycles;
+    }
+    check(cycles == 100, "a hundred start/stop cycles all complete");
+    check(periods == 100, "each cycle handed one period to the DSP");
+    check(r->session.path.timeouts == 0, "and none of them timed out");
+    check(r->session.path.map_handle == 0 && qcom_audio_path_in_flight(&r->session.path) == 0,
+          "nothing is left mapped or in flight after the last stop");
+    check(r->session.path.submitted == r->session.path.completed + qcom_audio_path_in_flight(&r->session.path),
+          "every period handed over was either completed or is still owed");
+}
+
+/* The plan's twenty restarts: each mutes, moves the generation and rebuilds both layers. */
+static void test_restart_soak(void)
+{
+    Rig *r = &(Rig){0};
+    rig_init(r, 0x02000000ull);
+    int restarts = 0;
+    for (int i = 0; i < 20; ++i) {
+        if (bring_up(r, 400) != QcomServiceOk) break;
+        if (qcom_audio_service_restart(&r->session) != QcomServiceOk) break;
+        /* A real restart takes the mailbox and the ready bits with it; the simulation does the same. */
+        mailbox_descriptor();
+        (void)qcom_smp2p_update(&remote, 1, 0xffffffffu, 0u);
+        ++restarts;
+    }
+    check(restarts == 20, "twenty restarts all complete");
+    check(r->mutes == 20, "each restart muted the amplifiers exactly once");
+    check(r->session.generation == 21, "the generation moved on with every restart");
+    check(r->session.recoveries == 20, "and every restart was counted as a recovery");
+    check(r->session.path.state == QcomPathIdle && r->session.path.map_handle == 0,
+          "the last restart left the path closed");
+    check(r->session.failures == 0, "and nothing failed along the way");
+}
+
 int main(void)
 {
     test_happy_and_restart();
+    test_start_stop_cycles();
+    test_restart_soak();
     test_failures();
     printf("PASS QcomAudioService: %d checks\n", checks);
     return failed ? 1 : 0;
