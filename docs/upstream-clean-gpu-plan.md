@@ -673,3 +673,20 @@ check-turnip-darwin-host.py             smoke/pipeline-cache/device/fill-buffer/
 2. 清单要求 Adreno740 的 revision 能从官方 remote 获取。目前 pin 到本仓 `fuxi` 分支的 `fbb2ddc`：两个通用修复
    （2-dword SMMU 更新、publish policy）尚未上游，而方案本身要求“在 upstream commit 存在之前不要伪装成官方 SHA”。
    这里按方案的 interim 规则诚实 pin 到分支提交，上游化属于“上游更新流程”一节的工作。
+
+### 更正（2026-11-08 18:10）：Phase C 第 5 步的“tiled 可用”结论作废
+
+发现一处流程错误，直接推翻了上面第 5 步的结论：
+
+- `unixnu build payload` **拒绝空的内核参数**：`sheng-tu-debug=` 会报 `unsupported kernel argument` 并失败；
+- 我把多条命令用 `;` 串起来又只看了最后一条的退出码，**失败被掩盖**；
+- 结果是 16:30 之后所有镜像都复用了 16:30 那份 payload，而它里面是 `sheng-tu-debug=sysmem`。
+
+因此“TU_DEBUG 置空 → tiled 模式 71/71、23/23”这一格**并没有被真正测到**，被刷进去的仍是带 `sysmem` 的镜像。
+矩阵里 `sysmem`/`tiled` 的对比需要重做，`nocb` 那一行的因果也需重新确认。
+
+**新增规则（已执行）**：每次构建用 `set -e` 逐步检查，并在刷机前核对
+`strings payload/payload.img | grep '<期望的参数>'`，确认镜像里确实是这次改的配置。
+
+当前有效状态：`sheng-tu-debug=sysmem`、`fuxi-touch=4 fuxi-touch-hid=1 fuxi-touch-panic=0`，
+镜像 `sha256 7fb74523…`（payload 里已含新的 `fuxi-touch:` 触控上报行）。
