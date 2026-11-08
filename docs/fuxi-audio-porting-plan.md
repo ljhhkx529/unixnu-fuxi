@@ -512,6 +512,22 @@ Host 编译通过、host test 通过和真机观察必须分开报告。对失�
 
 完成以上清单后，才适合决定 sheng 文件中哪些逻辑应先抽到 UniXNU 公共层，以及 fuxi 的最小 binding 具体包含哪些字段。
 
+### A0 传输层（完成于 2026-11-08）
+
+从 UniXNU-sheng 的公共线迁入三个板级无关层，并补上它们此前没有的主机测试：
+
+| 文件 | 内容 |
+| --- | --- |
+| `package/QcomSmem.{h,c}` | SMEM 分区表（`$TOC`/`$PRT`）、按主机对查分区、未缓存条目分配与查找 |
+| `package/QcomSmp2p.{h,c}` | 出站/入站 item 布局（magic/version/pids/计数/标志/条目）、位更新、doorbell 服务 |
+| `package/QcomGlink.{h,c}` | 原生 GLINK（版本握手、channel open/close、intent、data、done）跑在一对 SMEM FIFO 上 |
+
+`scripts/check-qcom-a0-host.py` 在 ASan/UBSan 下跑 **43 项**检查，其中包括**两个 GLINK 实例互为对端**：握手、
+通道建立、intent 交换、一次 `hello` 消息的双向传输与计数、以及一条"不可能成立的消息"必须让链路停止而非继续猜测。
+
+A0 仍未完成的部分是 **ADSP 加载器本身**（`adsp.mbn`/`adsp_dtb.mbn` 的段、内存窗口、代理电源域、SMEM 布局的实际取值），
+它需要 fuxi 的固件与设备证据，按计划保持未验证。
+
 ## 13. 当前未执行事项
 
 当前只完成了源码/设备树对比、主线审计、移植设计和板级无关的 GPR 主机模型，没有：
