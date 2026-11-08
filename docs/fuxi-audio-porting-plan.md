@@ -295,6 +295,21 @@ fuxi binding 的候选输入为：
 
 真机部分（两颗功放的真实寄存器值与 revision、100 次读写循环、IRQ 分类）仍待设备授权。
 
+### A3 的参数化 speaker 拓扑（完成于本轮）
+
+`package/QcomAudioTopology.{h,c}`：从**显式输入**装配 speaker 的 graph/endpoint/format —— 模块 instance 与 type、
+接口类型与索引、采样格式、帧长、以及**每颗功放占用哪些 slot**。不填任何 sheng 的 48 kHz/16-bit/slot 表。
+
+它拒绝"不可能对"的映射：slot 越界于帧长、两颗功放抢同一 slot、通道数与 mask 不一致、端点吃不了的位宽、
+零采样率/零帧长、两个模块共用同一 instance、未知接口。装配结果由**调用方持有**，graph 直接指向它，不使用任何静态或线程局部存储。
+
+`scripts/check-qcom-audio-topology-host.py` 在 ASan/UBSan 下跑 **31 项**：一条立体声映射的完整装配（含
+`slot_owner` 的逐槽归属）、以及上述每一项拒绝；最后把装配结果**直接喂给 AudioReach 构造器**，验证图与端点命令里确实带着
+graph id、两个模块 instance 与 slot 掩码——即"模板产出的东西可以原样使用"。
+
+三个 A3 专属输入（`slot_mask_a/b`、`slot_count`、`sample_rate` 等 8 项）也已纳入 `facts/audio/binding.toml`
+与门禁（现共 **86 项**，全部 `unverified`）。
+
 ### 板级绑定字段表与门禁（完成于本轮）
 
 `facts/audio/binding.toml`：把三层配置的**每个字段**列成一条记录——值、状态、所依据的事实：

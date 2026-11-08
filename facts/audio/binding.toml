@@ -71,6 +71,16 @@ channels = { value = 0, state = "unverified", evidence = "none" }
 interleaving = { value = 0, state = "unverified", evidence = "none" }
 bytes_per_frame = { value = 0, state = "unverified", evidence = "none" }
 
+[path.topology]
+stream_instance = { value = 0, state = "unverified", evidence = "none" }
+stream_module = { value = 0, state = "unverified", evidence = "none" }
+endpoint_instance = { value = 0, state = "unverified", evidence = "none" }
+endpoint_module = { value = 0, state = "unverified", evidence = "none" }
+sample_rate = { value = 0, state = "unverified", evidence = "none" }
+slot_mask_a = { value = 0, state = "unverified", evidence = "none" }
+slot_mask_b = { value = 0, state = "unverified", evidence = "none" }
+slot_count = { value = 0, state = "unverified", evidence = "none" }
+
 [amp.registers]
 reg_chip_id = { value = 0, state = "unverified", evidence = "none" }
 reg_revision = { value = 0, state = "unverified", evidence = "none" }

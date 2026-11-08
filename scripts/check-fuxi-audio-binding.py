@@ -26,6 +26,9 @@ COVERED = {
     "QcomAudioPath.h": ("QcomAudioPathConfig", ("path", "path.references"),
                         ("graph", "endpoint", "endpoint_format", "stream_format")),
     "CirrusCs35l41.h": ("Cs35l41Binding", ("amp.registers", "amp.b", "amp.t"), ()),
+    "QcomAudioTopology.h": ("QcomAudioTopologyInputs",
+                            ("path", "path.references", "path.topology", "path.graph", "path.endpoint", "path.format"),
+                            ()),
 }
 
 problems: list[str] = []
