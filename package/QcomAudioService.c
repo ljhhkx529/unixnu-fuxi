@@ -97,6 +97,8 @@ static void publish(QcomAudioService *s)
     s->control->out_frames = s->path.completed;
     s->control->out_late = s->path.late + s->path.timeouts;
     s->control->out_holes = s->path.cancelled;
+    s->control->in_frames = s->capture.periods;
+    s->control->in_late = s->capture.late + s->capture.malformed;
     /* The running bit follows the data path, which is what actually plays: the session's own state can be Running
      * while the path has been stopped. */
     if (s->path.state == QcomPathRunning) s->control->state |= QcomAudioOutputRunning;
@@ -149,6 +151,42 @@ int qcom_audio_service_stop_output(QcomAudioService *s)
     const uint32_t generation = s->generation;
     (void)qcom_audio_path_restart(&s->path, generation + 1u);
     s->generation = generation + 1u;
+    publish(s);
+    return QcomServiceOk;
+}
+
+int qcom_audio_service_start_input(QcomAudioService *s, uint64_t anchor_host, const QcomAudioCaptureConfig *config)
+{
+    if (!s) return QcomServiceBadConfig;
+    if (config) s->capture_config = *config;
+    if (!s->capture_config.period_frames || !s->capture_config.sample_rate || !s->capture_config.channels)
+        return QcomServiceBadConfig;
+    if (qcom_audio_capture_init(&s->capture, &s->capture_config) != QcomCaptureOk) return QcomServiceBadConfig;
+    if (s->control) {
+        ++s->control->in_seq;
+        s->control->in_anchor_host = anchor_host;
+        s->control->in_frames = 0;
+        s->control->in_late = 0;
+        ++s->control->in_seq;
+        s->control->state |= QcomAudioInputReady | QcomAudioInputRunning;
+    }
+    return QcomServiceOk;
+}
+
+int qcom_audio_service_capture(QcomAudioService *s, uint32_t index, uint32_t offset, uint32_t bytes,
+                               const uint8_t *samples, uint32_t capacity)
+{
+    if (!s) return QcomServiceBadConfig;
+    const int rc = qcom_audio_capture_period(&s->capture, index, offset, bytes, samples, capacity);
+    publish(s);
+    return rc;
+}
+
+int qcom_audio_service_stop_input(QcomAudioService *s)
+{
+    if (!s) return QcomServiceBadConfig;
+    if (s->control) s->control->state &= ~(uint32_t)(QcomAudioInputReady | QcomAudioInputRunning);
+    /* The run stays as it was so the caller can still read its statistics after stopping it. */
     publish(s);
     return QcomServiceOk;
 }

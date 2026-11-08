@@ -17,6 +17,7 @@
 #include "QcomAdsp.h"
 #include "QcomAudioPath.h"
 #include "QcomAudioAbi.h"
+#include "QcomAudioCapture.h"
 #include "QcomAudioRing.h"
 
 #ifdef __cplusplus
@@ -54,6 +55,8 @@ typedef struct {
     QcomAudioPath path;
     QcomAudioRing *ring;
     QcomAudioControl *control;   /* the page the plug-in maps; the service publishes into it */
+    QcomAudioCapture capture;    /* the capture run's accounting, once the input is started */
+    QcomAudioCaptureConfig capture_config;
     /* the amplifier safety net, called before every restart */
     int (*mute_amplifiers)(void *context);
     void *context;
@@ -81,6 +84,13 @@ uint32_t qcom_audio_service_cycle(QcomAudioService *s);
 int qcom_audio_service_start_output(QcomAudioService *s, uint64_t anchor_host);
 /* Stops it: the page says so first, then the periods in flight are cancelled. */
 int qcom_audio_service_stop_output(QcomAudioService *s);
+
+/* Announces the input and starts a fresh capture run from the configuration the caller gives. */
+int qcom_audio_service_start_input(QcomAudioService *s, uint64_t anchor_host, const QcomAudioCaptureConfig *config);
+/* One captured period from the DSP: accounted, and published into the page. */
+int qcom_audio_service_capture(QcomAudioService *s, uint32_t index, uint32_t offset, uint32_t bytes,
+                               const uint8_t *samples, uint32_t capacity);
+int qcom_audio_service_stop_input(QcomAudioService *s);
 
 #ifdef __cplusplus
 }

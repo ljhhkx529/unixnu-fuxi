@@ -365,6 +365,35 @@ static void test_happy_and_restart(void)
     (void)qcom_audio_path_receive(&r->session.path, stale, n);
     check(r->session.path.late == late_before + 1, "an answer from the previous generation is counted as late");
 
+    /* The input direction: a capture run accounted and published the way the plan accepts it. */
+    QcomAudioCaptureConfig capture_config;
+    memset(&capture_config, 0, sizeof capture_config);
+    capture_config.channels = 1u;
+    capture_config.bit_width = 16u;
+    capture_config.period_frames = 480u;
+    capture_config.sample_rate = 48000u;
+    capture_config.expected_periods = 200u;
+    check(qcom_audio_service_start_input(&r->session, 0x3000u, &capture_config) == QcomServiceOk,
+          "the input starts from the caller's configuration");
+    check(page.in_anchor_host == 0x3000u && (page.in_seq & 1u) == 0u,
+          "the capture timeline is anchored the same way");
+    check(page.state & QcomAudioInputRunning, "the page says the input is running");
+
+    static uint8_t mic[480u * 2u];
+    for (unsigned i = 0; i < 480u; ++i) {mic[2u * i] = 0x40; mic[2u * i + 1u] = 0x1f;}
+    int captured = 0;
+    for (uint32_t i = 0; i < 200u; ++i)
+        if (qcom_audio_service_capture(&r->session, i, 0, sizeof mic, mic, sizeof mic) == QcomCaptureOk) ++captured;
+    check(captured == 200, "two hundred captured periods are accounted");
+    check(qcom_audio_capture_complete(&r->session.capture) == 1, "and the run meets the plan's acceptance shape");
+    check(page.in_frames == 200u, "the page publishes how many periods were captured");
+    check(qcom_audio_service_capture(&r->session, 0, 0, sizeof mic, mic, sizeof mic) == QcomCaptureOutOfOrder,
+          "a period that repeats an index is refused as out of order");
+    check(page.in_late >= 1u, "and the page shows it as late");
+    check(qcom_audio_service_stop_input(&r->session) == QcomServiceOk &&
+          (page.state & QcomAudioInputRunning) == 0u, "stopping the input clears its running bit");
+    check(r->session.capture.periods == 200u, "and the statistics survive the stop");
+
     /* Stopping clears the page's state and cancels what was in flight. */
     (void)qcom_audio_service_start_output(&r->session, 0x2000u);
     check(qcom_audio_service_stop_output(&r->session) == QcomServiceOk, "the output stops");
