@@ -117,35 +117,32 @@ sample_rate = { value = 0, state = "unverified", evidence = "none" }
 expected_periods = { value = 0, state = "unverified", evidence = "none" }
 
 
+# The part's registers and the values this board programs into them.
 [amp.registers]
-reg_chip_id = { value = 0, state = "unverified", evidence = "none" }
+reg_device_id = { value = 0, state = "unverified", evidence = "none" }
 reg_revision = { value = 0, state = "unverified", evidence = "none" }
-reg_boot_done = { value = 0, state = "unverified", evidence = "none" }
-reg_otp_trim = { value = 0, state = "unverified", evidence = "none" }
+reg_global_enables = { value = 0, state = "unverified", evidence = "none" }
+reg_block_enables = { value = 0, state = "unverified", evidence = "none" }
+reg_asp_enables = { value = 0, state = "unverified", evidence = "none" }
+reg_asp_ctrl = { value = 0, state = "unverified", evidence = "none" }
 reg_boost_peak = { value = 0, state = "unverified", evidence = "none" }
 reg_boost_cap = { value = 0, state = "unverified", evidence = "none" }
-reg_asp_ctrl = { value = 0, state = "unverified", evidence = "none" }
 reg_pll_ctrl = { value = 0, state = "unverified", evidence = "none" }
-reg_pll_lock = { value = 0, state = "unverified", evidence = "none" }
 reg_mute = { value = 0, state = "unverified", evidence = "none" }
-reg_fault_sticky = { value = 0, state = "unverified", evidence = "none" }
-reg_fault_mask = { value = 0, state = "unverified", evidence = "none" }
-chip_id_value = { value = 0, state = "unverified", evidence = "none" }
-revision_mask = { value = 0, state = "unverified", evidence = "none" }
+reg_irq1_eint1 = { value = 0, state = "unverified", evidence = "none" }
+reg_irq1_eint2 = { value = 0, state = "unverified", evidence = "none" }
+reg_irq1_mask1 = { value = 0, state = "unverified", evidence = "none" }
+device_id_value = { value = 0, state = "unverified", evidence = "none" }
 revision_value = { value = 0, state = "unverified", evidence = "none" }
-pll_lock_value = { value = 0, state = "unverified", evidence = "none" }
-boost_peak_min = { value = 0, state = "unverified", evidence = "none" }
-boost_peak_max = { value = 0, state = "unverified", evidence = "none" }
-boost_cap_min = { value = 0, state = "unverified", evidence = "none" }
-poll_limit = { value = 0, state = "unverified", evidence = "none" }
+enable_value = { value = 0, state = "unverified", evidence = "none" }
+asp_slot_value = { value = 0, state = "unverified", evidence = "none" }
 boost_peak_value = { value = 0, state = "unverified", evidence = "none" }
 boost_cap_value = { value = 0, state = "unverified", evidence = "none" }
-asp_ctrl_value = { value = 0, state = "unverified", evidence = "none" }
-pll_ctrl_value = { value = 0, state = "unverified", evidence = "none" }
-mute_asserted = { value = 0, state = "unverified", evidence = "none" }
-mute_released = { value = 0, state = "unverified", evidence = "none" }
-fault_clear = { value = 0, state = "unverified", evidence = "none" }
-boot_done_value = { value = 0, state = "unverified", evidence = "none" }
+pll_value = { value = 0, state = "unverified", evidence = "none" }
+irq_mask_value = { value = 0, state = "unverified", evidence = "none" }
+mute_on = { value = 0, state = "unverified", evidence = "none" }
+mute_off = { value = 0, state = "unverified", evidence = "none" }
+clock_settle_ms = { value = 0, state = "unverified", evidence = "none" }
 
 [amp.b]
 i2c_address = { value = 0, state = "unverified", evidence = "amplifier[0].i2c_address" }

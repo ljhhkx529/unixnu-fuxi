@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause-Patent */
-/* Host model of the CS35L41 safe bring-up: a register-level device model behind the two hooks, and every way the
- * sequence must refuse to reach an unmuted amplifier. */
+/* Host model of the amplifier: sheng's step runner over a register model of the part, the programs the binding builds,
+ * and every condition that must keep the amplifier muted. */
 #include <stdio.h>
 #include <string.h>
 
@@ -14,212 +14,228 @@ static void check(int condition, const char *what)
     if (!condition) {++failed; fprintf(stderr, "FAIL %s\n", what);}
 }
 
-/* Register addresses are the test's; the state machine never knows them. */
-enum { R_ID = 0x01, R_REV = 0x02, R_BOOT = 0x03, R_TRIM = 0x04, R_BOOST_PEAK = 0x10, R_BOOST_CAP = 0x11,
-       R_ASP = 0x12, R_PLL_CTRL = 0x20, R_PLL_LOCK = 0x21, R_MUTE = 0x30, R_FAULT = 0x40, R_COUNT = 0x48 };
+static uint32_t be32(const uint8_t *b)
+{
+    return (uint32_t)b[0] << 24 | (uint32_t)b[1] << 16 | (uint32_t)b[2] << 8 | (uint32_t)b[3];
+}
 
+/* The part: a register file of 32-bit words, read and written through the one wire primitive. */
 typedef struct {
-    uint32_t reg[R_COUNT];
-    uint32_t boot_delay;      /* reads of the boot register that still answer zero */
-    uint32_t lock_delay;      /* reads of the lock register after the PLL write that still answer zero */
-    uint32_t lock_reads;
-    uint32_t pll_written;
-    uint32_t sticky;          /* a fault that survives its own clear */
-    uint32_t corrupt_reg;     /* writes here read back changed */
-    uint32_t fail_reg;        /* writes here fail */
-    uint32_t resets;          /* reset assertions seen */
-    uint32_t writes;
-} Device;
+    uint32_t address[64];
+    uint32_t value[64];
+    unsigned count;
+    uint32_t transfers, writes, reads;
+    int broken;
+} Part;
 
-static int dev_read(void *context, uint32_t reg, uint32_t *value)
+static int part_transfer(void *context, const uint8_t *bytes, uint32_t length, uint32_t read_length, uint32_t *value)
 {
-    Device *d = context;
-    if (reg >= R_COUNT || !value) return 1;
-    if (reg == R_BOOT) {
-        if (d->boot_delay) {--d->boot_delay; *value = 0; return 0;}
-        *value = d->reg[R_BOOT];
+    Part *p = context;
+    if (p->broken) return 1;
+    ++p->transfers;
+    const uint32_t reg = be32(bytes);
+    unsigned slot = p->count;
+    for (unsigned i = 0; i < p->count; ++i) if (p->address[i] == reg) slot = i;
+    if (length == 8) {
+        if (slot == p->count) {if (p->count < 64) {p->address[p->count] = reg; p->value[p->count] = 0; ++p->count;} else return 1;}
+        p->value[slot] = be32(bytes + 4);
+        ++p->writes;
         return 0;
     }
-    if (reg == R_PLL_LOCK) {
-        if (!d->pll_written) {*value = 0; return 0;}
-        if (d->lock_delay) {--d->lock_delay; *value = 0; return 0;}
-        *value = d->reg[R_PLL_LOCK];
+    if (length == 4 && read_length == 4) {
+        ++p->reads;
+        if (value) *value = slot < p->count ? p->value[slot] : 0;
         return 0;
     }
-    if (reg == R_FAULT && d->sticky) {*value = d->sticky; return 0;}
-    *value = d->reg[reg];
-    return 0;
+    return 1;
 }
 
-static int dev_write(void *context, uint32_t reg, uint32_t value)
+static uint32_t part_read(const Part *p, uint32_t reg)
 {
-    Device *d = context;
-    if (reg >= R_COUNT) return 1;
-    if (reg == d->fail_reg) return 1;
-    ++d->writes;
-    if (reg == R_PLL_CTRL) d->pll_written = 1;
-    if (reg == R_FAULT) {d->reg[reg] = d->sticky ? d->sticky : 0; return 0;}
-    d->reg[reg] = (reg == d->corrupt_reg) ? value ^ 1u : value;
-    return 0;
+    for (unsigned i = 0; i < p->count; ++i) if (p->address[i] == reg) return p->value[i];
+    return 0xffffffffu;
 }
 
-static void dev_reset(void *context, int asserted)
+static void part_write(Part *p, uint32_t reg, uint32_t value)
 {
-    Device *d = context;
-    if (asserted) ++d->resets;
+    for (unsigned i = 0; i < p->count; ++i) if (p->address[i] == reg) {p->value[i] = value; return;}
+    if (p->count < 64) {p->address[p->count] = reg; p->value[p->count] = value; ++p->count;}
 }
 
+/* The board's part: addresses and values are the test's, not sheng's CS35L43 ones. */
 static Cs35l41Binding binding(void)
 {
     Cs35l41Binding b;
     memset(&b, 0, sizeof b);
-    b.reg_chip_id = R_ID; b.reg_revision = R_REV; b.reg_boot_done = R_BOOT; b.reg_otp_trim = R_TRIM;
-    b.reg_boost_peak = R_BOOST_PEAK; b.reg_boost_cap = R_BOOST_CAP; b.reg_asp_ctrl = R_ASP;
-    b.reg_pll_ctrl = R_PLL_CTRL; b.reg_pll_lock = R_PLL_LOCK;
-    b.reg_mute = R_MUTE; b.reg_fault_sticky = R_FAULT; b.reg_fault_mask = R_FAULT;
-    b.chip_id_value = 0x35a41u;
-    b.revision_mask = 0xffu; b.revision_value = 0xb0u;
-    b.pll_lock_value = 1u;
-    b.boost_peak_min = 1000u; b.boost_peak_max = 4500u; b.boost_cap_min = 10u;
-    b.poll_limit = 8u;
-    b.boost_peak_value = 4000u; b.boost_cap_value = 15u; b.asp_ctrl_value = 0x1234u; b.pll_ctrl_value = 0x0001u;
-    b.mute_asserted = 1u; b.mute_released = 0u; b.fault_clear = 0xffffffffu;
-    b.boot_done_value = 1u;
+    b.reg_device_id = 0x0000000u; b.reg_revision = 0x0000004u;
+    b.reg_global_enables = 0x0002014u; b.reg_block_enables = 0x0002018u;
+    b.reg_asp_enables = 0x0004800u; b.reg_asp_ctrl = 0x0004808u;
+    b.reg_boost_peak = 0x0003808u; b.reg_boost_cap = 0x0003850u;
+    b.reg_pll_ctrl = 0x0002C04u; b.reg_mute = 0x0006000u;
+    b.reg_irq1_eint1 = 0x0010010u; b.reg_irq1_eint2 = 0x0010014u; b.reg_irq1_mask1 = 0x0010110u;
+    b.device_id_value = 0x35a41u; b.revision_value = 0xb0u;
+    b.enable_value = 0x00000001u; b.asp_slot_value = 0x00000002u;
+    b.boost_peak_value = 4000u; b.boost_cap_value = 15u; b.pll_value = 0x00000001u;
+    b.irq_mask_value = 0x00ffffffu;
+    b.mute_on = 1u; b.mute_off = 0u;
+    b.clock_settle_ms = 20u;
     return b;
 }
 
-static void device_init(Device *d)
+static void part_init(Part *p, const Cs35l41Binding *b)
 {
-    memset(d, 0, sizeof *d);
-    d->reg[R_ID] = 0x35a41u;
-    d->reg[R_REV] = 0xb0u;
-    d->reg[R_BOOT] = 1u;
-    d->reg[R_PLL_LOCK] = 1u;
-    d->reg[R_MUTE] = 1u;
+    memset(p, 0, sizeof *p);
+    part_write(p, b->reg_device_id, b->device_id_value);
+    part_write(p, b->reg_revision, b->revision_value);
+    part_write(p, b->reg_irq1_eint2, CS35L41_EINT2_PLL_LOCK);
+    part_write(p, b->reg_irq1_eint1, 0);
+    part_write(p, b->reg_mute, b->mute_on);
 }
 
-static int run(Cs35l41 *a, int steps)
+static Cs35l41Hooks hooks_for(Part *p)
+{
+    Cs35l41Hooks h = {part_transfer, p};
+    return h;
+}
+
+static int run_to_ready(Cs35l41 *a)
 {
     int rc = Cs35l41Again;
-    for (int i = 0; i < steps; ++i) {
-        rc = cs35l41_step(a);
-        if (rc < 0) return rc;
-        if (a->state == Cs35l41MutedReady) return Cs35l41Ok;
-    }
-    return rc;
+    for (int i = 0; i < 80 && a->state != Cs35l41MutedReady && a->state != Cs35l41Failed; ++i) rc = cs35l41_step(a);
+    return a->state == Cs35l41MutedReady ? Cs35l41Ok : (a->state == Cs35l41Failed ? a->last_error : rc);
 }
 
-static void start(Cs35l41 *a, Device *d, const Cs35l41Binding *b)
+static void test_program(void)
 {
-    const Cs35l41Hooks hooks = {dev_read, dev_write, dev_reset, d};
-    cs35l41_init(a, b, &hooks);
+    const Cs35l41Binding b = binding();
+    Cs35Step steps[CS35L41_MAX_STEPS];
+    const unsigned n = cs35l41_init_program(&b, steps);
+    check(n == 13u, "the identification and configuration program has thirteen steps");
+    check(steps[0].op == Cs35Read && steps[0].reg == b.reg_device_id, "it reads the device id first");
+    check(steps[1].op == Cs35Read && steps[1].reg == b.reg_revision, "then the revision");
+    check(steps[2].op == Cs35Write && steps[2].reg == b.reg_global_enables && steps[2].value == b.enable_value,
+          "then it enables the part");
+    check(steps[3].op == Cs35Update && (steps[3].mask & b.enable_value) == b.enable_value,
+          "the block enables are set without clearing the rest");
+    check(steps[8].op == Cs35DelayMs && steps[8].value == b.clock_settle_ms, "it waits for the clock to settle");
+    check(steps[9].reg == b.reg_irq1_eint1 && steps[10].reg == b.reg_irq1_eint2,
+          "the interrupt status is read after the wait");
+    check(steps[12].op == Cs35Write && steps[12].reg == b.reg_mute && steps[12].value == b.mute_on,
+          "the last step leaves the part muted");
+
+    Cs35Step mute[2];
+    check(cs35l41_mute_program(&b, mute, 1) == 1u && mute[0].value == b.mute_on, "the mute program asserts mute");
+    check(cs35l41_mute_program(&b, mute, 0) == 1u && mute[0].value == b.mute_off, "and releasing asserts the opposite");
+    Cs35Step down[4];
+    check(cs35l41_shutdown_program(&b, down) == 2u && down[0].value == b.mute_on && down[1].value == 0u,
+          "shutdown mutes before it disables the part");
 }
 
-static void test_happy(void)
+static void test_bring_up(void)
 {
-    Device d; Cs35l41 a; const Cs35l41Binding b = binding();
-    device_init(&d); d.boot_delay = 2; d.lock_delay = 2;
-    start(&a, &d, &b);
-    check(run(&a, 40) == Cs35l41Ok, "the bring-up reaches muted ready");
-    check(a.state == Cs35l41MutedReady, "the terminal state is muted ready");
-    check(a.chip_id == b.chip_id_value && a.revision == 0xb0u, "the chip id and revision are kept");
-    check(a.verified && a.configured && a.locked, "the amplifier is verified, configured and locked");
-    check(d.reg[R_MUTE] == b.mute_asserted, "the amplifier is muted before it is ready");
-    check(d.reg[R_BOOST_PEAK] == b.boost_peak_value && d.reg[R_ASP] == b.asp_ctrl_value, "the configuration was written");
-    check(d.resets == 1, "reset was asserted once");
+    const Cs35l41Binding b = binding();
+    Part part;
+    Cs35l41 amp;
+    part_init(&part, &b);
+    Cs35l41Hooks hooks = hooks_for(&part);
+    cs35l41_init(&amp, &b, &hooks);
 
-    check(cs35l41_unmute(&a) == Cs35l41Ok && a.state == Cs35l41Unmuted, "a ready amplifier unmutes on request");
-    check(d.reg[R_MUTE] == b.mute_released, "unmuting clears the mute register");
-    check(cs35l41_mute(&a) == Cs35l41Ok && a.state == Cs35l41MutedReady, "muting returns to muted ready");
-    check(d.reg[R_MUTE] == b.mute_asserted, "muting sets the mute register");
+    check(cs35l41_unmute(&amp) == Cs35l41NotReady, "an amplifier that never came up cannot unmute");
+    cs35l41_init(&amp, &b, &hooks);
+    check(run_to_ready(&amp) == Cs35l41Ok, "the program brings the amplifier to muted ready");
+    check(amp.state == Cs35l41MutedReady && amp.verified, "it is verified and muted");
+    check(amp.device_id == b.device_id_value && amp.revision == b.revision_value, "the identity was read back");
+    check(part_read(&part, b.reg_mute) == b.mute_on, "the part is muted");
+    check(part_read(&part, b.reg_boost_peak) == b.boost_peak_value &&
+          part_read(&part, b.reg_boost_cap) == b.boost_cap_value, "the boost limits were written");
+    check(part_read(&part, b.reg_asp_enables) == b.asp_slot_value, "the slot this amplifier plays was written");
+    check(amp.delays == 1u, "the settle delay was counted");
 
-    (void)cs35l41_unmute(&a);
-    check(cs35l41_shutdown(&a) == Cs35l41Ok && a.state == Cs35l41Off, "shutdown returns to off");
-    check(d.reg[R_MUTE] == b.mute_asserted && d.resets == 2, "shutdown mutes first, then asserts reset");
-    check(!a.verified, "shutdown clears the verified flag");
+    check(cs35l41_unmute(&amp) == Cs35l41Ok && amp.state == Cs35l41Unmuted, "a verified amplifier unmutes");
+    check(part_read(&part, b.reg_mute) == b.mute_off, "unmuting reaches the part");
+    check(cs35l41_mute(&amp) == Cs35l41Ok && part_read(&part, b.reg_mute) == b.mute_on, "muting reaches the part again");
+    check(cs35l41_shutdown(&amp) == Cs35l41Ok && amp.state == Cs35l41Idle && !amp.verified, "shutdown returns it to idle");
+    check(part_read(&part, b.reg_global_enables) == 0u, "shutdown disables the part");
 }
 
 static void test_refusals(void)
 {
-    Device d; Cs35l41 a; const Cs35l41Binding b = binding();
+    const Cs35l41Binding b = binding();
+    Part part;
+    Cs35l41 amp;
 
-    /* Unmuting before the bring-up ran. */
-    device_init(&d); start(&a, &d, &b);
-    check(cs35l41_unmute(&a) == Cs35l41NotReady, "an amplifier that is not ready cannot unmute");
+    part_init(&part, &b);
+    part_write(&part, b.reg_device_id, 0x35a43u);
+    Cs35l41Hooks hooks = hooks_for(&part);
+    cs35l41_init(&amp, &b, &hooks);
+    check(run_to_ready(&amp) == Cs35l41WrongChip, "a wrong device id stops the bring-up");
+    check(part_read(&part, b.reg_boost_peak) == 4000u && amp.state == Cs35l41Failed,
+          "nothing was configured on a wrong device id");
 
-    /* A wrong chip identity stops the sequence before anything is written. */
-    device_init(&d); d.reg[R_ID] = 0x35a43u; start(&a, &d, &b);
-    check(run(&a, 40) == Cs35l41WrongChip, "a wrong chip id stops the bring-up");
-    check(d.reg[R_BOOST_PEAK] == 0, "nothing is configured on a wrong chip id");
+    part_init(&part, &b);
+    part_write(&part, b.reg_revision, 0x20u);
+    cs35l41_init(&amp, &b, &hooks);
+    check(run_to_ready(&amp) == Cs35l41WrongRevision, "a revision outside the accepted one stops the bring-up");
 
-    /* A revision outside the accepted mask. */
-    device_init(&d); d.reg[R_REV] = 0x20u; start(&a, &d, &b);
-    check(run(&a, 40) == Cs35l41WrongRevision, "a revision outside the mask stops the bring-up");
+    part_init(&part, &b);
+    part_write(&part, b.reg_irq1_eint1, CS35L41_EINT1_ERRORS);
+    cs35l41_init(&amp, &b, &hooks);
+    check(run_to_ready(&amp) == Cs35l41FaultPresent, "an error bit stops the bring-up");
 
-    /* The boot handshake never completes. */
-    device_init(&d); d.boot_delay = 1000; start(&a, &d, &b);
-    check(run(&a, 60) == Cs35l41BootTimeout, "a boot handshake that never completes times out");
+    part_init(&part, &b);
+    part_write(&part, b.reg_irq1_eint2, 0u);
+    cs35l41_init(&amp, &b, &hooks);
+    check(run_to_ready(&amp) == Cs35l41PllUnlocked, "an unlocked PLL stops the bring-up");
 
-    /* A write that does not read back what was written. */
-    device_init(&d); d.corrupt_reg = R_BOOST_CAP; start(&a, &d, &b);
-    check(run(&a, 40) == Cs35l41Readback, "a write that does not read back stops the bring-up");
+    part_init(&part, &b);
+    cs35l41_init(&amp, &b, &hooks);
+    (void)run_to_ready(&amp);
+    part_write(&part, b.reg_irq1_eint1, CS35L41_EINT1_ERRORS);
+    amp.eint1 = CS35L41_EINT1_ERRORS;   /* the fault appears between the check and the request */
+    check(cs35l41_unmute(&amp) == Cs35l41FaultPresent && part_read(&part, b.reg_mute) == b.mute_on,
+          "a fault before unmuting keeps the part muted");
 
-    /* A write that fails outright. */
-    device_init(&d); d.fail_reg = R_ASP; start(&a, &d, &b);
-    check(run(&a, 40) == Cs35l41NoAck, "a failing write stops the bring-up");
-
-    /* A boost profile outside the limits, refused before any write. */
-    device_init(&d);
-    Cs35l41Binding hot = b; hot.boost_peak_value = 6000u;
-    start(&a, &d, &hot);
-    check(run(&a, 40) == Cs35l41BoostOutOfRange, "a boost profile above the maximum is refused");
-    check(d.reg[R_BOOST_PEAK] == 0 && d.writes == 0, "an out-of-range profile never reaches the part");
-
-    Cs35l41Binding thin = b; thin.boost_cap_value = 5u;
-    device_init(&d); start(&a, &d, &thin);
-    check(run(&a, 40) == Cs35l41BoostOutOfRange, "a boost capacitance below the minimum is refused");
-
-    /* The PLL never locks. */
-    device_init(&d); d.lock_delay = 1000; start(&a, &d, &b);
-    check(run(&a, 60) == Cs35l41PllTimeout, "a PLL that never locks times out");
-
-    /* A sticky fault at the start. */
-    device_init(&d); d.sticky = Cs35l41FaultShort; start(&a, &d, &b);
-    check(run(&a, 40) == Cs35l41FaultPresent, "a sticky fault stops the bring-up");
-
-    /* A fault that appears before unmuting keeps the amplifier muted. */
-    device_init(&d); start(&a, &d, &b);
-    (void)run(&a, 40);
-    d.sticky = Cs35l41FaultThermal;
-    check(cs35l41_unmute(&a) == Cs35l41FaultPresent && a.state == Cs35l41Failed,
-          "a fault before unmuting keeps the amplifier muted");
-    check(d.reg[R_MUTE] == b.mute_asserted, "the fault leaves the mute register asserted");
+    part_init(&part, &b);
+    part.broken = 1;
+    cs35l41_init(&amp, &b, &hooks);
+    check(run_to_ready(&amp) == Cs35l41NoAck, "a bus that does not answer stops the bring-up");
 }
 
-/* The plan asks for 100 reset/identify/configure/mute cycles with a consistent identity. */
-static void test_cycles(void)
+/* The runner on its own: a read-modify-write that changes nothing must not write. */
+static void test_runner(void)
 {
-    const Cs35l41Binding b = binding();
-    int reached = 0;
-    uint32_t id = 0;
-    for (int i = 0; i < 100; ++i) {
-        Device d; Cs35l41 a;
-        device_init(&d);
-        d.boot_delay = (uint32_t)(i % 3);
-        start(&a, &d, &b);
-        if (run(&a, 40) == Cs35l41Ok && a.state == Cs35l41MutedReady) ++reached;
-        if (i == 0) id = a.chip_id;
-        else if (a.chip_id != id) reached = -1000;
-        (void)cs35l41_shutdown(&a);
-    }
-    check(reached == 100, "a hundred reset/identify/configure/mute cycles all reach muted ready");
+    Cs35Step steps[1];
+    Cs35Run run;
+    Cs35Action action;
+
+    steps[0] = (Cs35Step){Cs35Update, 0x14u, 0x3u, 0x3u};
+    cs35_run_start(&run, steps, 1);
+    check(cs35_run_next(&run, &action) == Cs35Transfer && action.length == 4 && action.read_length == 4,
+          "an update starts with a read");
+    cs35_run_result(&run, 0x3u);   /* the bits are already set */
+    check(cs35_run_next(&run, &action) == Cs35Finished, "when the bits are already set there is no write");
+
+    cs35_run_start(&run, steps, 1);
+    (void)cs35_run_next(&run, &action);
+    cs35_run_result(&run, 0x1u);
+    check(cs35_run_next(&run, &action) == Cs35Transfer && action.length == 8u,
+          "when they are not, the write follows");
+    check(be32(action.bytes) == 0x14u && be32(action.bytes + 4) == 0x3u, "the write carries the merged value");
+
+    steps[0] = (Cs35Step){Cs35DelayMs, 0, 0, 7u};
+    cs35_run_start(&run, steps, 1);
+    check(cs35_run_next(&run, &action) == Cs35Wait && action.delay_ms == 7u, "a delay is a wait, not a transfer");
+    check(cs35_run_next(&run, &action) == Cs35Finished, "and the program is over after it");
+
+    check(cs35_wire_value(0x44332211u) == 0x11223344u, "a wire value is swapped into the register value");
 }
 
 int main(void)
 {
-    test_happy();
+    test_program();
+    test_bring_up();
     test_refusals();
-    test_cycles();
+    test_runner();
     printf("PASS CirrusCs35l41: %d checks\n", checks);
     return failed ? 1 : 0;
 }

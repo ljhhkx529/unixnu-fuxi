@@ -18,6 +18,7 @@ with tempfile.TemporaryDirectory() as temporary:
         "-fsanitize=address,undefined",
         str(PACKAGE / "tests/cirrus_cs35l41_host.c"),
         str(PACKAGE / "CirrusCs35l41.c"),
+        str(PACKAGE / "Cs35Run.c"),
         "-o", str(executable),
     ], check=True)
     result = subprocess.run([str(executable)], capture_output=True, text=True)

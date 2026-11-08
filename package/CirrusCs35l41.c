@@ -1,8 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause-Patent */
 #include "CirrusCs35l41.h"
 
-#define DEFAULT_POLL 64u
-
 static int fail(Cs35l41 *a, int reason)
 {
     a->last_error = reason;
@@ -10,27 +8,42 @@ static int fail(Cs35l41 *a, int reason)
     return reason;
 }
 
-static uint32_t poll_limit(const Cs35l41 *a)
+unsigned cs35l41_init_program(const Cs35l41Binding *b, Cs35Step *out)
 {
-    return a->binding.poll_limit ? a->binding.poll_limit : DEFAULT_POLL;
+    if (!b || !out) return 0;
+    unsigned n = 0;
+    const Cs35Step steps[] = {
+        {Cs35Read, b->reg_device_id, 0, 0},
+        {Cs35Read, b->reg_revision, 0, 0},
+        {Cs35Write, b->reg_global_enables, 0, b->enable_value},
+        {Cs35Update, b->reg_block_enables, b->enable_value, b->enable_value},
+        {Cs35Write, b->reg_asp_enables, 0, b->asp_slot_value},
+        {Cs35Write, b->reg_boost_peak, 0, b->boost_peak_value},
+        {Cs35Write, b->reg_boost_cap, 0, b->boost_cap_value},
+        {Cs35Write, b->reg_pll_ctrl, 0, b->pll_value},
+        {Cs35DelayMs, 0, 0, b->clock_settle_ms},
+        {Cs35Read, b->reg_irq1_eint1, 0, 0},
+        {Cs35Read, b->reg_irq1_eint2, 0, 0},
+        {Cs35Write, b->reg_irq1_mask1, 0, b->irq_mask_value},
+        {Cs35Write, b->reg_mute, 0, b->mute_on},
+    };
+    for (unsigned i = 0; i < sizeof steps / sizeof steps[0] && n < CS35L41_MAX_STEPS; ++i) out[n++] = steps[i];
+    return n;
 }
 
-/* Every configuration write is read back: an amplifier that did not take a value must not be unmuted later. */
-static int write_checked(Cs35l41 *a, uint32_t reg, uint32_t value)
+unsigned cs35l41_mute_program(const Cs35l41Binding *b, Cs35Step *out, int mute)
 {
-    if (!reg) return fail(a, Cs35l41BadBinding);
-    uint32_t back = 0;
-    if (a->hooks.write(a->hooks.context, reg, value)) return fail(a, Cs35l41NoAck);
-    if (a->hooks.read(a->hooks.context, reg, &back)) return fail(a, Cs35l41NoAck);
-    if (back != value) return fail(a, Cs35l41Readback);
-    return Cs35l41Ok;
+    if (!b || !out) return 0;
+    out[0] = (Cs35Step){Cs35Write, b->reg_mute, 0, mute ? b->mute_on : b->mute_off};
+    return 1;
 }
 
-static int read_reg(Cs35l41 *a, uint32_t reg, uint32_t *value)
+unsigned cs35l41_shutdown_program(const Cs35l41Binding *b, Cs35Step *out)
 {
-    if (!reg) return fail(a, Cs35l41BadBinding);
-    if (a->hooks.read(a->hooks.context, reg, value)) return fail(a, Cs35l41NoAck);
-    return Cs35l41Ok;
+    if (!b || !out) return 0;
+    out[0] = (Cs35Step){Cs35Write, b->reg_mute, 0, b->mute_on};
+    out[1] = (Cs35Step){Cs35Write, b->reg_global_enables, 0, 0};
+    return 2;
 }
 
 void cs35l41_init(Cs35l41 *a, const Cs35l41Binding *binding, const Cs35l41Hooks *hooks)
@@ -38,64 +51,40 @@ void cs35l41_init(Cs35l41 *a, const Cs35l41Binding *binding, const Cs35l41Hooks 
     for (uint32_t i = 0; i < sizeof *a; ++i) ((uint8_t *)a)[i] = 0;
     if (binding) a->binding = *binding;
     if (hooks) a->hooks = *hooks;
-    a->state = Cs35l41Off;
+    a->state = Cs35l41Idle;
     a->last_error = Cs35l41Ok;
 }
 
-int cs35l41_faults(Cs35l41 *a, uint32_t *mask)
+/* Runs a short program to completion; only the mute and shutdown programs go through here, so they carry no delay. */
+static int run_short(Cs35l41 *a, const Cs35Step *steps, unsigned count)
 {
-    if (!a || !mask) return Cs35l41BadBinding;
-    uint32_t sticky = 0;
-    const int rc = read_reg(a, a->binding.reg_fault_sticky, &sticky);
-    if (rc != Cs35l41Ok) return rc;
-    if (sticky) {
-        /* Clear what was seen, then read it again: a fault that survives its own clear is not a stale bit. */
-        if (a->binding.fault_clear) {
-            if (a->hooks.write(a->hooks.context, a->binding.reg_fault_sticky, a->binding.fault_clear))
-                return fail(a, Cs35l41NoAck);
-        }
-        uint32_t again = 0;
-        if (a->hooks.read(a->hooks.context, a->binding.reg_fault_sticky, &again)) return fail(a, Cs35l41NoAck);
-        if (again) return fail(a, Cs35l41FaultPresent);
+    cs35_run_start(&a->run, steps, count);
+    for (unsigned guard = 0; guard < 8u; ++guard) {
+        Cs35Action action;
+        const int what = cs35_run_next(&a->run, &action);
+        if (what == Cs35Finished) return Cs35l41Ok;
+        if (what == Cs35Wait) {++a->delays; continue;}
+        uint32_t value = 0;
+        if (a->hooks.transfer(a->hooks.context, action.bytes, action.length, action.read_length, &value))
+            return fail(a, Cs35l41NoAck);
+        ++a->transfers;
+        cs35_run_result(&a->run, value);
     }
-    a->faults = sticky;
-    *mask = sticky;
-    return Cs35l41Ok;
+    return fail(a, Cs35l41NoAck);
 }
 
-int cs35l41_unmute(Cs35l41 *a)
+static int check_identity(Cs35l41 *a)
 {
-    if (!a) return Cs35l41BadBinding;
-    if (a->state != Cs35l41MutedReady || !a->verified || !a->configured || !a->locked)
-        return fail(a, Cs35l41NotReady);
-    uint32_t mask = 0;
-    const int rc = cs35l41_faults(a, &mask);
-    if (rc != Cs35l41Ok) return rc;
-    if (mask) return fail(a, Cs35l41FaultPresent);
-    if (write_checked(a, a->binding.reg_mute, a->binding.mute_released) != Cs35l41Ok) return a->last_error;
-    a->state = Cs35l41Unmuted;
-    return Cs35l41Ok;
-}
-
-int cs35l41_mute(Cs35l41 *a)
-{
-    if (!a) return Cs35l41BadBinding;
-    if (a->state != Cs35l41Unmuted && a->state != Cs35l41MutedReady && a->state != Cs35l41Pll)
-        return fail(a, Cs35l41NotReady);
-    if (write_checked(a, a->binding.reg_mute, a->binding.mute_asserted) != Cs35l41Ok) return a->last_error;
-    /* A fault found while muting leaves the amplifier muted and ready, which is where the caller wants it. */
+    a->device_id = a->run.reads[0];
+    a->revision = a->run.reads[1];
+    a->eint1 = a->run.reads[2];
+    a->eint2 = a->run.reads[3];
+    if (a->device_id != a->binding.device_id_value) return fail(a, Cs35l41WrongChip);
+    if (a->revision != a->binding.revision_value) return fail(a, Cs35l41WrongRevision);
+    if (a->eint1 & CS35L41_EINT1_ERRORS) return fail(a, Cs35l41FaultPresent);
+    if (!(a->eint2 & CS35L41_EINT2_PLL_LOCK)) return fail(a, Cs35l41PllUnlocked);
+    a->verified = 1;
     a->state = Cs35l41MutedReady;
-    return Cs35l41Ok;
-}
-
-int cs35l41_shutdown(Cs35l41 *a)
-{
-    if (!a) return Cs35l41BadBinding;
-    if (a->verified && a->state != Cs35l41Off) (void)cs35l41_mute(a);
-    a->hooks.reset(a->hooks.context, 1);
-    a->state = Cs35l41Off;
-    a->verified = a->configured = a->locked = 0;
-    a->last_error = Cs35l41Ok;
     return Cs35l41Ok;
 }
 
@@ -104,80 +93,60 @@ int cs35l41_step(Cs35l41 *a)
     if (!a) return Cs35l41BadBinding;
     if (a->state == Cs35l41Failed) return a->last_error;
     if (a->state == Cs35l41MutedReady || a->state == Cs35l41Unmuted) return Cs35l41Ok;
-    if (!a->hooks.read || !a->hooks.write || !a->hooks.reset) return fail(a, Cs35l41BadBinding);
-    ++a->steps;
+    if (!a->hooks.transfer) return fail(a, Cs35l41BadBinding);
 
-    switch (a->state) {
-    case Cs35l41Off:
-        a->hooks.reset(a->hooks.context, 1);
-        a->waits = 0;
-        a->state = Cs35l41Reset;
-        return Cs35l41Ok;
-    case Cs35l41Reset:
-        /* Reset released; the datasheet delay belongs to the caller's step interval. */
-        a->hooks.reset(a->hooks.context, 0);
-        a->waits = 0;
-        a->state = Cs35l41Boot;
-        return Cs35l41Ok;
-    case Cs35l41Boot: {
-        uint32_t done = 0;
-        const int rc = read_reg(a, a->binding.reg_boot_done, &done);
-        if (rc != Cs35l41Ok) return rc;
-        if (done == a->binding.boot_done_value) {a->state = Cs35l41Identify; return Cs35l41Ok;}
-        if (++a->waits > poll_limit(a)) return fail(a, Cs35l41BootTimeout);
-        return Cs35l41Again;
+    if (a->state == Cs35l41Idle) {
+        a->steps_in_program = cs35l41_init_program(&a->binding, a->program);
+        if (!a->steps_in_program) return fail(a, Cs35l41BadBinding);
+        cs35_run_start(&a->run, a->program, a->steps_in_program);
+        a->state = Cs35l41Init;
     }
-    case Cs35l41Identify: {
-        uint32_t id = 0, revision = 0;
-        int rc = read_reg(a, a->binding.reg_chip_id, &id);
-        if (rc != Cs35l41Ok) return rc;
-        a->chip_id = id;
-        if (id != a->binding.chip_id_value) return fail(a, Cs35l41WrongChip);
-        rc = read_reg(a, a->binding.reg_revision, &revision);
-        if (rc != Cs35l41Ok) return rc;
-        a->revision = revision;
-        if ((revision & a->binding.revision_mask) != a->binding.revision_value) return fail(a, Cs35l41WrongRevision);
-        a->verified = 1;
-        a->state = Cs35l41Faults;
-        return Cs35l41Ok;
-    }
-    case Cs35l41Faults: {
-        uint32_t mask = 0;
-        const int rc = cs35l41_faults(a, &mask);
-        if (rc != Cs35l41Ok) return rc;
-        if (mask) return fail(a, Cs35l41FaultPresent);
-        a->state = Cs35l41Configure;
-        return Cs35l41Ok;
-    }
-    case Cs35l41Configure: {
-        /* The limits are checked before anything is written, so an out-of-range profile never reaches the part. */
-        if (a->binding.boost_peak_value < a->binding.boost_peak_min ||
-            a->binding.boost_peak_value > a->binding.boost_peak_max ||
-            a->binding.boost_cap_value < a->binding.boost_cap_min)
-            return fail(a, Cs35l41BoostOutOfRange);
-        if (write_checked(a, a->binding.reg_boost_peak, a->binding.boost_peak_value) != Cs35l41Ok) return a->last_error;
-        if (write_checked(a, a->binding.reg_boost_cap, a->binding.boost_cap_value) != Cs35l41Ok) return a->last_error;
-        if (write_checked(a, a->binding.reg_asp_ctrl, a->binding.asp_ctrl_value) != Cs35l41Ok) return a->last_error;
-        a->configured = 1;
-        a->state = Cs35l41Pll;
-        return Cs35l41Ok;
-    }
-    case Cs35l41Pll: {
-        if (!a->locked) {
-            if (write_checked(a, a->binding.reg_pll_ctrl, a->binding.pll_ctrl_value) != Cs35l41Ok) return a->last_error;
-            uint32_t lock = 0;
-            const int rc = read_reg(a, a->binding.reg_pll_lock, &lock);
-            if (rc != Cs35l41Ok) return rc;
-            if (lock == a->binding.pll_lock_value) {a->locked = 1; a->waits = 0;}
-            else if (++a->waits > poll_limit(a)) return fail(a, Cs35l41PllTimeout);
-            else return Cs35l41Again;
-        }
-        /* Mute before the amplifier is declared ready, never after. */
-        if (write_checked(a, a->binding.reg_mute, a->binding.mute_asserted) != Cs35l41Ok) return a->last_error;
-        a->state = Cs35l41MutedReady;
-        return Cs35l41Ok;
-    }
-    default:
-        return fail(a, Cs35l41BadBinding);
-    }
+
+    Cs35Action action;
+    const int what = cs35_run_next(&a->run, &action);
+    if (what == Cs35Finished) return check_identity(a);
+    if (what == Cs35Wait) {++a->delays; return Cs35l41Again;}
+    uint32_t value = 0;
+    if (a->hooks.transfer(a->hooks.context, action.bytes, action.length, action.read_length, &value))
+        return fail(a, Cs35l41NoAck);
+    ++a->transfers;
+    ++a->steps;
+    cs35_run_result(&a->run, value);
+    return Cs35l41Ok;
+}
+
+int cs35l41_unmute(Cs35l41 *a)
+{
+    if (!a) return Cs35l41BadBinding;
+    if (a->state != Cs35l41MutedReady || !a->verified) return fail(a, Cs35l41NotReady);
+    if (a->eint1 & CS35L41_EINT1_ERRORS) return fail(a, Cs35l41FaultPresent);
+    if (!(a->eint2 & CS35L41_EINT2_PLL_LOCK)) return fail(a, Cs35l41PllUnlocked);
+    Cs35Step steps[2];
+    const unsigned n = cs35l41_mute_program(&a->binding, steps, 0);
+    if (run_short(a, steps, n) != Cs35l41Ok) return a->last_error;
+    a->state = Cs35l41Unmuted;
+    return Cs35l41Ok;
+}
+
+int cs35l41_mute(Cs35l41 *a)
+{
+    if (!a) return Cs35l41BadBinding;
+    if (a->state != Cs35l41Unmuted && a->state != Cs35l41MutedReady) return fail(a, Cs35l41NotReady);
+    Cs35Step steps[2];
+    const unsigned n = cs35l41_mute_program(&a->binding, steps, 1);
+    if (run_short(a, steps, n) != Cs35l41Ok) return a->last_error;
+    a->state = Cs35l41MutedReady;
+    return Cs35l41Ok;
+}
+
+int cs35l41_shutdown(Cs35l41 *a)
+{
+    if (!a) return Cs35l41BadBinding;
+    Cs35Step steps[4];
+    const unsigned n = cs35l41_shutdown_program(&a->binding, steps);
+    if (run_short(a, steps, n) != Cs35l41Ok) return a->last_error;
+    a->state = Cs35l41Idle;
+    a->verified = 0;
+    a->last_error = Cs35l41Ok;
+    return Cs35l41Ok;
 }

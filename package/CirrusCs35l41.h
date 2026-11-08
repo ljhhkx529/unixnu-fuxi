@@ -1,55 +1,54 @@
 /* SPDX-License-Identifier: BSD-2-Clause-Patent */
-/* Cirrus CS35L41 safe bring-up: reset, boot, identification, fault screening, configuration, PLL lock, then mute.
+/* One CS35L41 amplifier: the programs that identify, configure and mute it, run by the step runner, with the safety
+ * condition the plan puts around them.
  *
- * The state machine owns the order and the conditions; it owns no register address. The binding supplies the
- * register map, the values it expects to read back, the revision it accepts, the boost limits and the poll
- * budget; the hooks supply the two wires (read/write) and the reset line. That keeps every fuxi value in one
- * place that is a fact, not code, and lets the host model drive a device model instead of hardware.
+ * The mechanism is sheng's - a program is a step table, the runner turns each step into one bus action, and nothing
+ * waits - but the tables are built from the binding rather than copied from the CS35L43 board code: the register
+ * addresses, the expected device id and revision, the slot this amplifier plays, the boost and interrupt values are
+ * all facts about this board's part.
  *
- * Nothing here unmutes by itself: MUTED_READY is the terminal state of a bring-up, and unmuting is a separate
- * request that is refused unless the amplifier is verified, configured, locked and free of faults. */
+ * The gate is what the plan adds. The amplifier may only be unmuted once its identity was read back and matched, its
+ * interrupt status was read and found free of the error bits, and its PLL reports locked. Anything else leaves it
+ * muted and the reason in last_error. */
 #ifndef CIRRUS_CS35L41_H
 #define CIRRUS_CS35L41_H
 
 #include <stdint.h>
 
+#include "Cs35Run.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* The register map and the limits, supplied by the board binding. */
+#define CS35L41_MAX_STEPS 24u
+
+/* The part's registers and the values this board programs into them. */
 typedef struct {
-    uint32_t reg_chip_id, reg_revision, reg_boot_done, reg_otp_trim;
-    uint32_t reg_boost_peak, reg_boost_cap, reg_asp_ctrl, reg_pll_ctrl, reg_pll_lock;
-    uint32_t reg_mute, reg_fault_sticky, reg_fault_mask;
-    uint32_t chip_id_value;
-    uint32_t revision_mask, revision_value;
-    uint32_t pll_lock_value;
-    uint32_t boost_peak_min, boost_peak_max, boost_cap_min;
-    uint32_t poll_limit;   /* steps allowed for the boot handshake and for the PLL lock */
-    /* The values to program, from the board profile: nothing here is a default. */
-    uint32_t boost_peak_value, boost_cap_value, asp_ctrl_value, pll_ctrl_value;
-    uint32_t mute_asserted, mute_released, fault_clear;
-    uint32_t boot_done_value;
+    uint32_t reg_device_id, reg_revision, reg_global_enables, reg_block_enables, reg_asp_enables, reg_asp_ctrl;
+    uint32_t reg_boost_peak, reg_boost_cap, reg_pll_ctrl, reg_mute, reg_irq1_eint1, reg_irq1_eint2;
+    uint32_t reg_irq1_mask1;
+    uint32_t device_id_value, revision_value;
+    uint32_t enable_value, asp_slot_value, boost_peak_value, boost_cap_value, pll_value, irq_mask_value;
+    uint32_t mute_on, mute_off;
+    uint32_t clock_settle_ms;
 } Cs35l41Binding;
 
+/* One wire primitive: write length bytes, and when read_length is four, read four bytes back. */
 typedef struct {
-    int (*read)(void *context, uint32_t reg, uint32_t *value);
-    int (*write)(void *context, uint32_t reg, uint32_t value);
-    void (*reset)(void *context, int asserted);
+    int (*transfer)(void *context, const uint8_t *bytes, uint32_t length, uint32_t read_length, uint32_t *value);
     void *context;
 } Cs35l41Hooks;
 
+/* The interrupt bits, as the binding's masks use them. */
+#define CS35L41_EINT2_PLL_LOCK 0x00000001u
+#define CS35L41_EINT1_ERRORS 0x1c400000u   /* DC watchdog, amplifier, temperature, boost short */
+
 enum {
-    Cs35l41Off = 0,
-    Cs35l41Reset = 1,        /* reset asserted */
-    Cs35l41Boot = 2,         /* waiting for the boot handshake */
-    Cs35l41Identify = 3,     /* chip id and revision must match before anything is written */
-    Cs35l41Faults = 4,       /* sticky faults read and cleared */
-    Cs35l41Configure = 5,    /* boost and ASP limits, each write read back */
-    Cs35l41Pll = 6,          /* waiting for the PLL to lock */
-    Cs35l41MutedReady = 7,
-    Cs35l41Unmuted = 8,
+    Cs35l41Idle = 0,
+    Cs35l41Init = 1,
+    Cs35l41MutedReady = 2,
+    Cs35l41Unmuted = 3,
     Cs35l41Failed = -1,
 };
 
@@ -60,42 +59,36 @@ enum {
     Cs35l41NoAck = -2,
     Cs35l41WrongChip = -3,
     Cs35l41WrongRevision = -4,
-    Cs35l41BootTimeout = -5,
-    Cs35l41FaultPresent = -6,
-    Cs35l41Readback = -7,
-    Cs35l41PllTimeout = -8,
-    Cs35l41NotReady = -9,
-    Cs35l41BoostOutOfRange = -10,
-};
-
-/* Fault bits, in the mask the binding's fault registers use. */
-enum {
-    Cs35l41FaultBoost = 1u << 0,
-    Cs35l41FaultPll = 1u << 1,
-    Cs35l41FaultThermal = 1u << 2,
-    Cs35l41FaultShort = 1u << 3,
-    Cs35l41FaultBrownout = 1u << 4,
+    Cs35l41FaultPresent = -5,
+    Cs35l41PllUnlocked = -6,
+    Cs35l41NotReady = -7,
 };
 
 typedef struct {
     Cs35l41Binding binding;
     Cs35l41Hooks hooks;
+    Cs35Step program[CS35L41_MAX_STEPS];
+    unsigned steps_in_program;
+    Cs35Run run;
     int state, last_error;
-    uint32_t steps, waits, chip_id, revision, faults;
-    uint8_t verified, configured, locked;
+    uint32_t device_id, revision, eint1, eint2;
+    uint8_t verified;
+    uint32_t steps, transfers, delays;
 } Cs35l41;
 
+/* Builds the programs from the binding; each returns the step count. */
+unsigned cs35l41_init_program(const Cs35l41Binding *b, Cs35Step *out);
+unsigned cs35l41_mute_program(const Cs35l41Binding *b, Cs35Step *out, int mute);
+unsigned cs35l41_shutdown_program(const Cs35l41Binding *b, Cs35Step *out);
+
 void cs35l41_init(Cs35l41 *amp, const Cs35l41Binding *binding, const Cs35l41Hooks *hooks);
-/* Advances the bring-up. Cs35l41Ok when it moved, Cs35l41Again while it waits, negative on failure. */
+/* Runs the identification, configuration and mute program one transfer at a time; Cs35l41Again while it waits for
+ * a delay, Cs35l41Ok once the amplifier is muted and its identity, interrupts and PLL have been checked. */
 int cs35l41_step(Cs35l41 *amp);
-/* Unmutes only from MutedReady with a verified, configured, locked amplifier and no fault in the mask. */
+/* Unmutes only from a verified, muted, fault-free amplifier. */
 int cs35l41_unmute(Cs35l41 *amp);
-/* Mutes and returns to MutedReady; used by the caller on any fault. */
 int cs35l41_mute(Cs35l41 *amp);
-/* Mutes, then asserts reset and returns to Off. */
 int cs35l41_shutdown(Cs35l41 *amp);
-/* Reads the sticky faults and classifies them. */
-int cs35l41_faults(Cs35l41 *amp, uint32_t *mask);
 
 #ifdef __cplusplus
 }
