@@ -1,0 +1,113 @@
+# The fuxi binding for every audio layer, field by field.
+#
+# Each entry carries the value a build would use, the state of that value, and the fact it rests on.
+# state is unverified until a device measurement supports it, and evidence is either a key in
+# facts/audio/manifest.toml or none. scripts/check-fuxi-audio-binding.py refuses a verified entry whose
+# evidence is missing or still unverified, so an unverified value cannot quietly reach an image.
+
+schema_version = 1
+board = "fuxi"
+status = "source-confirmed"
+
+[adsp.carveout]
+carveout_base = { value = 0, state = "unverified", evidence = "adsp.carveout" }
+carveout_size = { value = 0, state = "unverified", evidence = "adsp.carveout" }
+
+[adsp.entries]
+state_entry = { value = "", state = "unverified", evidence = "none" }
+ready_entry = { value = "", state = "unverified", evidence = "none" }
+fatal_entry = { value = "", state = "unverified", evidence = "none" }
+load_state_message = { value = "", state = "unverified", evidence = "none" }
+
+[adsp.values]
+ready_value = { value = 0, state = "unverified", evidence = "none" }
+fatal_value = { value = 0, state = "unverified", evidence = "none" }
+
+[adsp.timeouts]
+mailbox_timeout = { value = 0, state = "unverified", evidence = "none" }
+ready_timeout = { value = 0, state = "unverified", evidence = "none" }
+link_timeout = { value = 0, state = "unverified", evidence = "none" }
+
+[path]
+gpr_port = { value = 0, state = "unverified", evidence = "none" }
+token_seed = { value = 0, state = "unverified", evidence = "none" }
+timeout_steps = { value = 0, state = "unverified", evidence = "none" }
+stream_instance = { value = 0, state = "unverified", evidence = "none" }
+buffer_address = { value = 0, state = "unverified", evidence = "none" }
+buffer_bytes = { value = 0, state = "unverified", evidence = "none" }
+
+[path.references]
+graph = { value = "", state = "unverified", evidence = "none" }
+endpoint = { value = "", state = "unverified", evidence = "none" }
+endpoint_format = { value = "", state = "unverified", evidence = "none" }
+stream_format = { value = "", state = "unverified", evidence = "none" }
+
+[path.graph]
+graph_id = { value = 0, state = "unverified", evidence = "none" }
+performance = { value = 0, state = "unverified", evidence = "none" }
+direction = { value = 0, state = "unverified", evidence = "none" }
+scenario = { value = 0, state = "unverified", evidence = "none" }
+container_id = { value = 0, state = "unverified", evidence = "none" }
+container_position = { value = 0, state = "unverified", evidence = "none" }
+container_stack_bytes = { value = 0, state = "unverified", evidence = "none" }
+container_domain = { value = 0, state = "unverified", evidence = "none" }
+module_count = { value = 0, state = "unverified", evidence = "none" }
+link_count = { value = 0, state = "unverified", evidence = "none" }
+
+[path.endpoint]
+module = { value = 0, state = "unverified", evidence = "none" }
+instance = { value = 0, state = "unverified", evidence = "none" }
+interface_type = { value = 0, state = "unverified", evidence = "none" }
+interface_index = { value = 0, state = "unverified", evidence = "none" }
+secondary = { value = 0, state = "unverified", evidence = "none" }
+line = { value = 0, state = "unverified", evidence = "none" }
+ws_source = { value = 0, state = "unverified", evidence = "none" }
+slot_mask = { value = 0, state = "unverified", evidence = "none" }
+
+[path.format]
+media = { value = 0, state = "unverified", evidence = "none" }
+bit_width = { value = 0, state = "unverified", evidence = "none" }
+channels = { value = 0, state = "unverified", evidence = "none" }
+interleaving = { value = 0, state = "unverified", evidence = "none" }
+bytes_per_frame = { value = 0, state = "unverified", evidence = "none" }
+
+[amp.registers]
+reg_chip_id = { value = 0, state = "unverified", evidence = "none" }
+reg_revision = { value = 0, state = "unverified", evidence = "none" }
+reg_boot_done = { value = 0, state = "unverified", evidence = "none" }
+reg_otp_trim = { value = 0, state = "unverified", evidence = "none" }
+reg_boost_peak = { value = 0, state = "unverified", evidence = "none" }
+reg_boost_cap = { value = 0, state = "unverified", evidence = "none" }
+reg_asp_ctrl = { value = 0, state = "unverified", evidence = "none" }
+reg_pll_ctrl = { value = 0, state = "unverified", evidence = "none" }
+reg_pll_lock = { value = 0, state = "unverified", evidence = "none" }
+reg_mute = { value = 0, state = "unverified", evidence = "none" }
+reg_fault_sticky = { value = 0, state = "unverified", evidence = "none" }
+reg_fault_mask = { value = 0, state = "unverified", evidence = "none" }
+chip_id_value = { value = 0, state = "unverified", evidence = "none" }
+revision_mask = { value = 0, state = "unverified", evidence = "none" }
+revision_value = { value = 0, state = "unverified", evidence = "none" }
+pll_lock_value = { value = 0, state = "unverified", evidence = "none" }
+boost_peak_min = { value = 0, state = "unverified", evidence = "none" }
+boost_peak_max = { value = 0, state = "unverified", evidence = "none" }
+boost_cap_min = { value = 0, state = "unverified", evidence = "none" }
+poll_limit = { value = 0, state = "unverified", evidence = "none" }
+boost_peak_value = { value = 0, state = "unverified", evidence = "none" }
+boost_cap_value = { value = 0, state = "unverified", evidence = "none" }
+asp_ctrl_value = { value = 0, state = "unverified", evidence = "none" }
+pll_ctrl_value = { value = 0, state = "unverified", evidence = "none" }
+mute_asserted = { value = 0, state = "unverified", evidence = "none" }
+mute_released = { value = 0, state = "unverified", evidence = "none" }
+fault_clear = { value = 0, state = "unverified", evidence = "none" }
+boot_done_value = { value = 0, state = "unverified", evidence = "none" }
+
+[amp.b]
+i2c_address = { value = 0, state = "unverified", evidence = "amplifier[0].i2c_address" }
+reset_gpio = { value = 0, state = "unverified", evidence = "amplifier[0].reset_gpio" }
+irq_gpio = { value = 0, state = "unverified", evidence = "amplifier[0].irq_gpio" }
+
+[amp.t]
+i2c_address = { value = 0, state = "unverified", evidence = "amplifier[1].i2c_address" }
+reset_gpio = { value = 0, state = "unverified", evidence = "amplifier[1].reset_gpio" }
+irq_gpio = { value = 0, state = "unverified", evidence = "amplifier[1].irq_gpio" }
+

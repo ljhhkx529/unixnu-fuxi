@@ -295,6 +295,24 @@ fuxi binding 的候选输入为：
 
 真机部分（两颗功放的真实寄存器值与 revision、100 次读写循环、IRQ 分类）仍待设备授权。
 
+### 板级绑定字段表与门禁（完成于本轮）
+
+`facts/audio/binding.toml`：把三层配置的**每个字段**列成一条记录——值、状态、所依据的事实：
+
+| 段 | 覆盖 |
+| --- | --- |
+| `adsp.*` | carveout、SMP2P entry 名与 ready/fatal 位、load-state 文本、三个超时（11 项） |
+| `path.*` | GPR port、token seed、超时、stream instance、缓冲地址/大小，以及 graph/endpoint/format 三张子表（28 项） |
+| `amp.registers` + `amp.b`/`amp.t` | 28 个寄存器映与限值字段，加两颗功放的 I2C 地址、reset/IRQ GPIO（34 项） |
+
+`scripts/check-fuxi-audio-binding.py` 检查三件事，并逐项反向验证过：
+
+1. `state = "verified"` 但证据写成 `none` → 拒（`verified but names no evidence`）；
+2. `state = "verified"` 而证据在 manifest 里仍是 `unverified` → 拒（`verified on 'adsp.carveout', which is still unverified`）；
+3. 某个层字段没被绑定覆盖 → 拒（`QcomAudioPathConfig.gpr_port is not in the binding`，字段名直接从 C 结构体里解析，不靠手写清单）。
+
+`--require-verified` 会拒绝任何未验证项——这就是"未验证值不得进入构建"的可执行形式。当前 **78 项全部 unverified**，构建也尚未消费该表。
+
 ### Phase 5：speaker AudioReach graph 和第一声（A3）
 
 目标：建立 fuxi 的真实 speaker endpoint，并安全证明左右/上下声道。
