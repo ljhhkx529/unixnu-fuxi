@@ -530,6 +530,18 @@ Host 编译通过、host test 通过和真机观察必须分开报告。对失�
 `scripts/check-qcom-mdt-host.py` 在 ASan/UBSan 下跑 **43 项**，既构造了一份真实 ELF64 镜像，也逐条验证拒绝：
 坏 magic、大端、无程序头、超表长、段文件大小超内存大小、无 hash 段、无可加载段、越界落位、分片读取越界。
 
+同轮迁入的还有加载器的两件状态机（`package/QcomQmp.{h,c}`、`package/QcomRpmh.{h,c}`）与 `QcomScm.h` 的调用形状：
+
+| 文件 | 内容 |
+| --- | --- |
+| `QcomQmp` | AOSS 邮箱握手（描述符校验、link/channel 四步与 kick、一次一条文本消息、开机阶段遗留的"已开"通道直接用） |
+| `QcomRpmh` | cmd-db 资源查找 + ARC 档位索引 + 一次 active-only 请求在 RSC TCS 里的寄存器写（v3 与 v2 两套布局） |
+| `QcomScm.h` | 安全调用的形状声明（不含实现，故不参与主机测试） |
+
+`scripts/check-qcom-loader-host.py` 在 ASan/UBSan 下跑 **52 项**：握手逐级推进与"停在等 AOP"的两个状态、消息长度字与文本、
+	extbf{拒绝}（未对齐邮箱、过小邮箱、未开就发、超长消息、超过四条命令、写表太小），以及 cmd-db 的坏 magic/过短/越界 aux
+与档位索引的四种取值、两套 RSC 布局的差异和一次请求的 12 次写入顺序。
+
 A0 仍未完成的部分是 **ADSP 加载器本身**（`adsp.mbn`/`adsp_dtb.mbn` 的段、内存窗口、代理电源域、SMEM 布局的实际取值），
 它需要 fuxi 的固件与设备证据，按计划保持未验证。
 
