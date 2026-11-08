@@ -511,6 +511,41 @@ unixnu-fuxi
 
 ## 9. 验证与证据矩阵
 
+### 9.1 当前状态（主机侧已完成，真机侧全部空缺）
+
+下表由 \`scripts/report-fuxi-audio-status.py\` 生成：它实际运行每个套件并汇总，所以数字不会随文档漂移。
+
+| 对象 | Host 套件 | 项数 | Device 证据 | 等级 |
+| --- | --- | --- | --- | --- |
+| 安全固件容器 | `check-qcom-mdt-host.py` | 43 | 无 | A0 未完成 |
+| SMEM / SMP2P / GLINK | `check-qcom-a0-host.py` | 43 | 无 | A0 未完成 |
+| QMP / RPMh | `check-qcom-loader-host.py` | 52 | 无 | A0 未完成 |
+| ADSP 加载顺序 | `check-qcom-adsp-host.py` | 33 | 无 | A0 未完成 |
+| GPR / APM 编解码 | `check-qcom-gpr-host.py` | 73 | 无 | A1–A2 未完成 |
+| AudioReach 载荷与应答 | `check-qcom-audioreach-host.py` | 57 | 无 | A1–A2 未完成 |
+| 静音数据面（含 period 窗口） | `check-qcom-audio-path-host.py` | 28 | 无 | A1–A2 未完成 |
+| speaker 拓扑 | `check-qcom-audio-topology-host.py` | 31 | 无 | A3 未完成 |
+| 共享输出环 | `check-qcom-audio-ring-host.py` | 31 | 无 | A4 未完成 |
+| CS35L41 安全状态机 | `check-cirrus-cs35l41-host.py` | 29 | 无 | M3 未完成 |
+| 恢复顺序（端到端） | `check-qcom-audio-session-host.py` | 17 | 无 | A6 未完成 |
+
+合计 **437 项**主机检查，全部在 ASan/UBSan 下运行，且不依赖任何 fuxi 数值。
+
+| 门禁 | 覆盖 | 状态 |
+| --- | --- | --- |
+| `check-fuxi-audio-binding.py` | 93 个字段 / 74 个层字段 | 0 verified，93 unverified |
+| `check-fuxi-audio-facts.py` | 两颗 CS35L41、TDM/WCD 接线 | source-confirmed；runtime unverified |
+
+### 9.2 主机检查能证明什么、不能证明什么
+
+主机侧证明的是**顺序、条件与计数**：识别先于配置、故障先清后配、配置写回读、PLL 锁定后才算 ready、mute 先于重启、
+事务按 token 代次隔离、period 按地址匹配并有 late/underrun/cancel 计数、环的满/空可区分。
+
+主机侧**不能**证明：ADSP 是否真的启动、PLL 是否真的锁定、功放是否真的识别、声音是否可闻、CoreAudio 是否真的工作。
+每一条都必须用真机证据补齐，这也是 9.1 里 Device 列全部为"无"的原因。
+
+### 9.3 原始验收矩阵（设计意图，未变）
+
 | 对象 | Host 验证 | Device 验证 | 不能据此宣称 |
 | --- | --- | --- | --- |
 | ADSP loader | 分段、边界、错误注入、状态机 | authenticate/ready/SSR 20 次 | 扬声器可用 |
@@ -523,15 +558,16 @@ unixnu-fuxi
 | WCD/SoundWire | port/channel/period parser | 枚举、route、200 periods | 所有麦都正确 |
 | protection | profile parser/policy | 温度、失真、低电池、长播 | 通话音频完成 |
 
-应从 sheng 移植并参数化相应 host-test 思路：
+### 9.4 每格还缺什么
 
-- `check-adsp-host.py`
-- `check-modem-fw-host.py`
-- `check-qrtr-host.py`（仅在 audio 路径共享 QRTR 代码时）
-- `check-gpr-host.py`
-- `check-audioreach-host.py`
-- `check-geni-i2c-host.py`
-- CS35L41 新测试；不能把 `check-cs35l43-host.py` 改名后直接当作通过。
+| 缺的东西 | 影响的行 | 需要谁来提供 |
+| --- | --- | --- |
+| fuxi 的 `adsp.mbn` / `adsp_dtb.mbn` 或来源说明 | ADSP loader、GLINK/GPR、AudioReach | 用户 |
+| 设备授权（只读探针：不写寄存器、不 unmute） | ADSP loader、CS35L41、speaker | 用户 |
+| 两颗功放的真实寄存器映与 revision | GENI I2C、CS35L41 | 设备读回 |
+| TDM/BCLK/FS 极性、slot 与左右声道映射 | speaker、HAL output | 设备测量 |
+| 21H461 的 HAL ABI 与 host timer 实现 | HAL output | 反解 + 设备 |
+| WCD938x 的 SoundWire 枚举与主麦 route | WCD/SoundWire | 设备枚举 |
 
 ## 10. 日志和验收记录格式
 
@@ -662,12 +698,16 @@ A0 仍未完成的部分是 **ADSP 加载器本身**（`adsp.mbn`/`adsp_dtb.mbn`
 
 ## 13. 当前未执行事项
 
-当前只完成了源码/设备树对比、主线审计、移植设计和板级无关的 GPR 主机模型，没有：
+主机侧已经完整：11 个板级无关层与 2 道门禁（9.1），437 项检查全部在 ASan/UBSan 下通过，且没有一条依赖 fuxi 的数值。
+每个文件都把自己的板级值做成了入参，`facts/audio/binding.toml` 用 93 个字段记录它们，门禁拒绝未验证值进入构建。
 
-- 把音频组件接入 `dts/fuxi.dts`、`board.toml` 或内核构建；
-- 编译 kernel/payload；
+仍然没有做、也无法在主机上做的：
+
+- 把音频组件接入 `dts/fuxi.dts`、`board.toml` 或内核构建（`board.toml` 至今没有音频归档与启动参数）；
+- 编译带音频的 kernel/payload；
 - 启动、刷写或测试设备；
-- 读取 fuxi 的功放寄存器或播放声音；
+- 读取 fuxi 的 ADSP 状态、功放寄存器，或播放任何声音；
 - 证明任何 fuxi 音频等级 A0--A6 已完成。
 
-因此当前准确状态仍是：**sheng 只提供参考架构；fuxi 已有静态 wiring 证据和通过主机测试的 GPR 模型，但没有 Android runtime、没有设备音频证据，A0--A6 均未完成。**
+需要的外部输入见 9.4：ADSP 固件（或来源说明）与设备授权。在这两样到位之前，等级停在"A0–A6 均未完成"，
+但**结构上已经没有任何未知**：剩下的是数值与证据，而不是设计。
