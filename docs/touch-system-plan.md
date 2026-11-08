@@ -214,3 +214,33 @@ fuxi-buttons: stage 3 irq 245 reports 232 ... submit 232/0
 iOS 上音量键由 SpringBoard 处理，但真正的“调音量”要经过 `AVSystemController`/音频路由；本端口没有音频输出，
 音量变更很可能被记为空操作（HUD 也不出现）。这与“电源键（不经音频）有效、音量键无效”的现象一致。
 判定方法：换上新描述符后再按音量键，若仍无变化而 `edges`/`bits` 依旧正常，则 HID 层已交付完成，剩余属音频链路缺失。
+
+## sheng 是怎么实现按键的（答案）
+
+对照 `UniXNU-sheng`：**它的实现和我们完全一样**，没有额外技巧。
+
+| 环节 | sheng | fuxi |
+| --- | --- | --- |
+| 按键驱动 | `package/ButtonProbe.cpp` | `package/FuxiButtons.cpp`（同一份逻辑，含短按锁存） |
+| 上报 | report 2 的 Consumer 位（Power / Vol+ / Vol−） | 同 |
+| 描述符 | Consumer 键嵌在键盘应用集合内 | 同（已恢复为与 sheng 逐字节一致） |
+| 服务分类 | `PrimaryUsagePage 0x0D` / `PrimaryUsage 4` 发在 event driver 与 interface 上 | 同 |
+| **音频** | **`AdspFirmware.c`、`AdspProbe.cpp`、`AudioProbe.cpp`、`ShengAudioReach.c`，参数 `sheng-adsp=2`、`sheng-audio=12`，并有音频 HAL 构建脚本** | **完全没有音频栈** |
+
+这就是“电源键有反应、音量键没有”的原因：电源键不经音频；音量键在 iOS 上由 SpringBoard 收，但要真正改变音量
+必须经过 `AVSystemController` 与音频路由，fuxi 没有音频路由，于是变更被记为空操作。
+
+结论：**按键在 HID 层已经接好**（三个键位都产出、提交成功、电源生效）；音量要有可观效果需要移植音频栈，
+那是独立的一块工作，不是 HID 的缺陷。
+
+顺带更正：2026-11-08 20:53 我把 Consumer 用法拆成独立集合，那一步**偏离了参考实现**（sheng 用嵌套布局且工作正常），
+现已恢复，并用 `diff` 验证描述符与 sheng **逐字节一致**。
+
+### 该配置的真机确认（镜像 `sha256 1812533c…`，run 211741）
+
+```
+FTS rd70 ev71 in3 mv63 up3 er0/00 c0 2495,17695 hid56 irq69/0 xf0
+fuxi-buttons: edges pon c0 last 80 gpio 1 last 1 bits e
+fuxi-buttons: stage 3 irq 17 reports 16 ... submit 16/0
+gop offers 135 done 135      panic 0
+```
