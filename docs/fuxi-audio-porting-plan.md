@@ -662,6 +662,9 @@ cd ../UniXNU && ./unixnu defconfig fuxi_defconfig -D ../unixnu-fuxi && ./unixnu 
     --dtb ../uefi-fuxi/Platforms/Xiaomi/fuxiPkg/FdtBlob/sm8550-xiaomi-fuxi.dtb -o /tmp/fuxi-probe.img
 ```
 
+**写阶段先证明再上机。** 探针的映射方向必须与阶段一致：只读阶段用 `kIOMapReadOnly`，写阶段（`fuxi-audio-probe>=4`）用读写映射。
+第一次尝试分配 SMP2P 项时正是因为映射是只读的，`qcom_smem_alloc` 的第一次写入就 fault，内核当场死掉。
+
 这样镜像**正常启动到桌面**，探针在 `bsd_init` 跑完、报告走 USB CDC 通道（`scripts/fuxi-usb-debug.sh`），
 不需要拍照，也不需要动手机的电源键。`scripts/fuxi-audio-probe.sh run` 把这几步串成一条命令，并校验
 **payload 里的 kernel 就是刚构建的那个**（`bootimg` 曾把旧 payload 打进镜像，导致刷了错的内核）。
