@@ -12,15 +12,16 @@ PACKAGE = ROOT / "package"
 
 
 with tempfile.TemporaryDirectory() as temporary:
-    executable = Path(temporary) / "qcom-audio-session-host"
+    executable = Path(temporary) / "qcom-audio-service-host"
     subprocess.run([
         "cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-O1", "-g",
         "-fsanitize=address,undefined",
-        str(PACKAGE / "tests/qcom_audio_session_host.c"),
-        str(PACKAGE / "QcomAudioSession.c"),
+        str(PACKAGE / "tests/qcom_audio_service_host.c"),
+        str(PACKAGE / "QcomAudioService.c"),
         str(PACKAGE / "QcomAdsp.c"),
         str(PACKAGE / "QcomAudioPath.c"),
         str(PACKAGE / "QcomAudioGraph.c"),
+        str(PACKAGE / "QcomAudioRing.c"),
         str(PACKAGE / "QcomMdt.c"),
         str(PACKAGE / "QcomQmp.c"),
         str(PACKAGE / "QcomSmp2p.c"),
@@ -32,4 +33,4 @@ with tempfile.TemporaryDirectory() as temporary:
 
 sys.stderr.write(result.stderr)
 print(result.stdout.strip())
-sys.exit(0 if result.returncode == 0 and result.stdout.startswith("PASS QcomAudioSession:") else 1)
+sys.exit(0 if result.returncode == 0 and result.stdout.startswith("PASS QcomAudioService:") else 1)

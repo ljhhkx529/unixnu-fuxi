@@ -5,7 +5,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "../QcomAudioSession.h"
+#include "../QcomAudioService.h"
+#include "../QcomAudioRing.h"
 
 static int checks, failed;
 
@@ -111,7 +112,7 @@ typedef struct {
     uint32_t pending_bytes, commands, spf_ready, handle;
 } Dsp;
 
-static QcomAudioSession *g_session;
+static QcomAudioService *g_session;
 
 static void session_receive(void *context, QcomGlinkChannel *channel, const uint8_t *data, uint32_t length)
 {
@@ -166,8 +167,14 @@ static void dsp_receive(void *context, QcomGlinkChannel *channel, const uint8_t 
     dsp_send(d, &packet, GPR_OP_BASIC_RESULT, result, sizeof result);
 }
 
+static uint8_t ring_data[480u * 2u * 2u * 8u];
+static uint32_t ring_write, ring_read;
+static QcomAudioControl page;
+
 typedef struct {
-    QcomAudioSession session;
+    QcomAudioService session;
+    QcomAudioRing ring;
+    QcomAudioRingConfig ring_config;
     QcomGlink ours;
     QcomGlinkChannel *channel;
     QcomSmp2p ours_state;
@@ -257,9 +264,24 @@ static void rig_init(Rig *r, uint64_t carveout)
     pc.buffer_bytes = 0x4000u;
     pc.periods_in_flight = 4u;
 
+    memset(&r->ring_config, 0, sizeof r->ring_config);
+    r->ring_config.data = ring_data;
+    r->ring_config.write_index = &ring_write;
+    r->ring_config.read_index = &ring_read;
+    r->ring_config.frames = 480u * 8u;
+    r->ring_config.period_frames = 480u;
+    r->ring_config.periods_in_flight = 4u;
+    r->ring_config.channels = 2u;
+    r->ring_config.bytes_per_sample = 2u;
+    r->ring_config.sample_rate = 48000u;
+    r->ring_config.host_clock_hz = 19200000u;
+    (void)qcom_audio_ring_init(&r->ring, &r->ring_config);
+    memset(&page, 0, sizeof page);
+    page.state = QcomAudioOutputReady;
+
     g_session = &r->session;
-    qcom_audio_session_init(&r->session, &ac, &ah, &pc, &r->ours, r->channel, &r->mailbox, &r->ours_state,
-                            &r->image, 0, mute_hook, r);
+    qcom_audio_service_init(&r->session, &ac, &ah, &pc, &r->ours, r->channel, &r->mailbox, &r->ours_state,
+                            &r->image, &r->ring, &page, mute_hook, r);
 }
 
 static void pump_dsp(Rig *r)
@@ -277,35 +299,54 @@ static void set_ready(void) { (void)qcom_smp2p_update(&remote, 1, 0xffffffffu, 1
 static int bring_up(Rig *r, int steps)
 {
     for (int i = 0; i < steps; ++i) {
-        const int rc = qcom_audio_session_step(&r->session);
+        const int rc = qcom_audio_service_step(&r->session);
         if (rc < 0) return rc;
-        if (r->session.state == QcomSessionRunning) return QcomSessionOk;
+        if (r->session.state == QcomServiceRunning) return QcomServiceOk;
         aop_turn(1, 1);
         if (ram[0x100 / 4] == 0) set_ready();
         pump_dsp(r);
     }
-    return QcomSessionAgain;
+    return QcomServiceAgain;
 }
 
 static void test_happy_and_restart(void)
 {
     Rig *r = &(Rig){0};
     rig_init(r, 0x02000000ull);
-    check(bring_up(r, 400) == QcomSessionOk, "the session comes up end to end");
-    check(r->session.state == QcomSessionRunning, "the session reports running");
+
+    /* The page and the IO cycle, before the DSP is up. */
+    check(qcom_audio_service_cycle(&r->session) == 0 && r->session.starved == 1,
+          "a cycle before the path runs takes nothing and counts a starve");
+    check(qcom_audio_service_start_output(&r->session, 0x1000u) == QcomServiceOk, "the output is announced");
+    check(page.out_anchor_host == 0x1000u && (page.out_seq & 1u) == 0u,
+          "the anchor is written and the sequence counter closes behind it");
+    check(page.state & QcomAudioOutputReady, "the page says the output is ready");
+
+    check(bring_up(r, 400) == QcomServiceOk, "the session comes up end to end");
+    check(r->session.state == QcomServiceRunning, "the session reports running");
     check(r->session.generation == 1, "the first session is generation one");
     check(r->session.adsp.state == QcomAdspUp && r->session.path.state == QcomPathRunning,
           "both layers are up");
     check(r->mutes == 0, "nothing muted itself on the way up");
 
+    /* One IO cycle hands a period from the ring to the DSP and publishes where it got to. */
+    static uint8_t samples[480u * 2u * 2u];
+    check(qcom_audio_ring_write(&r->ring, samples, 480u) == 480u, "the plug-in wrote a period");
+    const uint32_t submitted_before = r->session.path.submitted;
+    check(qcom_audio_service_cycle(&r->session) == 480u, "the cycle takes the period");
+    check(r->session.path.submitted == submitted_before + 1u, "and hands it to the DSP");
+    check(page.out_frames == r->session.path.completed, "the page publishes what the DSP has completed");
+    check(qcom_audio_service_cycle(&r->session) == 0 && r->session.starved == 2,
+          "a cycle with an empty ring starves rather than repeating the last period");
+
     const uint32_t cancelled_before = r->session.path.cancelled;
-    check(qcom_audio_session_restart(&r->session) == QcomSessionOk, "a restart is accepted");
+    check(qcom_audio_service_restart(&r->session) == QcomServiceOk, "a restart is accepted");
     check(r->mutes == 1, "the amplifiers are muted before the restart");
     check(r->session.generation == 2 && r->session.recoveries == 1, "the generation moved on");
-    check(r->session.state == QcomSessionIdle, "the restart leaves the session at the start");
+    check(r->session.state == QcomServiceIdle, "the restart leaves the session at the start");
     check(r->session.path.cancelled >= cancelled_before, "periods in flight are cancelled by the restart");
 
-    check(bring_up(r, 400) == QcomSessionOk, "the session comes up again after the restart");
+    check(bring_up(r, 400) == QcomServiceOk, "the session comes up again after the restart");
     check(r->session.generation == 2 && r->session.path.state == QcomPathRunning,
           "the second generation runs");
 
@@ -323,6 +364,13 @@ static void test_happy_and_restart(void)
     const uint32_t late_before = r->session.path.late;
     (void)qcom_audio_path_receive(&r->session.path, stale, n);
     check(r->session.path.late == late_before + 1, "an answer from the previous generation is counted as late");
+
+    /* Stopping clears the page's state and cancels what was in flight. */
+    (void)qcom_audio_service_start_output(&r->session, 0x2000u);
+    check(qcom_audio_service_stop_output(&r->session) == QcomServiceOk, "the output stops");
+    check((page.state & (QcomAudioOutputRunning | QcomAudioOutputReady)) == 0u,
+          "the page says the output is neither running nor ready");
+    check(r->session.path.state == QcomPathIdle, "the path is back at the start");
 }
 
 static void test_failures(void)
@@ -332,22 +380,22 @@ static void test_failures(void)
     rig_init(r, 0x02000000ull);
     (void)bring_up(r, 400);
     r->mute_result = -1;
-    check(qcom_audio_session_restart(&r->session) == QcomSessionMuteFailed,
+    check(qcom_audio_service_restart(&r->session) == QcomServiceMuteFailed,
           "a restart whose mute fails is refused");
-    check(r->session.state == QcomSessionFailed && r->session.generation == 1,
+    check(r->session.state == QcomServiceFailed && r->session.generation == 1,
           "a refused restart leaves the generation alone and the session failed");
 
     /* A carveout too small for the image fails the bring-up. */
     r = &(Rig){0};
     rig_init(r, 0x100u);
-    check(bring_up(r, 40) == QcomSessionBringUpFailed, "a carveout that cannot hold the image fails the bring-up");
-    check(r->session.state == QcomSessionFailed, "the session stays failed");
+    check(bring_up(r, 40) == QcomServiceBringUpFailed, "a carveout that cannot hold the image fails the bring-up");
+    check(r->session.state == QcomServiceFailed, "the session stays failed");
 }
 
 int main(void)
 {
     test_happy_and_restart();
     test_failures();
-    printf("PASS QcomAudioSession: %d checks\n", checks);
+    printf("PASS QcomAudioService: %d checks\n", checks);
     return failed ? 1 : 0;
 }
