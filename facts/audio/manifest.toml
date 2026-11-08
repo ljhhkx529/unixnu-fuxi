@@ -1,0 +1,107 @@
+schema_version = 1
+board = "fuxi"
+soc = "sm8550"
+status = "source-confirmed"
+
+[source]
+repository = "https://github.com/LineageOS/android_kernel_xiaomi_sm8550-devicetrees"
+revision = "43b5ada5654ed84c25f74789bc8f6326b7bacd20"
+kind = "fixed-fuxi-source"
+limits = "The fixed fuxi source establishes board wiring, not runtime state, stream format, calibration, or successful audio."
+
+[speaker_bus]
+controller = "qupv3_se8_i2c"
+wrapper = "qupv3_2"
+serial_engine = 0
+mmio_base = 0x00880000
+mmio_size = 0x4000
+sda_gpio = 0
+scl_gpio = 1
+source = "qcom/fuxi-sm8550.dtsi:243-290; qcom/kalama-qupv3.dtsi:535-550; qcom/kalama-pinctrl.dtsi:1231-1271"
+runtime_verified = false
+
+[[amplifier]]
+role = "B"
+compatible = "cirrus,cs35l41"
+i2c_address = 0x40
+reset_gpio = 183
+irq_gpio = 99
+irq_flags = 0x2008
+right_channel_amp = true
+asp_sdout_hiz = 3
+boost_peak_milliamp = 4000
+boost_cap_microfarad = 15
+boost_ind_nanohenry = 1000
+profile_names = ["B-music.txt", "B-handfree.txt"]
+source = "qcom/fuxi-sm8550.dtsi:245-266; qcom/fuxi-pinctrl.dtsi:3-15,31-42"
+runtime_verified = false
+
+[[amplifier]]
+role = "T"
+compatible = "cirrus,cs35l41"
+i2c_address = 0x42
+reset_gpio = 182
+irq_gpio = 98
+irq_flags = 0x2008
+right_channel_amp = false
+asp_sdout_hiz = 3
+boost_peak_milliamp = 4000
+boost_cap_microfarad = 15
+boost_ind_nanohenry = 1000
+profile_names = ["T-music.txt", "T-handset.txt", "T-handfree.txt"]
+receiver_select_gpio = 68
+source = "qcom/fuxi-sm8550.dtsi:267-289; qcom/fuxi-pinctrl.dtsi:17-28,44-55; qcom/fuxi-sm8550.dtsi:83-116"
+runtime_verified = false
+
+[speaker_link]
+interface = "secondary-tdm-mi2s"
+clock_gpio = 121
+word_select_gpio = 123
+data_input_gpio = 122
+data_output_gpio = 124
+max_slots = 4
+soc_is_clock_master = "unverified"
+sample_rate = "unverified"
+sample_width = "unverified"
+slot_width = "unverified"
+slot_masks = "unverified"
+source = "qcom/audio/xiaomi-sm8550-common.dtsi:59-79; qcom/kalama-pinctrl.dtsi:2944-3059"
+runtime_verified = false
+
+[codec]
+compatible = "qcom,wcd938x-codec"
+tx_soundwire_mmio = 0x06d30000
+reset_gpio = 108
+micbias_millivolt = [2750, 2750, 2750, 2750]
+micbias_supply_min_microvolt = 3296000
+micbias_supply_max_microvolt = 3960000
+source = "qcom/audio/kalama-audio-overlay.dtsi:42-115,325-365; qcom/audio/xiaomi-sm8550-common.dtsi:96-102; qcom/kalama-pinctrl.dtsi:3298-3323"
+runtime_verified = false
+
+[microphone_route]
+primary_mic = "unverified"
+micbias = "unverified"
+adc = "unverified"
+soundwire_slave_port = "unverified"
+soundwire_channel = "unverified"
+master_port = "unverified"
+tx_decimator = "unverified"
+codec_dma_endpoint = "unverified"
+source = "qcom/audio/fuxi-audio-mtp.dtsi:3-55 only lists candidate routes"
+runtime_verified = false
+
+[adsp]
+firmware_source = "unverified"
+firmware_hash = "unverified"
+carveout = "unverified"
+glink_channel = "adsp_apps"
+glink_channel_source = "SM8550 architecture reference; it must be confirmed for the selected fuxi firmware before use"
+runtime_verified = false
+
+[safety]
+default_amplifier_state = "reset-or-global-mute"
+allow_high_power_without_protection = false
+allow_cross_device_calibration = false
+allow_cs35l43_register_program = false
+first_tone_max_milliseconds = 500
+first_tone_requires_attenuation = true
