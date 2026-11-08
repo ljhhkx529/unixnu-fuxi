@@ -133,3 +133,56 @@ panic 0   smmu fault 0
 1. `fuxi_buttons_stats` 同时被 `BootLogExtraStubs.c` 定义 → 链接期 `duplicate symbol`；占位定义必须让位给真实驱动。
 2. `ctl reboot-fastboot` 本来就以非零退出（控制 socket 先关闭），在 `set -e` 脚本里会**中断整条刷机链**；
    该调用必须与 `set -e` 分开。
+
+## 按键：驱动通了，系统层还没接受（未完成）
+
+移植后的驱动本身完全正常（镜像 `126b598d…`，run 185624）：
+
+```
+fuxi-buttons: stage 3 irq 442 reports 390 mask 0 pon 560 gpio 583 clears 0 pdc 30000 err 0 spur 0 submit 390/0
+```
+
+`submit 390/0` 表示 `buttonsAction` 提交了 390 次、`submitReport` **全部返回成功**（IOReturn 0）；`spur 0` 说明没有误中断。
+也就是说：**驱动 → HID 设备这一段是通的，报文没有生效是在系统层。**
+
+### 为什么被丢
+
+为了触摸能被接受，我们把**同一个事件服务**标成了数字化器（`PrimaryUsagePage 0x0D`、`PrimaryUsage 4`，外加
+`Built-In`/`DisplayIntegrated`）。backboardd 的数字化器过滤器正是读这几个字段——于是这个服务被当作触屏，
+它发出的 Consumer（音量/电源）报文不再被当作按键处理。**触控与按键在单一服务上互斥。**
+
+### 试过的两条路
+
+1. **把数字化器拆成独立服务**（`sheng-touch-split=1`，镜像 `8f832257…`）：触控仍然正常（`hid856`→`hid1858`），
+   但**桌面起不来**。日志给出原因：
+
+   ```
+   Driver com.apple.AppleUserHIDDrivers has crashed 0 time(s)
+   DK: AppleUserHIDEventDriver-0x1000001dc waiting for server …-1000001dc
+   DK: AppleUserHIDEventDriver-0x1000001dc user server timeout
+   ```
+
+   DriverKit 的 `AppleUserHIDEventDriver` 抢走了那个纯数字化器服务，然后等用户态 server 超时——这也解释了
+   对方仓库里同一个分支为什么默认不打开。
+
+2. **跳过数字化器标注**（`fuxi-hid-no-usage=1`，镜像 `c35d3cc7…`）：代码里保留了这个开关，**默认关闭**。
+   不标注时按键这条路的语义正确，但触摸就失去 backboardd 的数字化器资格，触控会失效。
+
+### 现在的状态
+
+设备留在**已验证可用**的配置上（镜像 `f7c9b33e…`）：`sheng-touch-hid=1` + `fuxi-buttons=1`，桌面正常、触摸正常；
+按键驱动已加载并 armed（`stage 3`、APID 0x560/0x583），报文能提交但系统不响应。
+
+### 下一步的两条候选
+
+1. **反向拆分**：触控留在一个设备上（现状），另建一个**只带键盘+Consumer** 的设备专门给按键。代码已实现于
+   `fuxi-buttons-device=1`（`native_hid_buttons_allocate()`），**尚未上机验证**——它的风险低于正向拆分，因为
+   第一个设备与现在完全一致，DriverKit 不会去抢键盘设备。
+2. 找到满足 backboardd 数字化器过滤器、又不动 Consumer 服务分类的写法（例如只把 usage 写在 interface 上）。
+
+两个都需要在设备上按音量键/划屏来判定，**必须在有人在设备旁时进行**。
+
+### 顺带记下的限制
+
+内核命令行已到 1000 字节上限（1024 的限制，超了直接 `unixnu: the kernel command line is 1017 bytes` 失败）。
+为塞入新参数，`fuxi-touch-panic=0`（本来就是默认值）已删除。再加参数前要先腾位置。

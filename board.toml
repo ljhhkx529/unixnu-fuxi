@@ -185,7 +185,6 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                "native-ufs-root=1", "fuxi-touch=4", "fuxi-touch-hid=1", # fuxi-touch-panic=2 panicked the kernel after the first lift so its four diagnostic rows could be read
                # from the panic screen while no display driver ran. The panel shows the picture now and the
                # rows are in the serial log, so the probe reports without panicking: 0.
-               "fuxi-touch-panic=0",
           # NativeHidInput::start() reads this name, not fuxi-touch-hid: it enables the digitizer collection in the
           # descriptor, the Built-In/DisplayIntegrated properties and the sink the touch thread notifies.
           "sheng-touch-hid=1",

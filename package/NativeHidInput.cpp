@@ -249,6 +249,9 @@ class NativeHidInput : public IOHIDDevice {
     // The digitizer is a separate service from the keyboard: backboardd matches digitizers by primary usage page/usage
     // (Digitizer/Touch Screen) and the Built-In flag, which a combined keyboard-first descriptor would not provide.
     bool touchOnly=false;
+    // A device that carries only the keyboard and consumer collections: the volume keys have to come from a service that
+    // is not classified as a digitizer, because backboardd drops consumer reports from one that is.
+    bool buttonsOnly=false;
     bool eventDriverFound=false;
     IOReturn submitReport(IOMemoryDescriptor *report) {
 #if defined(NATIVE_HID_SOURCE_API) && NATIVE_HID_SOURCE_API
@@ -389,6 +392,7 @@ class NativeHidInput : public IOHIDDevice {
     }
 public:
     void setTouchOnly() {touchOnly=true;}
+    void setButtonsOnly() {buttonsOnly=true;}
     IOWorkLoop *getWorkLoop() const override {return inputLoop;}
     OSString *newTransportString() const override {return OSString::withCString(touchOnly?"SPI":"Virtual");}
     OSString *newProductString() const override {return OSString::withCString(touchOnly?"Offline touch digitizer":"Offline HID input probe");}
@@ -413,6 +417,7 @@ public:
         if(!setProperty("HIDDefaultBehavior",true))return false;
         unsigned touch=0;
         touchEnabled=PE_parse_boot_argn("sheng-touch-hid",&touch,sizeof(touch)) && touch==1;
+        if(buttonsOnly)touchEnabled=false;
         // DigitizerCollectionDispatch: IOHIDEventDriver (setDigitizerProperties) reads it up the service plane and then sends each
         // report's fingers as one digitizer collection with a child per finger. Without it a touch screen gets one event per finger,
         // and backboardd takes each as the whole touch set, so no two fingers are ever down together for UIKit (no pinch, no
@@ -441,4 +446,5 @@ public:
 };
 OSDefineMetaClassAndStructors(NativeHidInput,IOHIDDevice)
 extern "C" IOService *native_hid_input_allocate(void) {return new NativeHidInput;}
+extern "C" IOService *native_hid_buttons_allocate(void) {NativeHidInput *device=new NativeHidInput;if(device)device->setButtonsOnly();return device;}
 extern "C" IOService *native_hid_touch_allocate(void) {NativeHidInput *device=new NativeHidInput;if(device)device->setTouchOnly();return device;}

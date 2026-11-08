@@ -6,6 +6,7 @@
 // fuxi_hid_start once sensing runs, with the boot argument fuxi-touch-hid=1; the device then turns every contact set the
 // probe publishes into a digitizer report (native_touch_hid_reports, the hid counter of the touch report).
 #include <IOKit/IOService.h>
+#include <string.h>
 #include <IOKit/IOLib.h>
 #include <libkern/libkern.h>
 #include <libkern/c++/OSMetaClass.h>
@@ -21,6 +22,7 @@ extern kmod_info_t g_kernel_kmod_info;
 // registers derives from IOHIDDevice, which exists only once IOHIDFamily is loaded.
 extern "C" void native_hid_static_init(void) __asm__("__GLOBAL__sub_I_NativeHidInput.cpp");
 extern "C" IOService *native_hid_touch_allocate(void);
+extern "C" IOService *native_hid_buttons_allocate(void);
 extern "C" IOService *native_hid_input_allocate(void);   /* the keyboard-first combined device */
 extern "C" {
 extern kern_return_t OSKextLoadKextWithIdentifier(const char *);
@@ -43,6 +45,12 @@ extern "C" void native_hid_input_observed(unsigned event, int result) {
     if (event < 8) {native_hid_input_events[event] = native_hid_input_events[event] + 1; native_hid_input_results[event] = result;}
 }
 
+/* The touch-only device, when the split is on: only its event service gets the digitizer primary usage. The combined
+ * keyboard/consumer device keeps its own classification, which is what lets the volume keys through. */
+static IOService *gTouchDevice;
+/* The keyboard/consumer device the buttons ride on, when fuxi-buttons-device=1 asked for one. */
+static IOService *gButtonsDevice;
+
 static IORegistryEntry *findEventDriver(IORegistryEntry *parent, unsigned depth) {
     if (!depth) return nullptr;
     OSIterator *it = parent->getChildIterator(gIOServicePlane);
@@ -62,6 +70,14 @@ static IORegistryEntry *findEventDriver(IORegistryEntry *parent, unsigned depth)
 // and the primary usage (Digitizer, Touch Screen) of the event service it opened, so they are published on the event driver
 // and its interface once, after the driver has matched (on the device they would change the matching).
 extern "C" __attribute__((noinline)) void native_hid_live_checkpoint(IOService *device) {
+    /* Only the digitizer service is relabelled: doing it to the keyboard/consumer service is what kept the volume keys
+     * from being delivered (the reports left the device with status 0 and backboardd dropped them). */
+    /* fuxi-hid-no-usage=1 leaves the event service's own classification alone. It exists to answer one question on the
+     * device: does the digitizer relabelling that touch needs also swallow the consumer reports the keys send? */
+    unsigned noUsage = 0;
+    if (PE_parse_boot_argn("fuxi-hid-no-usage", &noUsage, sizeof noUsage) && noUsage == 1) return;
+    if (gTouchDevice && device != gTouchDevice) return;
+    if (!gTouchDevice) gTouchDevice = device;   // the first device is the touch one; any later one keeps its own identity
     IORegistryEntry *driver = findEventDriver(device, 4);
     if (!driver) return;
     fuxi_hid_driver = 1;
@@ -117,6 +133,35 @@ static void startThread(void *, wait_result_t) {
         else {device->detach(resource); ok = false;}
     }
     if (!ok) {st[7] = 5; OSSafeReleaseNULL(device);}
+    /* Opt-in: a second, keyboard/consumer-only device for the power and volume keys. The first device has to stay the
+     * digitizer service for touch, and backboardd drops consumer reports from a digitizer service, so the keys need a
+     * service of their own — the reverse of the split, which let DriverKit's AppleUserHIDEventDriver claim the digitizer
+     * and stall the boot waiting for its user server. */
+    unsigned buttonsDevice = 0;
+    if (PE_parse_boot_argn("fuxi-buttons-device", &buttonsDevice, sizeof buttonsDevice) && buttonsDevice == 1) {
+        IOService *keys = native_hid_buttons_allocate();
+        bool keysOk = keys && keys->metaCast("IOHIDDevice") && keys->init();
+        if (keysOk) keysOk = keys->attach(resource);
+        if (keysOk) {
+            if (keys->start(resource)) gButtonsDevice = keys;
+            else {keys->detach(resource); keysOk = false;}
+        }
+        if (!keysOk) OSSafeReleaseNULL(keys);
+    }
+    /* Opt-in split: a separate digitizer service next to the combined keyboard/consumer one. Without it both live on one
+     * service, whose digitizer classification makes backboardd drop the consumer reports. */
+    unsigned split = 0;
+    if (PE_parse_boot_argn("sheng-touch-split", &split, sizeof split) && split == 1) {
+        IOService *touch = native_hid_touch_allocate();
+        bool touchOk = touch && touch->metaCast("IOHIDDevice") && touch->init();
+        if (touchOk) touchOk = touch->attach(resource);
+        if (touchOk) {
+            if (touch->start(resource)) {gTouchDevice = touch; st[8] = 1;}
+            else {touch->detach(resource); touchOk = false;}
+        }
+        if (!touchOk) OSSafeReleaseNULL(touch);
+        if (!gTouchDevice) st[8] = 2;
+    }
     // As on sheng, a started device keeps this reference for the rest of the boot.
     resource->release();
 }
@@ -152,11 +197,20 @@ extern "C" bool fuxi_hid_settled(void) {
 // One report row: step and failed step, the two load results, the IOHIDDevice size, the resource, the metaclass registration,
 // the device's progress, whether an event driver attached, the device's start count, the reports sent with the last result,
 // and whether the edge wrapper was installed on the event driver.
+/* The button half of the device, for the periodic report: how many reports buttonsAction submitted and what the last
+ * one returned. A driver that calls the sink but never reaches submitReport shows up here as 0. */
+extern "C" unsigned fuxi_hid_button_submits(void) {return native_hid_input_events[4];}
+extern "C" unsigned fuxi_hid_button_result(void) {return static_cast<unsigned>(native_hid_input_results[4]);}
+
 extern "C" const char *fuxi_hid_row(char *out, size_t size) {
     const volatile int *st = fuxi_hid_state;
     snprintf(out, size, "\nHID st%d f%d fam%x evd%x sz%d res%d meta%x dev%d drv%u up%u rep%u/%x edge%u",
              st[0], st[7], static_cast<unsigned>(st[1]), static_cast<unsigned>(st[2]), st[3], st[4], static_cast<unsigned>(st[5]),
              st[6], fuxi_hid_driver, native_hid_input_events[2], native_hid_input_events[6],
              static_cast<unsigned>(native_hid_input_results[6]), native_touch_edge_stats[0]);
+    /* The button half: buttonsAction submissions and their result, which is what separates "the driver called the
+     * sink" from "the report left the device". */
+    snprintf(out + strlen(out), size > strlen(out) ? size - strlen(out) : 0, " btn%u/%x",
+             native_hid_input_events[4], static_cast<unsigned>(native_hid_input_results[4]));
     return out;
 }
