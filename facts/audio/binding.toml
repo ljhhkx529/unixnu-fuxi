@@ -97,6 +97,10 @@ interface_word = { value = 0, state = "unverified", evidence = "none" }
 
 # The block the kernel service and the user-space HAL share. Offsets are part of the ABI; the values are board facts.
 # The page the audio service and the CoreAudio plug-in share, in sheng's shape.
+ar_dai_index = { value = 18, state = "unverified", evidence = "linux_port.ar_dai_index" }
+hw_if_index = { value = 1, state = "unverified", evidence = "linux_port.hw_if_index" }
+sd_line_index = { value = 2, state = "unverified", evidence = "linux_port.sd_line_index" }
+logger_device = { value = 16, state = "unverified", evidence = "linux_port.logger_device" }
 [abi]
 rate = { value = 48000, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#abi-rate" }
 out_channels = { value = 2, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#abi-channels" }
@@ -143,11 +147,13 @@ mute_off = { value = 0, state = "chosen", evidence = "design:docs/fuxi-audio-abi
 clock_settle_ms = { value = 10, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#amp-mute-polarity" }
 
 [amp.b]
+channel = { value = 1, state = "unverified", evidence = "linux_port.chan_amp_b" }
 i2c_address = { value = 0x40, state = "unverified", evidence = "amplifier[0].i2c_address" }
 reset_gpio = { value = 183, state = "unverified", evidence = "amplifier[0].reset_gpio" }
 irq_gpio = { value = 99, state = "unverified", evidence = "amplifier[0].irq_gpio" }
 
 [amp.t]
+channel = { value = 0, state = "unverified", evidence = "linux_port.chan_amp_t" }
 i2c_address = { value = 0x42, state = "unverified", evidence = "amplifier[1].i2c_address" }
 reset_gpio = { value = 182, state = "unverified", evidence = "amplifier[1].reset_gpio" }
 irq_gpio = { value = 98, state = "unverified", evidence = "amplifier[1].irq_gpio" }
@@ -171,7 +177,7 @@ release_value = { value = 0, state = "unverified", evidence = "hwlock.release_va
 # device tree has these speakers working, which makes it a better source than inference, and still not a measurement of
 # our own path.
 [interface.mi2s]
-port_id = { value = 0x18, state = "unverified", evidence = "linux_port.mi2s_port_id" }
+port_id = { value = 0x12, state = "unverified", evidence = "linux_port.mi2s_port_id" }
 sck_gpio = { value = 121, state = "unverified", evidence = "linux_port.mi2s_sck_gpio" }
 ws_gpio = { value = 123, state = "unverified", evidence = "linux_port.mi2s_ws_gpio" }
 data_out_gpio = { value = 124, state = "unverified", evidence = "linux_port.mi2s_data_out_gpio" }

@@ -182,7 +182,15 @@ mi2s_sck_gpio = 121
 mi2s_ws_gpio = 123
 mi2s_data_out_gpio = 124
 mi2s_data_in_gpio = 122
-mi2s_port_id = 0x18      # dai@18 { reg = <SECONDARY_MI2S_RX>; }
+mi2s_port_id = 0x12      # SECONDARY_MI2S_RX = 0x12 (18 decimal). The device tree writes the unit address as dai@12, which is hex.
+ar_dai_index = 18        # the topology's AR_TKN_DAI_INDEX token for this DAI, same 18 written in decimal
+hw_if_index = 1          # I2S_INTF_TYPE_SECONDARY, the i2s module's HW_IF_IDX token
+sd_line_index = 2        # SD_LINE_IDX: SD1, which is GPIO124 i2s1_data1
+logger_device = 16       # the topology's device16: logger1 to i2s_rx1 is the playback path that was retargeted
+chan_amp_b = 1   # mono codecs in device tree order: first is left, second is right, and B is second
+chan_amp_t = 0   # T is first in the device tree, so it is the left channel
+codec_channel_order = "mono codecs in device tree order: first left, second right (T is left, B is right)"
+volume_cap_0db = 816     # the machine driver caps both PCM volumes at 0 dB while the protection firmware runs
 amp_gpio2_src_select = 4
 amp_gpio2_output_enable = 1
 i2c_instance = "i2c8 (QUP2 SE0) at 0x00880000, 400 kHz, on GPIO0/GPIO1 (mirb pair)"

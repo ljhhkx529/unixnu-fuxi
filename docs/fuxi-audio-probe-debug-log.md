@@ -417,3 +417,33 @@ next_single_measurement: G1.3 真机（日志在写的同时，控制回复仍�
 
 **没做的事**：没有在真机上跑。G1.3 的验收要求"日志写入期间控制回复不被饿死"，那只能在手机上观察；host 侧能证明的
 是队列语义与计数，不能替代它。
+
+---
+
+## S10 文件审计（第三部分）：拓扑与路由，以及一处我自己的错
+
+来源：`work/patches/audio-bringup-20261029/` 的 `audio-fixes.patch`、`stereo-routing.patch`、
+`fuxi-audio-tplg.sh`（同一仓库 `7f12106`）。
+
+新记录的事实：
+
+```text
+AR DAI 索引   = 18        （拓扑 token1 = AR_TKN_DAI_INDEX，16 PRIMARY → 18 SECONDARY）
+HW_IF_IDX     = 1         （I2S_INTF_TYPE_SECONDARY，i2s 模块 token250）
+SD_LINE_IDX   = 2         （SD1 = GPIO124 i2s1_data1，token256）
+设备号 device16           （logger1 → i2s_rx1 是被改道的播放通路）
+声道顺序      = 设备树里第一个 codec 是左、第二个是右 → **T 左（0）、B 右（1）**
+音量上限      = 816（0 dB），因为保护固件在跑，机器驱动把两路 PCM 音量封在 0 dB
+```
+
+### 我写错的一个数（已纠正）
+
+上一轮我把 `SECONDARY_MI2S_RX` 记成 **0x18**，是从设备树里的节点名 `dai@18` 推的。这次读
+`audio-fixes.patch` 才看清：它把节点名从 `dai@18` 改成 `dai@12`，而 `reg = <SECONDARY_MI2S_RX>` 不变——
+**节点名是十六进制，0x12 = 十进制 18**，与拓扑脚本里那个十进制的 18 完全一致，本来没有矛盾。
+
+正确值是 **0x12**，binding 的 `[interface.mi2s] port_id` 已改成 0x12，manifest 里也写下了这个十六进制/十进制的坑，
+避免下次再读错。
+
+binding 现状：**135 字段 · 0 verified · 17 chosen · 118 unverified**；
+**44 项引用已记录事实（+6）· 8 项 sheng 预测 · 17 项已记录选择 · 66 项无来源**。
