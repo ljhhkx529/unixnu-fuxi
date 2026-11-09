@@ -801,3 +801,48 @@ next_single_measurement: 设备枚举到 fastboot 后执行 S0 第 1/3 次启动
 
 旧的 S0 脚本也已修正：payload 强制带 GPU addon、Metal owner trust 和正确 Data seed，并从 `payload.json` 验证
 kernel hash、addon/trust 非空及 Data UUID；不再读取构建结束后已删除的 staging 文件。
+
+---
+
+## S0 3/3 与 G1.3 真机关闭（2026-11-09）
+
+先以恢复后的 `51ec7d4` 完成三次默认镜像启动，三次 kernel SHA 均为
+`d261f263271f416aecb9e1a77547612dfc76ea1e2bdb0b9a6ddd5c02ff89f0a1`，CDC 均回连且
+`audio_lines=0`。随后在模块分支 `fuxi-g1.3-device` 修正实验阶梯的两个阻塞问题：
+
+1. `DIAGRESET` 原来重置 ladder 游标，使第二步永远不可达；现在成功 step 后保留下一固定 operation，
+   `DIAGCANCEL` 才明确从头开始；
+2. `darwin22/0002-qcom-usb-debug-worker.patch` 增加两行后 hunk 长度未同步，集成门禁以 `corrupt patch`
+   拒绝；修复后补丁状态为 `applied`。
+
+G1.3 只实现前三项：NOOP、线程 NOOP、固定小日志。descriptor、mapping、MMIO、SMEM read/write 继续
+`implemented=0`；默认构建也没有 `SXNU_DIAG_ALLOW_WRITE_STEPS`。
+
+```text
+result: PASS（host/build/device）
+device_commit: 0290188081b7074822337170e65a04745654b947
+cdc_commit: bc321b0ab2d1cb5bc9fedcd152d3de70823e69e9
+host_checks: 35/35 ASan/UBSan + ELF/COFF
+kernel_build: PASS
+kernel_sha256: c04de1edd2a30c2d51e336dcebfef77de2583cd6ad7251c3db3e228e212e47c4
+bootimg_sha256: 14f33af07d4c64d2c0b53c88ac4996a67bdeefb79720bfd9819a9675820a1987
+gpu_addon_sha256: e4b4b7062c03eea7301f9f830ad45d2d5e25c80875dfc3efdd0848c0ec639288
+trust_cache_sha256: 8c2b907f4ef4a813a4092c0b4e724a05d90051772fe13db2082301bd4929d913
+data_uuid: B2A023C5-CC73-45C1-A9E6-26AC8BDD2822
+capture: /tmp/fuxi-usb/run-20261109-122434/xnu-usb.log
+continuation_capture: /tmp/fuxi-usb/run-20261109-122517/xnu-usb.log
+generation/step: 1/1 done, 2/2 done, 3/3 done
+claims/finishes/active/timeouts: 3/3/0/0
+g13_32_lines: 100
+g13_64_lines: 100
+backpressure_before_after: bp 0->0, bo 0->0
+ping_after_log: PASS
+audio_auto_entry: 0
+guard: generation 4 step 4 returned rc=-6 REFUSED; claims/finishes stayed 3/3; cancel returned idle
+gpu_regression: client_calls=984 fence=70/70 gop=22/22 fail=0; no CP/SMMU fault or panic
+classification: G1.3 device PASS；未执行任何 SMEM/MMIO operation
+next_single_measurement: S3/G2.1 descriptor-create -> descriptor-release（先完成 host/XNU 生命周期门禁）
+```
+
+主机 supervisor 在长时间运行后两次出现 Unix control socket `Connection refused`，重启 supervisor 后同一设备
+session、kernel PING 和 CDC 捕获立即恢复；因此归类为 host 代理生命周期问题，不归因于 G1.3 内核步骤。
