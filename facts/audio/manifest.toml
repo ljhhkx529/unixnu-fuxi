@@ -218,3 +218,21 @@ irq1_mask1 = 0x00010110       # CS35L41_IRQ1_MASK1
 block_enables = 0x00002018    # CS35L41_PWR_CTRL2: the register whose bits the driver toggles for boost, the monitors and the main amplifier
 unnamed = "No register with these meanings is named in the header: the block enables are individual bits of PWR_CTRL2/PWR_CTRL3, the ASP enable masks belong to a control register the header does not name that way, the boost capacitor is a coefficient rather than its own register, and the two EINT fields correspond to IRQ1_STATUS1/STATUS2 under a name this project does not use."
 runtime_verified = false
+
+# The AudioReach protocol constants the graph has to address, from the mainline qdsp6 headers rather than from a
+# transcription. The interface type independently confirms the Linux port's topology script, which retargets the playback
+# path by setting HW_IF_IDX to 1 - the same 1 this header calls I2S_INTF_TYPE_SECONDARY.
+[audioreach]
+source = "sound/soc/qcom/qdsp6/audioreach.h @ torvalds/linux 7475ea8b58616b33c04afb976cf0fbaad9dd63fb"
+wr_shared_mem_ep_module = 0x07001000
+rd_shared_mem_ep_module = 0x07001001
+i2s_sink_module = 0x0700100A
+i2s_source_module = 0x0700100B
+gain_module = 0x07001002
+i2s_intf_type_primary = 0
+i2s_intf_type_secondary = 1
+param_id_i2s_intf_cfg = 0x08001019
+module_instance_start = 0x00006000
+container_instance_start = 0x00005000
+subgraph_instance_start = 0x00004000
+runtime_verified = false

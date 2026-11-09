@@ -487,3 +487,50 @@ binding 现状：**135 字段 · 0 verified · 17 chosen · 118 unverified**；
   AudioReach 的头文件才能确立；
 - **3 项运行时值**（`amp.registers.device_id_value`、`revision_value`、`path.buffer_address`）——只能由真机给出；
 - **5 项功放寄存器**（ASP 使能/控制、boost 电容、两个 EINT）——头文件里没有对应名字，等 A3 读芯片或换一种命名方式。
+
+---
+
+## S10 文件审计（第四部分）：AudioReach 常量与"由客户端分配"的编号
+
+来源：主线 `sound/soc/qcom/qdsp6/audioreach.h`（`torvalds/linux@7475ea8`，curl 可取）。
+
+**协议常量（有出处）**：
+
+```text
+MODULE_ID_WR_SHARED_MEM_EP = 0x07001000   播放流端点
+MODULE_ID_RD_SHARED_MEM_EP = 0x07001001   采集流端点
+MODULE_ID_I2S_SINK         = 0x0700100A   MI2S 输出端点
+MODULE_ID_I2S_SOURCE       = 0x0700100B
+MODULE_ID_GAIN             = 0x07001002
+I2S_INTF_TYPE_PRIMARY      = 0        I2S_INTF_TYPE_SECONDARY = 1
+PARAM_ID_I2S_INTF_CFG      = 0x08001019
+AR_SG_INSTANCE_ID_START    = 0x4000   AR_CONT_INSTANCE_ID_START = 0x5000   AR_MODULE_INSTANCE_ID_START = 0x6000
+```
+
+**互相印证**：`I2S_INTF_TYPE_SECONDARY = 1` 正是 Linux 端口拓扑脚本里的 `token250（HW_IF_IDX）0 → 1`——
+两条独立来源对上了，这条通路确实是 Secondary MI2S。
+
+由此 `path.endpoint.module = 0x0700100A`、`path.endpoint.interface_type = 1`、
+`path.topology.endpoint_module = 0x0700100A`、`path.topology.stream_module = 0x07001000` 四项有了出处；
+`path.endpoint.line = 2` 来自拓扑脚本的 `SD_LINE_IDX`。
+
+**12 项"由客户端分配"的编号改标 `chosen`**（新锚点 `ar-ids`）：graph/subgraph/container id、container 位置与域、
+模块数与连接数、三个实例号（0x6001/0x6002/0x6003，落在头文件为模块保留的 0x6000 段内）。理由写在文档里：
+第一条通路只求最短可达（流端点 → 增益 → I2S 汇），**A1 用"图被 DSP 接受并进入 prepared"来验证**，
+被拒就改这里，而不是去猜一个"正确"常量。
+
+结果：
+
+```text
+131 字段 · 0 verified · 51 chosen · 80 unverified
+49 项有已记录事实 · 11 项 sheng 预测 · 51 项已记录选择 · 20 项无来源
+```
+
+**剩下 20 项，每一项都对应一个具体输入**：
+
+| 项 | 数量 | 等什么 |
+| --- | --- | --- |
+| 协议枚举（`graph.direction`、`graph.scenario`、`topology.interface_word`、`slot_mask*`、`slot_count`、`endpoint.secondary/ws_source/interface_index`、`topology.shmem_module`） | 10 | AudioReach 枚举/拓扑反编译 |
+| 运行时值（`device_id_value`、`revision_value`、`buffer_address`） | 3 | 真机 |
+| 功放寄存器（ASP 使能/控制、boost 电容、两个 EINT） | 5 | A3 读芯片 / 换命名 |
+| 待定 | 2 | — |

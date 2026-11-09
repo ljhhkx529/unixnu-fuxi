@@ -84,3 +84,21 @@ binding 里的数值有三种性质，原来只有两种被表达出来（`verif
 **S14 会在保持静音的前提下逐项核对**，所以极性在出声之前就会被验证，而不是靠猜。
 
 （`device_id_value`、`revision_value` 不在此列：那是芯片读回来的值，只能由 A3 的真机读取确立。）
+
+## ar-ids
+
+AudioReach 的图、子图、容器与模块实例编号**由客户端分配**，不是板上常量——主线头文件只规定取值范围
+（`AR_SG_INSTANCE_ID_START = 0x4000`、`AR_CONT_INSTANCE_ID_START = 0x5000`、
+`AR_MODULE_INSTANCE_ID_START = 0x6000`，各占 0x1000）。因此这些数字是我们的选择：
+
+```text
+graph_id = 1 · subgraph_id = 1 · container_id = 1 · container_position = 0 · container_domain = 0（ADSP）
+module_count = 3 · link_count = 2     （写共享内存端点 → 增益 → I2S 汇）
+stream_instance = 0x6001 · endpoint_instance = 0x6002 · shmem_instance = 0x6003
+```
+
+理由：第一条通路只求最短可达——一个流端点、一个增益、一个 I2S 输出，两个连接；实例号落在头文件给模块保留的
+`0x6000` 段内且互不重复。**A1 会用"图被 DSP 接受并进入 prepared 状态"来验证这些编号可行**；
+若 DSP 拒绝，改的是这里，而不是去猜一个"正确"的常量。
+
+（`graph.direction`、`graph.scenario` 不在此列：它们是协议枚举，需要头文件里的定义，不是可自由分配的数字。）

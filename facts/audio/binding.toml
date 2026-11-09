@@ -32,7 +32,7 @@ link_timeout = { value = 5000, state = "chosen", evidence = "design:docs/fuxi-au
 gpr_port = { value = 0x2001, state = "unverified", evidence = "sheng.sm8550" }
 token_seed = { value = 1, state = "unverified", evidence = "sheng.sm8550" }
 timeout_steps = { value = 100, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#timeouts" }
-stream_instance = { value = 0, state = "unverified", evidence = "none" }
+stream_instance = { value = 0x6001, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#ar-ids" }
 buffer_address = { value = 0, state = "unverified", evidence = "none" }
 buffer_bytes = { value = 0x10000, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#path-buffer" }
 periods_in_flight = { value = 2, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#path-periods-in-flight" }
@@ -40,26 +40,26 @@ periods_in_flight = { value = 2, state = "chosen", evidence = "design:docs/fuxi-
 [path.references]
 
 [path.graph]
-graph_id = { value = 0, state = "unverified", evidence = "none" }
+graph_id = { value = 1, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#ar-ids" }
 apm_iid = { value = 1, state = "unverified", evidence = "sheng.sm8550" }
-subgraph_id = { value = 0, state = "unverified", evidence = "none" }
+subgraph_id = { value = 1, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#ar-ids" }
 performance = { value = 0, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#graph-performance" }
 direction = { value = 0, state = "unverified", evidence = "none" }
 scenario = { value = 0, state = "unverified", evidence = "none" }
-container_id = { value = 0, state = "unverified", evidence = "none" }
-container_position = { value = 0, state = "unverified", evidence = "none" }
+container_id = { value = 1, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#ar-ids" }
+container_position = { value = 0, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#ar-ids" }
 container_stack_bytes = { value = 0x4000, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#graph-performance" }
-container_domain = { value = 0, state = "unverified", evidence = "none" }
-module_count = { value = 0, state = "unverified", evidence = "none" }
-link_count = { value = 0, state = "unverified", evidence = "none" }
+container_domain = { value = 0, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#ar-ids" }
+module_count = { value = 3, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#ar-ids" }
+link_count = { value = 2, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#ar-ids" }
 
 [path.endpoint]
-module = { value = 0, state = "unverified", evidence = "none" }
-instance = { value = 0, state = "unverified", evidence = "none" }
-interface_type = { value = 0, state = "unverified", evidence = "none" }
+module = { value = 0x0700100A, state = "unverified", evidence = "audioreach.i2s_sink_module" }
+instance = { value = 0x6002, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#ar-ids" }
+interface_type = { value = 1, state = "unverified", evidence = "audioreach.i2s_intf_type_secondary" }
 interface_index = { value = 0, state = "unverified", evidence = "none" }
 secondary = { value = 0, state = "unverified", evidence = "none" }
-line = { value = 0, state = "unverified", evidence = "none" }
+line = { value = 2, state = "unverified", evidence = "linux_port.sd_line_index" }
 ws_source = { value = 0, state = "unverified", evidence = "none" }
 slot_mask = { value = 0, state = "unverified", evidence = "none" }
 
@@ -79,11 +79,11 @@ sample_rate = { value = 48000, state = "chosen", evidence = "design:docs/fuxi-au
 host_clock_hz = { value = 24000000, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#path-ring" }
 
 [path.topology]
-stream_instance = { value = 0, state = "unverified", evidence = "none" }
-stream_module = { value = 0, state = "unverified", evidence = "none" }
-endpoint_instance = { value = 0, state = "unverified", evidence = "none" }
-shmem_instance = { value = 0, state = "unverified", evidence = "none" }
-endpoint_module = { value = 0, state = "unverified", evidence = "none" }
+stream_instance = { value = 0x6001, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#ar-ids" }
+stream_module = { value = 0x07001000, state = "unverified", evidence = "audioreach.wr_shared_mem_ep_module" }
+endpoint_instance = { value = 0x6002, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#ar-ids" }
+shmem_instance = { value = 0x6003, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#ar-ids" }
+endpoint_module = { value = 0x0700100A, state = "unverified", evidence = "audioreach.i2s_sink_module" }
 sample_rate = { value = 0, state = "unverified", evidence = "none" }
 slot_mask_a = { value = 0, state = "unverified", evidence = "none" }
 slot_mask_b = { value = 0, state = "unverified", evidence = "none" }
