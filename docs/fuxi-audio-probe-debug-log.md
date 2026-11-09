@@ -609,3 +609,27 @@ next_single_measurement: 把阶梯接进传输层（需要设备确认第 2 步�
 手机上会发生的事。文档（`drivers/QcomXnuUsbDebug/docs/control-and-screenshot.md`）已写明这条理由。
 
 子仓库门禁：**35 项全部通过**。
+
+---
+
+## 阶梯接进传输层，并用真实内核构建验证
+
+`DIAGNEXT` 现在驱动阶梯：每次请求入队**当前**这一步；**完成**才推进游标；**失败或超时**不推进（下次仍请求同一步，
+不会悄悄跳过失败）；`DIAGCANCEL` 与 `DIAGRESET` 把游标退回第一步（重置是重新开始，不是继续）。
+
+阶梯逻辑收进两个小助手（`diag_queue_next` / `diag_ladder_restart`），因为 host 侧单独编译控制处理器时，
+只需替这两个符号，而不是同时替目录、状态机与游标。
+
+```text
+test_id: G2-ladder-wired
+result: PASS
+device_commit: 4697b05（CDC 子仓库）
+kernel_commit: 5347093661305e1c053ca06970034cac215a1da9301915576f0643123cb87c45
+classification: 子仓库 35 项主机检查通过；内核完整构建通过（说明改动在真实 XNU 环境里成立，
+              且模块适配器对钉住 revision 的适配锚点仍然匹配）
+next_single_measurement: G2.1 真机（第一次 DIAGNEXT 走 NOOP，第二次应收到 REFUSED，因为 noop-thread 尚未实现）
+```
+
+**构建期间发现的一件事**：`scripts/prepare-fuxi-usb-debug.py` 把子仓库钉在**确切 revision**（`QUD_REVISION`），
+所以任何子仓库提交都需要同步这个钉子。这次已更新为 `b20537b`。这个钉子是好设计：适配器只对已知源码生效，
+换源码而不改钉子会被直接拒绝（`unexpected module/XNU source revision`），比默默打补丁安全。
