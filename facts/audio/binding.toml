@@ -60,7 +60,7 @@ interface_type = { value = 1, state = "unverified", evidence = "audioreach.i2s_i
 interface_index = { value = 0, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#endpoint-slot-and-index" }
 secondary = { value = 1, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#slot-and-rate" }
 line = { value = 2, state = "unverified", evidence = "linux_port.sd_line_index" }
-ws_source = { value = 0, state = "unverified", evidence = "none" }
+ws_source = { value = 1, state = "unverified", evidence = "audioreach.i2s_ws_src_internal" }
 slot_mask = { value = 0x3, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#endpoint-slot-and-index" }
 
 [path.format]

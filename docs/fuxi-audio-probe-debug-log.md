@@ -698,3 +698,24 @@ slot_mask/interface_index`、`topology.shmem_module`（协议枚举与拓扑细�
 
 本机没有 `alsatplg`，所以拓扑反编译这条暂时走不通——这也意味着那 7 个协议枚举里剩下的 2 个编码，
 短期内只能靠 AudioReach 的其它头文件，而不是靠反编译产物。
+
+
+### 追加：`ws_source` 的来源，以及一次独立印证
+
+`audioreach.h` 里就有 I2S 接口配置的完整定义：
+
+```c
+struct param_id_i2s_intf_cfg { uint32_t lpaif_type; uint32_t intf_idx; uint16_t sd_line_idx; uint16_t ws_src; };
+#define CONFIG_I2S_WS_SRC_EXTERNAL 0x0
+#define CONFIG_I2S_WS_SRC_INTERNAL 0x1
+#define I2S_SD0 1     #define I2S_SD1 2
+```
+
+- `ws_source = 1`（INTERNAL）：Linux 端口的注释写明"LPASS 做主，BCLK/WS 输出"，功放跟随 BCLK，所以字选择由接口自己产生；
+- **`I2S_SD1 = 2` 与拓扑脚本的 `SD_LINE_IDX = 2` 完全一致**——这是本轮第二次"两个独立来源对上"（上一次是
+  `I2S_INTF_TYPE_SECONDARY = 1` 与 `HW_IF_IDX 0 → 1`）。同一个数字被两个不同来源确认，比任一单独来源可信。
+
+`endpoint.interface_type/index/line/ws_source` 四项正好对应这个结构的 `lpaif_type/intf_idx/sd_line_idx/ws_src`——
+我们的绑定结构与协议结构是一一对应的，这一点以前只是"看起来像"，现在有定义了。
+
+无来源：**5 项**（`interface_word`、`reg_asp_enables`、`device_id_value`、`revision_value`、`buffer_address`）。
