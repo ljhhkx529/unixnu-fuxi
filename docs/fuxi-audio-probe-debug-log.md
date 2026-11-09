@@ -534,3 +534,28 @@ AR_SG_INSTANCE_ID_START    = 0x4000   AR_CONT_INSTANCE_ID_START = 0x5000   AR_MO
 | 运行时值（`device_id_value`、`revision_value`、`buffer_address`） | 3 | 真机 |
 | 功放寄存器（ASP 使能/控制、boost 电容、两个 EINT） | 5 | A3 读芯片 / 换命名 |
 | 待定 | 2 | — |
+
+---
+
+## H6 — 一次分配允许改动的字节
+
+```text
+test_id: H6
+result: PASS
+device_commit: 1dd259d（设备仓库 V2）
+kernel_commit: 未参与（host 测试）
+smem_before_checksum: 每个用例前逐字节快照
+smem_after_checksum: 分配后逐字节比较，记录改动偏移的集合
+unexpected_diff: 无（改动集合 = 条目头 16 字节 + 已发布 free 指针的 1 个非零字节）
+classification: 22 项断言。分配一个 32 字节条目：只有条目头四个字与 free 指针变化，
+               **载荷 32 字节原样（0x5a 未被清零）**；解析器立刻能找到它且 size 正确；
+               5 字节的非对齐请求按 8 对齐、find 仍返回 5，且下一个条目落在补齐之后；
+               exists / 零长度 / 超长三种拒绝之后**镜像逐字节不变**
+next_single_measurement: G4（同一套断言，跑在从真机读回来的真实 snapshot 上）
+```
+
+门禁：`python3 scripts/check-qcom-smem-alloc-host.py`（ASan/UBSan）。
+
+**顺带确认**：runbook §3.3 提到"当前 `qcom_smem_alloc()` 还会清零整个 payload"——读代码后确认**这一点已经不成立**：
+分配器只写条目元数据，注释也写明"The allocator owns the entry metadata, not the payload"。这次用字节差异把它钉住，
+而不是只在注释里声明。**发布顺序**（先写条目头、再发布 free 指针）由"拒绝时指针不动"与"分配后指针等于条目末尾"两条间接证明。

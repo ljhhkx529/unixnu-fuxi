@@ -59,6 +59,7 @@ def main() -> int:
                           ("探针 H7", "scripts/check-qcom-hwspinlock-host.py"),
                           ("binding 自检", "scripts/check-fuxi-audio-binding-selftest.py"),
                           ("探针 H8", "scripts/check-qcom-mapping-host.py"),
+                          ("H6 分配差异", "scripts/check-qcom-smem-alloc-host.py"),
                           ("TCSR 编码", "scripts/check-qcom-tcsr-hwlock-host.py"),
                           ("探针 H6", "scripts/check-fuxi-audio-probe-h6.py"),
                           ("sheng 参考", "scripts/check-fuxi-audio-sheng-refs.py")):
