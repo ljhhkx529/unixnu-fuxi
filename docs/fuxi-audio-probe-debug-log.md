@@ -294,3 +294,42 @@ binding：118 字段，0 verified，**19 项引用已记录事实**（本轮 +6�
 - `research/01-mainline-drivers.md`——主线驱动调研。
 
 下一轮起用它给 `facts/audio` 补来源（尤其是当前 91 项无来源字段里的板级接线与命令面）。
+
+---
+
+## S10 文件审计（第一部分）：独立 fuxi Linux 端口的板级事实
+
+来源：`https://github.com/ilovecnxx/xiaomi13-fuxi-linux-ubuntu26.10-kernel7.3` @ `7f12106`，文件
+`work/patches/audio-bringup-20261029/audio.dtsi.before` 与 `audio-fixes.patch`。
+
+这个端口**在这块板上真的把扬声器跑起来了**，所以它比推断强，但仍然不是对我们自己路径的测量。
+
+新记录的事实（manifest `[linux_port]`）：
+
+```text
+I2C:   i2c8 = QUP2 SE0 @ 0x00880000, 400 kHz, GPIO0/GPIO1（mirb 组，不是默认的 56/57）
+I2S:   TLMM I2S1 —— SCK GPIO121, WS GPIO123, DATA1(出) GPIO124, DATA0(入) GPIO122；LPASS 为 BCLK/WS 主
+DAI:   dai@18 { reg = <SECONDARY_MI2S_RX>; } → 端口号 0x18
+时钟:  LPASS_CLK_ID_SEC_MI2S_IBIT + COUPLE_NO
+声卡:  xiaomi,fuxi-sndcard / model "Xiaomi-13" / 拓扑 qcom/sm8550/Xiaomi-13-tplg.bin
+功放:  2× CS35L41，@40="B"（右声道，兼下扬）、@42="T"（左声道，兼听筒）；复位 183/182、IRQ 99/98 低电平
+功放参数: boost 4000 mA / ind 1000 nH / cap 15 µF / asp-sdout-hiz 3 / gpio2-src-select 4 / gpio2-output-enable
+固件:  cirrus/cs35l41-dsp1-spk-prot-xiaomi-fuxi-B.{wmfw,bin}（T 同理）
+听筒:  GPIO68（simple-audio-mux，Speaker/Earpiece）
+```
+
+与已有记录的关系：**功放地址、复位、IRQ、boost 参数与厂商 DTS 完全一致**（互相印证）；新增的是 DAI 端口号、IBIT 时钟、
+I2C 频率与 GPIO、GPIO2 配置、固件名与听筒 mux。
+
+写入 binding 的新段（全部 `unverified`，因为还没有我们自己的设备测量）：
+
+```text
+[interface.mi2s]  port_id 0x18, sck 121, ws 123, data_out 124, data_in 122
+[interface.i2c8]  mmio_base 0x00880000, frequency_hz 400000, sda 0, scl 1
+[amp.gpio2]       src_select 4, output_enable 1
+```
+
+binding 现状：**129 字段，0 verified，30 项引用已记录事实**（本轮 +11），8 项 sheng 预测，91 项仍无来源。
+
+91 项里最大的一块是 `[amp.registers]` 的 28 个 `reg_*`（CS35L41 寄存器地址）。下一轮用同样的办法从主线
+`sound/soc/codecs/cs35l41.h` 取名字与地址——那是 A3/S14 的真实依据，不是猜。

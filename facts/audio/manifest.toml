@@ -163,3 +163,33 @@ smem_lock_register = 0x1f43000
 acquire_value = 1
 release_value = 0
 acquire_reads_back = true
+
+# An independent fuxi Linux port that has the speakers working on this board. Its device tree is a second, agreeing source
+# for the wiring the vendor tree already gave us, and the only source so far for the DAI the APM graph has to address and
+# for the amplifier bus settings the vendor tree leaves implicit.
+[linux_port]
+repository = "https://github.com/ilovecnxx/xiaomi13-fuxi-linux-ubuntu26.10-kernel7.3"
+revision = "7f12106b4ce4ae1db7eeb4df509a4818879e9276"
+kind = "independent-fuxi-port"
+files = "work/patches/audio-bringup-20261029/audio.dtsi.before; work/patches/audio-bringup-20261029/audio-fixes.patch; kernel/patches/0004-audio.patch"
+limits = "Establishes fuxi's audio wiring and the Linux DAI/card names. It says nothing about our XNU path, about APM command ids, or about runtime state."
+# Each number is its own key so the binding gate can compare a value with a value instead of reading prose.
+i2c8_mmio_base = 0x00880000
+i2c8_frequency_hz = 400000
+i2c8_sda_gpio = 0
+i2c8_scl_gpio = 1
+mi2s_sck_gpio = 121
+mi2s_ws_gpio = 123
+mi2s_data_out_gpio = 124
+mi2s_data_in_gpio = 122
+mi2s_port_id = 0x18      # dai@18 { reg = <SECONDARY_MI2S_RX>; }
+amp_gpio2_src_select = 4
+amp_gpio2_output_enable = 1
+i2c_instance = "i2c8 (QUP2 SE0) at 0x00880000, 400 kHz, on GPIO0/GPIO1 (mirb pair)"
+i2s_instance = "TLMM I2S1, SCK GPIO121, WS GPIO123, DATA1 GPIO124 out, DATA0 GPIO122 in, LPASS is BCLK/WS master"
+mi2s_port_name = "SECONDARY_MI2S_RX"
+bclk_clock = "LPASS_CLK_ID_SEC_MI2S_IBIT, LPASS_CLK_ATTRIBUTE_COUPLE_NO"
+card = "xiaomi,fuxi-sndcard model Xiaomi-13, topology qcom/sm8550/Xiaomi-13-tplg.bin"
+amp_dsp_firmware = "cirrus/cs35l41-dsp1-spk-prot-xiaomi-fuxi-B.{wmfw,bin} and the T counterpart"
+earpiece_mux_gpio = 68
+runtime_verified = false

@@ -166,3 +166,23 @@ lock_stride = { value = 0x1000, state = "unverified", evidence = "hwlock.lock_st
 smem_lock_register = { value = 0x1f43000, state = "unverified", evidence = "hwlock.smem_lock_register" }
 acquire_value = { value = 1, state = "unverified", evidence = "hwlock.acquire_value" }
 release_value = { value = 0, state = "unverified", evidence = "hwlock.release_value" }
+
+# The interface the APM graph addresses and the bus the amplifiers sit on, both from the independent fuxi Linux port. Its
+# device tree has these speakers working, which makes it a better source than inference, and still not a measurement of
+# our own path.
+[interface.mi2s]
+port_id = { value = 0x18, state = "unverified", evidence = "linux_port.mi2s_port_id" }
+sck_gpio = { value = 121, state = "unverified", evidence = "linux_port.mi2s_sck_gpio" }
+ws_gpio = { value = 123, state = "unverified", evidence = "linux_port.mi2s_ws_gpio" }
+data_out_gpio = { value = 124, state = "unverified", evidence = "linux_port.mi2s_data_out_gpio" }
+data_in_gpio = { value = 122, state = "unverified", evidence = "linux_port.mi2s_data_in_gpio" }
+
+[interface.i2c8]
+mmio_base = { value = 0x00880000, state = "unverified", evidence = "linux_port.i2c8_mmio_base" }
+frequency_hz = { value = 400000, state = "unverified", evidence = "linux_port.i2c8_frequency_hz" }
+sda_gpio = { value = 0, state = "unverified", evidence = "linux_port.i2c8_sda_gpio" }
+scl_gpio = { value = 1, state = "unverified", evidence = "linux_port.i2c8_scl_gpio" }
+
+[amp.gpio2]
+src_select = { value = 4, state = "unverified", evidence = "linux_port.amp_gpio2_src_select" }
+output_enable = { value = 1, state = "unverified", evidence = "linux_port.amp_gpio2_output_enable" }
