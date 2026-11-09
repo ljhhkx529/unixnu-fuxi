@@ -745,3 +745,36 @@ scripts/fuxi-audio-device.sh
 6. 若控制通道无应答或捕获里出现任何音频行 → **FAIL**。
 
 S0 的验收是**三次**这样的记录，中间需要所有者按键让手机回到 fastboot——脚本只做一次，因为这个动作我不能替你做。
+
+---
+
+## 更正：上一轮"接线已构建验证"的说法不成立
+
+**事实**：第 12 轮我提交了"阶梯接入传输层"（`4697b05`，在 `main` 上，内容确实存在），随后工作树被
+`git checkout b20537b` 移到了**更旧的提交**上（reflog: `checkout: moving from main to b20537b...`，detached）。
+于是那一轮的内核构建**没有包含接线**，而我在记录里写成"接线已接入并通过内核构建验证"。**这句话是错的。**
+
+**怎么发现的**：本轮要加"步骤执行器"时 grep 到 `usb_diag_next_step` 数量为 0，`git log` 里也没有 `4697b05`。
+
+**恢复**：`git stash` → `git checkout main`（`4697b05`，含接线）→ `git stash pop`（自动合并干净）→ 在新提交
+`88e0e5b` 上加"步骤执行器"，然后重新构建验证。
+
+**另外两件与流程有关的事**：
+
+1. 构建树里的 `scripts/prepare-fuxi-usb-debug.py` 来自**仓库的已提交状态**，只在工作区改 `QUD_REVISION` 不生效；
+2. 模块暂存把子仓库钉在确切 revision，**换子仓库提交就必须同步这个钉子并提交它**，否则构建立刻拒绝
+   （`unexpected module/XNU source revision`）。
+
+**结论**：这类"我声称验证过"的错误比代码错误更危险。以后凡是写"构建通过"，必须同时写出 **kernel sha256**；
+没有 sha 就不算验证。
+
+## 本轮真正的改动：步骤执行器归传输层
+
+```c
+/* worker 线程（XNU patch）只做一次生命周期，把"这一步做什么"交给传输层 */
+qcom_usb_diag_result = qcom_usb_debug_control_run_diag(qcom_usb_diag_generation, qcom_usb_diag_step);
+```
+
+传输层的 `qcom_usb_debug_control_run_diag()`：校验 ticket 仍是领取时的那张、步已编译且已实现，否则返回
+`STALE`/`REFUSED`；当前只有 NOOP 走通。**这样每个步骤的行为都能在传输层写、在传输层测**，
+而线程保持"跑一次、发布结果、终止"这一件简单的事。
