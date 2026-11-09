@@ -584,3 +584,28 @@ next_single_measurement: G2.1（真机，descriptor-create → descriptor-releas
 
 写门闸的形式：`#if !defined(SXNU_DIAG_ALLOW_WRITE_STEPS) → 写入步骤一律 SXNU_DIAG_REFUSED`。
 默认镜像里 `hwlock-cycle` 与 `smem-allocate` **永远拿不到**，不是靠 host 自觉。
+
+---
+
+## 目录的诚实规则：未实现的步骤不能"假成功"
+
+上一轮目录列出了 13 个步骤，而 worker 只实现 NOOP。两者之间有一条会说谎的路径：**阶梯推进到未实现的步骤时，
+worker 仍跑 NOOP 并回报成功**——host 于是会记录一次从未发生的 descriptor 创建。
+
+修法：每个步骤增加 `implemented` 标志（当前只有 NOOP 为真），`sxnu_diag_next_id()` 对未实现的步骤返回
+`SXNU_DIAG_REFUSED`——**与写门闸无关，开了写门闸也照样拒绝**。
+
+```text
+test_id: G2-ladder-honesty
+result: PASS
+device_commit: 77d8d3a / bec8d12（CDC 子仓库）
+classification: 恰好 1 个步骤 implemented、恰好 2 个步骤 writes；未实现的只读步骤被拒（且状态留在 ARMED）；
+               开了 SXNU_DIAG_ALLOW_WRITE_STEPS 之后，hwlock-cycle 依旧因未实现被拒；
+               阶梯函数从起点走遍全部编译步骤各一次并在末尾停住、不回绕（999 → NONE）
+next_single_measurement: 把阶梯接进传输层（需要设备确认第 2 步的行为）
+```
+
+**阶梯尚未接入传输层**，这是刻意的：接入后第一个会被拒绝的是第 2 步，在没有设备确认的情况下接入，等于凭空改变
+手机上会发生的事。文档（`drivers/QcomXnuUsbDebug/docs/control-and-screenshot.md`）已写明这条理由。
+
+子仓库门禁：**35 项全部通过**。
