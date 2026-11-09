@@ -152,3 +152,11 @@ i2c_address = { value = 0x42, state = "unverified", evidence = "amplifier[1].i2c
 reset_gpio = { value = 182, state = "unverified", evidence = "amplifier[1].reset_gpio" }
 irq_gpio = { value = 98, state = "unverified", evidence = "amplifier[1].irq_gpio" }
 
+# The lock SMEM uses, from the board's device tree. Wiring only: the register encoding the driver needs is not in the
+# device tree, and nothing here has been exercised on the phone, so every field stays unverified.
+[hwlock]
+tcsr_base = { value = 0x1f40000, state = "unverified", evidence = "hwlock.tcsr_base" }
+tcsr_size = { value = 0x20000, state = "unverified", evidence = "hwlock.tcsr_size" }
+syscon_offset = { value = 0x0, state = "unverified", evidence = "hwlock.syscon_offset" }
+syscon_size = { value = 0x1000, state = "unverified", evidence = "hwlock.syscon_size" }
+smem_lock_id = { value = 3, state = "unverified", evidence = "hwlock.smem_lock_id" }

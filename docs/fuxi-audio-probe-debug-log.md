@@ -174,3 +174,51 @@ sha256 `5917b722da70c9cef75c127387afa4d1f9ec7dd6be17f2718443093bf1aa4065`。
 重建已验收镜像的做法：用上表三个提交，`CONFIG_XNU_OWNER_DATA_MOUNT=y`、Data seed 用
 `out/fuxi/build/owner-data-fixture/owner-data-16g.dbr`（UUID `B2A023C5-CC73-45C1-A9E6-26AC8BDD2822`），
 且 `board.toml` 不含 `fuxi-audio-step`。
+
+---
+
+## H7 — 有界硬件自旋锁的策略层
+
+```text
+test_id: H7
+result: PASS
+device_commit: 503866a（设备仓库 V2）
+kernel_commit: 未参与（host 测试）
+hwlock_acquire_rc: 覆盖 Ok / Busy / Recursive / NotHeld / NoDevice / DeviceError
+hwlock_release_seen: 成功路径恰好一次；超时路径零次；双重释放被拒且不下发
+deadline_ms: 5 / 10（tick）
+panic_or_reset_evidence: 无
+unexpected_diff: 无
+classification: 32 项断言。free 路径一次获取一次释放；忙后放行在 deadline 内成功且尝试次数精确；
+               永不释放 → 到期 Busy、无释放、轮询有界；budget=0 只尝试一次；无 device 时零动作；
+               递归获取被拒且不下发；板级硬错误 → DeviceError 且不持有；释放失败仍保持状态可审计；
+               两个调用方竞争只有持有者成功、释放后另一方才获取；deadline 跨 UINT32 回绕仍以 Busy 结束；
+               budget 无时钟被拒而不是变成自旋
+next_single_measurement: H8（mapping helper 合约）；G3 需先有可引用的寄存器编码
+```
+
+门禁：`python3 scripts/check-qcom-hwspinlock-host.py`（ASan/UBSan）。
+
+**分工说明**：`package/QcomHwspinlock.c` 只拥有 runbook 要求的**策略**——带 deadline 的获取、忙则返回、递归即拒、
+错误路径不泄漏、不持锁输出。**寄存器编码属于 SoC**，通过 `struct QcomHwlockDevice` 由板级注入，host 测试用脚本化
+设备代替它。这样"策略可证、编码不臆造"。
+
+## H7 的板级事实（来自 fuxi 自己的 DTB）
+
+反编译 `uefi-fuxi/Platforms/Xiaomi/fuxiPkg/FdtBlob/sm8550-xiaomi-fuxi.dtb`：
+
+```text
+tcsr_mutex_block: syscon@1f40000   reg = <0x1f40000 0x20000>
+tcsr_mutex:       hwlock          compatible = "qcom,tcsr-mutex", syscon = <&tcsr_mutex_block 0x0 0x1000>
+smem:             qcom,smem       hwlocks = <&tcsr_mutex 3>
+```
+
+已写入 `facts/audio/manifest.toml` 的 `[hwlock]`（`runtime_verified = false`——设备树说明接线，不说明运行时状态）
+与 `facts/audio/binding.toml` 的 `[hwlock]`（5 个字段全部 `unverified`）。
+
+**G3 仍然不能开始**：锁寄存器的具体编码（哪一位获取、哪一位释放、owner 字段位置）必须由主线
+`drivers/hwspinlock/qcom_hwspinlock.c` 一类可引用来源确定。本轮尝试取原文失败——
+`git.kernel.org` 与 `raw.githubusercontent.com` 被 DNS 策略拒绝，`web_search` 鉴权失败（HTTP 401）——
+因此**不写入任何编码**，G3 挂起等待来源。
+
+binding 现状：112 字段，0 verified，**13 项现在引用已记录事实**（本轮新增 5 项 DTB 事实）。
