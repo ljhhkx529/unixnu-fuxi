@@ -216,7 +216,11 @@ pll_ctrl = 0x00002C04         # CS35L41_PLL_CLK_CTRL
 mute = 0x00002024             # CS35L41_AMP_OUT_MUTE
 irq1_mask1 = 0x00010110       # CS35L41_IRQ1_MASK1
 block_enables = 0x00002018    # CS35L41_PWR_CTRL2: the register whose bits the driver toggles for boost, the monitors and the main amplifier
-unnamed = "No register with these meanings is named in the header: the block enables are individual bits of PWR_CTRL2/PWR_CTRL3, the ASP enable masks belong to a control register the header does not name that way, the boost capacitor is a coefficient rather than its own register, and the two EINT fields correspond to IRQ1_STATUS1/STATUS2 under a name this project does not use."
+asp_ctrl = 0x00004854         # CS35L41_ASP_CONTROL4, the only ASP control register the header names
+boost_cap = 0x00003810        # CS35L41_BSTCVRT_COEFF: the capacitor is configured through the boost converter's coefficients
+irq1_status1 = 0x00010010     # CS35L41_IRQ1_STATUS1: polled for pump-up and written to clear
+irq1_status2 = 0x00010014     # CS35L41_IRQ1_STATUS2: the second status word the driver reads
+unnamed = "One field remains without a register of its own: the ASP enable masks this project expected as a separate register are bits inside ASP_CONTROL4, so reg_asp_enables names something the part does not have separately. The field is kept until the code that uses it decides whether to drop it. The two EINT fields are the driver's IRQ1_STATUS1/STATUS2 under this project's older naming, and the boost capacitor is configured through BSTCVRT_COEFF rather than a register of its own."
 runtime_verified = false
 
 # The AudioReach protocol constants the graph has to address, from the mainline qdsp6 headers rather than from a

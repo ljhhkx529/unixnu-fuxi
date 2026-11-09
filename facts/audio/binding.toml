@@ -58,7 +58,7 @@ module = { value = 0x0700100A, state = "unverified", evidence = "audioreach.i2s_
 instance = { value = 0x6002, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#ar-ids" }
 interface_type = { value = 1, state = "unverified", evidence = "audioreach.i2s_intf_type_secondary" }
 interface_index = { value = 0, state = "unverified", evidence = "none" }
-secondary = { value = 0, state = "unverified", evidence = "none" }
+secondary = { value = 1, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#slot-and-rate" }
 line = { value = 2, state = "unverified", evidence = "linux_port.sd_line_index" }
 ws_source = { value = 0, state = "unverified", evidence = "none" }
 slot_mask = { value = 0, state = "unverified", evidence = "none" }
@@ -84,10 +84,10 @@ stream_module = { value = 0x07001000, state = "unverified", evidence = "audiorea
 endpoint_instance = { value = 0x6002, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#ar-ids" }
 shmem_instance = { value = 0x6003, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#ar-ids" }
 endpoint_module = { value = 0x0700100A, state = "unverified", evidence = "audioreach.i2s_sink_module" }
-sample_rate = { value = 0, state = "unverified", evidence = "none" }
-slot_mask_a = { value = 0, state = "unverified", evidence = "none" }
-slot_mask_b = { value = 0, state = "unverified", evidence = "none" }
-slot_count = { value = 0, state = "unverified", evidence = "none" }
+sample_rate = { value = 48000, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#slot-and-rate" }
+slot_mask_a = { value = 0x1, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#slot-and-rate" }
+slot_mask_b = { value = 0x2, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#slot-and-rate" }
+slot_count = { value = 2, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#slot-and-rate" }
 shmem_module = { value = 0, state = "unverified", evidence = "none" }
 interface_word = { value = 0, state = "unverified", evidence = "none" }
 
@@ -122,13 +122,13 @@ reg_revision = { value = 0x00000004, state = "unverified", evidence = "linux_cs3
 reg_global_enables = { value = 0x00002014, state = "unverified", evidence = "linux_cs35l41.global_enables" }
 reg_block_enables = { value = 0x00002018, state = "unverified", evidence = "linux_cs35l41.block_enables" }
 reg_asp_enables = { value = 0, state = "unverified", evidence = "none" }
-reg_asp_ctrl = { value = 0, state = "unverified", evidence = "none" }
+reg_asp_ctrl = { value = 0x00004854, state = "unverified", evidence = "linux_cs35l41.asp_ctrl" }
 reg_boost_peak = { value = 0x00003808, state = "unverified", evidence = "linux_cs35l41.boost_peak" }
-reg_boost_cap = { value = 0, state = "unverified", evidence = "none" }
+reg_boost_cap = { value = 0x00003810, state = "unverified", evidence = "linux_cs35l41.boost_cap" }
 reg_pll_ctrl = { value = 0x00002C04, state = "unverified", evidence = "linux_cs35l41.pll_ctrl" }
 reg_mute = { value = 0x00002024, state = "unverified", evidence = "linux_cs35l41.mute" }
-reg_irq1_eint1 = { value = 0, state = "unverified", evidence = "none" }
-reg_irq1_eint2 = { value = 0, state = "unverified", evidence = "none" }
+reg_irq1_eint1 = { value = 0x00010010, state = "unverified", evidence = "linux_cs35l41.irq1_status1" }
+reg_irq1_eint2 = { value = 0x00010014, state = "unverified", evidence = "linux_cs35l41.irq1_status2" }
 reg_irq1_mask1 = { value = 0x00010110, state = "unverified", evidence = "linux_cs35l41.irq1_mask1" }
 device_id_value = { value = 0, state = "unverified", evidence = "none" }
 revision_value = { value = 0, state = "unverified", evidence = "none" }

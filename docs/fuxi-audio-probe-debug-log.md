@@ -633,3 +633,34 @@ next_single_measurement: G2.1 真机（第一次 DIAGNEXT 走 NOOP，第二次�
 **构建期间发现的一件事**：`scripts/prepare-fuxi-usb-debug.py` 把子仓库钉在**确切 revision**（`QUD_REVISION`），
 所以任何子仓库提交都需要同步这个钉子。这次已更新为 `b20537b`。这个钉子是好设计：适配器只对已知源码生效，
 换源码而不改钉子会被直接拒绝（`unexpected module/XNU source revision`），比默默打补丁安全。
+
+---
+
+## S10 收尾：无来源从 66 降到 11
+
+**4 个功放寄存器找到出处**（主线 `cs35l41.h` / `cs35l41-lib.c`）：
+
+| 字段 | 主线寄存器 | 地址 | 说明 |
+| --- | --- | --- | --- |
+| `reg_asp_ctrl` | `CS35L41_ASP_CONTROL4` | 0x00004854 | 头文件里唯一的 ASP 控制寄存器 |
+| `reg_boost_cap` | `CS35L41_BSTCVRT_COEFF` | 0x00003810 | **boost 电容是通过变换器系数配置的**，没有独立寄存器（驱动默认 0x00002424） |
+| `reg_irq1_eint1` | `CS35L41_IRQ1_STATUS1` | 0x00010010 | 驱动用它轮询上电/下电，并写它清事件 |
+| `reg_irq1_eint2` | `CS35L41_IRQ1_STATUS2` | 0x00010014 | 第二个状态字 |
+
+**1 个明确不存在**：`reg_asp_enables`——本项目设想的"独立 ASP 使能寄存器"在这颗芯片上并不存在，
+使能位在 `ASP_CONTROL4` 内部。字段先保留，等使用它的代码决定是否合并/删除；理由写进 manifest 的 `unnamed`。
+
+**5 项改标 `chosen`**（新锚点 `slot-and-rate`）：`topology.sample_rate = 48000`、`slot_count = 2`、
+`slot_mask_a = 0x1`（T 左、时隙 0）、`slot_mask_b = 0x2`（B 右、时隙 1）、`endpoint.secondary = 1`
+（接口类型已是 secondary，不是可选风格）。时隙顺序与 `stereo-routing.patch` 的声道顺序一致。
+
+最终：
+
+```text
+131 字段 · 0 verified · 56 chosen · 75 unverified
+53 项有已记录事实 · 11 项 sheng 预测 · 56 项已记录选择 · 11 项无来源
+```
+
+剩下 11 项，全部等具体输入：`graph.direction/scenario`、`topology.interface_word`、`endpoint.ws_source/
+slot_mask/interface_index`、`topology.shmem_module`（协议枚举与拓扑细节）；`device_id_value`、`revision_value`、
+`buffer_address`（只能由真机给出）；`reg_asp_enables`（该芯片没有这个寄存器）。

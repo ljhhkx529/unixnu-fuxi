@@ -102,3 +102,17 @@ stream_instance = 0x6001 · endpoint_instance = 0x6002 · shmem_instance = 0x600
 若 DSP 拒绝，改的是这里，而不是去猜一个"正确"的常量。
 
 （`graph.direction`、`graph.scenario` 不在此列：它们是协议枚举，需要头文件里的定义，不是可自由分配的数字。）
+
+## slot-and-rate
+
+通路里的采样率与时隙安排：
+
+```text
+topology.sample_rate = 48000   ·  slot_count = 2
+slot_mask_a = 0x1（T，左）      ·  slot_mask_b = 0x2（B，右）
+endpoint.secondary  = 1        （我们确实在 Secondary MI2S 上，见 I2S_INTF_TYPE_SECONDARY = 1）
+```
+
+理由：采样率与 ABI/环用同一个 48 kHz；两个单声道功放各占一个时隙，**T 是设备树里的第一个 codec，所以是左声道、
+时隙 0；B 是第二个，右声道、时隙 1**——这与 `stereo-routing.patch` 的声道顺序一致。`endpoint.secondary` 为 1 是因为
+接口类型已经是 secondary，而不是可选风格。A1/A2 会用实际出声与采集来验证时隙安排。
