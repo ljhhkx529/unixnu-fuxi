@@ -49,3 +49,38 @@ binding 里的数值有三种性质，原来只有两种被表达出来（`verif
 
 `mute_on = 1`、`mute_off = 0`、`clock_settle_ms = 10`（暂定）。按"写 1 置静音、写 0 解除"的常见极性选，
 10 ms 让 PLL/时钟在解除静音前稳定。S14 会先做到"muted-ready"（保持静音），因此这个极性在出声之前就会被验证。
+
+## timeouts
+
+`adsp.timeouts`：邮箱 1000 ms、ready 2000 ms、link 5000 ms，`path.timeout_steps = 100`（暂定）。
+理由：DSP 冷启动到 ready 通常在一秒量级，链路建立更慢；三个值分开是为了让失败点自己说话——
+"卡在邮箱"和"卡在 link"是不同的问题。全部有上界，等待循环不允许无界。
+
+## path-ring
+
+`path.ring`：`frames = 65536`、`period_frames = 480`、`channels = 2`、`bytes_per_sample = 2`、
+`sample_rate = 48000`、`host_clock_hz = 24000000`（暂定）。理由：65536 帧环是 A1 主机测试已经覆盖的形状，
+480 帧周期（10 ms）与 ABI 一致，16 位样本对应计划里的第一声；环与 ABI 用同一套数字，避免两侧对不上。
+
+## path-format
+
+`path.format`：`media = 0`（PCM）、`bit_width = 16`、`channels = 2`、`interleaving = 0`（交织）、
+`bytes_per_frame = 4`（暂定）。理由：先只做一种格式，A2 用 1000 个 period 验证；24 位打包仍未确立，不做。
+
+## path-buffer
+
+`path.buffer_bytes = 0x10000`（64 KiB，暂定）。理由：两个 period 的 48 kHz 立体声 16 位数据不到 4 KiB，
+64 KiB 留足了拓扑与控制结构的余量。`buffer_address` **不在这里**——那是运行时由映射决定的 IOVA，不是常量。
+
+## graph-performance
+
+`path.graph.performance = 0`（默认档）、`container_stack_bytes = 0x4000`（暂定）。理由：先按默认性能档开通路，
+容器栈大小是我们在 DSP 侧申请的字节数，16 KiB 足够容纳一条 MI2S 通路的模块。
+
+## amp-write-values
+
+`amp.registers` 里"我们要写进去的值"：`enable_value = 1`、`pll_value = 1`、`irq_mask_value = 0`、
+`asp_slot_value = 0`（暂定）。理由：1 表示使能/置位，0 表示解除屏蔽，这些都是常见极性；
+**S14 会在保持静音的前提下逐项核对**，所以极性在出声之前就会被验证，而不是靠猜。
+
+（`device_id_value`、`revision_value` 不在此列：那是芯片读回来的值，只能由 A3 的真机读取确立。）

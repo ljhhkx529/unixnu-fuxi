@@ -447,3 +447,43 @@ SD_LINE_IDX   = 2         （SD1 = GPIO124 i2s1_data1，token256）
 
 binding 现状：**135 字段 · 0 verified · 17 chosen · 118 unverified**；
 **44 项引用已记录事实（+6）· 8 项 sheng 预测 · 17 项已记录选择 · 66 项无来源**。
+
+---
+
+## 证据模型再清理："无来源"从 66 降到 37
+
+三件事：
+
+**1. 删掉四个不是数值的条目。** `path.references.graph/endpoint/endpoint_format/stream_format` 原本是
+`{ value = "", evidence = "none" }`——它们是**结构体指针**，不是配置值。binding 只应该记录值；门禁本来就把引用字段
+排除在覆盖之外，所以删掉不损失任何覆盖。
+
+**2. 22 项"我们的选择"改成 `chosen`**，理由写进 `docs/fuxi-audio-abi-choices.md` 的新章节：
+
+| 锚点 | 内容 |
+| --- | --- |
+| `timeouts` | 邮箱 1000 ms / ready 2000 ms / link 5000 ms、`timeout_steps = 100`（分开是为了让失败点自己说话） |
+| `path-ring` | 65536 帧环、480 帧周期、2 声道、2 字节样本、48 kHz、24 MHz 时基（与 ABI 同一套数字） |
+| `path-format` | PCM、16 位、2 声道、交织、4 字节/帧（先只做一种格式） |
+| `path-buffer` | 64 KiB 缓冲；`buffer_address` **不在此列**（那是运行时映射决定的 IOVA） |
+| `graph-performance` | 默认性能档、16 KiB 容器栈 |
+| `amp-write-values` | 我们要写进寄存器的值（enable=1、pll=1、irq_mask=0、asp_slot=0），**S14 保持静音时逐项核对** |
+
+**3. 3 项协议常量改标为 sheng 预测**（它们不是 SoC 事实，是 GPR/APM 协议参数）：
+`gpr_port = 0x2001`（我们的客户端端口）、`token_seed = 1`、`graph.apm_iid = 1`（APM 模块实例）。
+出处是 sheng 的 `ShengGpr.h` 与 `AudioProbe.cpp`，标注为**预测**而不是事实——它跑在另一块 SM8550 板上。
+
+结果：
+
+```text
+131 字段 · 0 verified · 39 chosen · 92 unverified
+44 项有已记录事实 · 11 项 sheng 预测 · 39 项已记录选择 · 37 项无来源
+```
+
+剩下 37 项的构成（都在等具体阶段的输入，不是含糊的"不知道"）：
+
+- **29 项 AudioReach 拓扑/端点的标识**（graph_id、subgraph_id、container_*、module/link 计数、endpoint 的
+  module/instance/line/slot_mask、topology 的模块 id 与 slot 掩码）——需要反编译 `Xiaomi-13-tplg.bin` 或
+  AudioReach 的头文件才能确立；
+- **3 项运行时值**（`amp.registers.device_id_value`、`revision_value`、`path.buffer_address`）——只能由真机给出；
+- **5 项功放寄存器**（ASP 使能/控制、boost 电容、两个 EINT）——头文件里没有对应名字，等 A3 读芯片或换一种命名方式。

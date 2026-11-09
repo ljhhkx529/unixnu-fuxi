@@ -24,35 +24,31 @@ ready_value = { value = 0x2, state = "unverified", evidence = "sheng.sm8550" }
 fatal_value = { value = 0x1, state = "unverified", evidence = "sheng.sm8550" }
 
 [adsp.timeouts]
-mailbox_timeout = { value = 0, state = "unverified", evidence = "none" }
-ready_timeout = { value = 0, state = "unverified", evidence = "none" }
-link_timeout = { value = 0, state = "unverified", evidence = "none" }
+mailbox_timeout = { value = 1000, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#timeouts" }
+ready_timeout = { value = 2000, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#timeouts" }
+link_timeout = { value = 5000, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#timeouts" }
 
 [path]
-gpr_port = { value = 0, state = "unverified", evidence = "none" }
-token_seed = { value = 0, state = "unverified", evidence = "none" }
-timeout_steps = { value = 0, state = "unverified", evidence = "none" }
+gpr_port = { value = 0x2001, state = "unverified", evidence = "sheng.sm8550" }
+token_seed = { value = 1, state = "unverified", evidence = "sheng.sm8550" }
+timeout_steps = { value = 100, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#timeouts" }
 stream_instance = { value = 0, state = "unverified", evidence = "none" }
 buffer_address = { value = 0, state = "unverified", evidence = "none" }
-buffer_bytes = { value = 0, state = "unverified", evidence = "none" }
+buffer_bytes = { value = 0x10000, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#path-buffer" }
 periods_in_flight = { value = 2, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#path-periods-in-flight" }
 
 [path.references]
-graph = { value = "", state = "unverified", evidence = "none" }
-endpoint = { value = "", state = "unverified", evidence = "none" }
-endpoint_format = { value = "", state = "unverified", evidence = "none" }
-stream_format = { value = "", state = "unverified", evidence = "none" }
 
 [path.graph]
 graph_id = { value = 0, state = "unverified", evidence = "none" }
-apm_iid = { value = 0, state = "unverified", evidence = "none" }
+apm_iid = { value = 1, state = "unverified", evidence = "sheng.sm8550" }
 subgraph_id = { value = 0, state = "unverified", evidence = "none" }
-performance = { value = 0, state = "unverified", evidence = "none" }
+performance = { value = 0, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#graph-performance" }
 direction = { value = 0, state = "unverified", evidence = "none" }
 scenario = { value = 0, state = "unverified", evidence = "none" }
 container_id = { value = 0, state = "unverified", evidence = "none" }
 container_position = { value = 0, state = "unverified", evidence = "none" }
-container_stack_bytes = { value = 0, state = "unverified", evidence = "none" }
+container_stack_bytes = { value = 0x4000, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#graph-performance" }
 container_domain = { value = 0, state = "unverified", evidence = "none" }
 module_count = { value = 0, state = "unverified", evidence = "none" }
 link_count = { value = 0, state = "unverified", evidence = "none" }
@@ -68,19 +64,19 @@ ws_source = { value = 0, state = "unverified", evidence = "none" }
 slot_mask = { value = 0, state = "unverified", evidence = "none" }
 
 [path.format]
-media = { value = 0, state = "unverified", evidence = "none" }
-bit_width = { value = 0, state = "unverified", evidence = "none" }
-channels = { value = 0, state = "unverified", evidence = "none" }
-interleaving = { value = 0, state = "unverified", evidence = "none" }
-bytes_per_frame = { value = 0, state = "unverified", evidence = "none" }
+media = { value = 0, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#path-format" }
+bit_width = { value = 16, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#path-format" }
+channels = { value = 2, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#path-format" }
+interleaving = { value = 0, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#path-format" }
+bytes_per_frame = { value = 4, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#path-format" }
 
 [path.ring]
-frames = { value = 0, state = "unverified", evidence = "none" }
-period_frames = { value = 0, state = "unverified", evidence = "none" }
-channels = { value = 0, state = "unverified", evidence = "none" }
-bytes_per_sample = { value = 0, state = "unverified", evidence = "none" }
-sample_rate = { value = 0, state = "unverified", evidence = "none" }
-host_clock_hz = { value = 0, state = "unverified", evidence = "none" }
+frames = { value = 65536, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#path-ring" }
+period_frames = { value = 480, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#path-ring" }
+channels = { value = 2, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#path-ring" }
+bytes_per_sample = { value = 2, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#path-ring" }
+sample_rate = { value = 48000, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#path-ring" }
+host_clock_hz = { value = 24000000, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#path-ring" }
 
 [path.topology]
 stream_instance = { value = 0, state = "unverified", evidence = "none" }
@@ -136,12 +132,12 @@ reg_irq1_eint2 = { value = 0, state = "unverified", evidence = "none" }
 reg_irq1_mask1 = { value = 0x00010110, state = "unverified", evidence = "linux_cs35l41.irq1_mask1" }
 device_id_value = { value = 0, state = "unverified", evidence = "none" }
 revision_value = { value = 0, state = "unverified", evidence = "none" }
-enable_value = { value = 0, state = "unverified", evidence = "none" }
-asp_slot_value = { value = 0, state = "unverified", evidence = "none" }
+enable_value = { value = 1, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#amp-write-values" }
+asp_slot_value = { value = 0, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#amp-write-values" }
 boost_peak_value = { value = 4000, state = "unverified", evidence = "amplifier[0].boost_peak_milliamp" }
 boost_cap_value = { value = 15, state = "unverified", evidence = "amplifier[0].boost_cap_microfarad" }
-pll_value = { value = 0, state = "unverified", evidence = "none" }
-irq_mask_value = { value = 0, state = "unverified", evidence = "none" }
+pll_value = { value = 1, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#amp-write-values" }
+irq_mask_value = { value = 0, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#amp-write-values" }
 mute_on = { value = 1, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#amp-mute-polarity" }
 mute_off = { value = 0, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#amp-mute-polarity" }
 clock_settle_ms = { value = 10, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#amp-mute-polarity" }
