@@ -559,3 +559,28 @@ next_single_measurement: G4（同一套断言，跑在从真机读回来的真�
 **顺带确认**：runbook §3.3 提到"当前 `qcom_smem_alloc()` 还会清零整个 payload"——读代码后确认**这一点已经不成立**：
 分配器只写条目元数据，注释也写明"The allocator owns the entry metadata, not the payload"。这次用字节差异把它钉住，
 而不是只在注释里声明。**发布顺序**（先写条目头、再发布 free 指针）由"拒绝时指针不动"与"分配后指针等于条目末尾"两条间接证明。
+
+---
+
+## G2–G5 的单步目录，以及"写"的构建期门闸
+
+```text
+test_id: G2-ladder-catalogue
+result: PASS
+device_commit: ac117b9（CDC 子仓库）
+classification: 13 个固定 step id（1..13）。目录被断言为：连续、名字唯一、恰好两步标为写入
+               （hwlock-cycle 与 smem-allocate）；只读阶梯（read-toc / read-partition / read-item / unmap /
+               hwlock-identify）全部不写；未 ARM 时不能入队；已入队时不能再入队另一个。
+               同一份测试**编译两次**：未定义 SXNU_DIAG_ALLOW_WRITE_STEPS 时两个写步骤返回 REFUSED、
+               只读步骤仍可用；定义了则该写步骤可入队
+next_single_measurement: G2.1（真机，descriptor-create → descriptor-release）
+```
+
+子仓库门禁：**35 项全部通过**（此前 31 项；新增两种 SoC profile × 带/不带写门闸）。
+
+**要说清楚的一点**：目录已经列出了 G2–G5 的步骤，但**传输层目前仍然只执行 NOOP**。也就是说这些 step id 现在
+是"被登记、被测试、但还没有接入真机动作"。这是有意的顺序：先让"能请求什么"和"什么需要更高授权"变成编译期事实，
+再逐步把每个 step 接到映射/读取/锁上。**在 S0 与 G2.1 之前，没有任何一个 step 会在真机上跑。**
+
+写门闸的形式：`#if !defined(SXNU_DIAG_ALLOW_WRITE_STEPS) → 写入步骤一律 SXNU_DIAG_REFUSED`。
+默认镜像里 `hwlock-cycle` 与 `smem-allocate` **永远拿不到**，不是靠 host 自觉。
