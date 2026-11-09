@@ -360,3 +360,41 @@ binding 现状：**129 字段，0 verified，30 项引用已记录事实**（本
 `IRQ1_STATUS1/STATUS2`，与本项目的命名不一致。**名字对不上就不写**，这比填一个看起来合理的数字强。
 
 binding 现状：**129 字段 · 0 verified · 37 项引用已记录事实（本轮 +8）· 8 项 sheng 预测 · 84 项无来源**（上一轮 91）。
+
+---
+
+## 证据模型补上"第三种数值"：我们自己选的
+
+原来 binding 只有 `verified` / `unverified`，于是"我们还没决定 ABI 的帧长"和"我们不知道功放地址"被混成同一个
+"无来源"数字。现在分三类：
+
+| 状态 | 含义 | 出处形式 |
+| --- | --- | --- |
+| `verified` | 真机测量过 | manifest 里 `runtime_verified = true` 的事实 |
+| `unverified` | 有来源但没测量过 / 还没有来源 | manifest 键，或 `none` |
+| **`chosen`** | **我们自己的设计选择** | `design:docs/fuxi-audio-abi-choices.md#<anchor>` |
+
+理由文档：`docs/fuxi-audio-abi-choices.md`，逐条给出 `abi-rate`、`abi-channels`、`abi-period`、`abi-host-clock`、
+`capture`、`path-periods-in-flight`、`amp-mute-polarity` 七节，并写明**这些值都是暂定的、各自由哪个阶段检验**。
+
+标记为 `chosen` 的 17 项：`abi.*` 8 项、`capture.*` 5 项、`path.periods_in_flight`、`amp.registers` 的
+`mute_on/mute_off/clock_settle_ms`。
+
+门禁因此也改了，并且**门禁本身现在有测试**：
+
+```text
+PASS QcomAudioBindingGate: 6 cases
+  a choice with an existing anchor passes
+  a choice with no reason is refused
+  a choice pointing at a missing document is refused
+  a choice whose anchor is not in the document is refused
+  a choice with no anchor at all is refused
+  a fact claimed verified on an unmeasured source is refused
+```
+
+（上一轮的门禁支持 `--require-verified` 却没有参数解析，是直接读 `sys.argv`；这次补 `--binding` 与
+`--skip-coverage` 才让它可被单独测试。）
+
+binding 现状：**129 字段 · 0 verified · 17 chosen · 112 unverified**；
+**38 项引用已记录事实 · 8 项 sheng 预测 · 17 项已记录选择 · 66 项仍无来源**（"无来源"从 83 降到 66，
+而且剩下的 66 项现在真的都是"我们还不知道"）。

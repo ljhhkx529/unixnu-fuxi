@@ -115,20 +115,43 @@ def struct_fields(header: str, name: str) -> list[str]:
 
 
 def main() -> int:
-    require_verified = "--require-verified" in sys.argv[1:]
+    arguments = sys.argv[1:]
+    require_verified = "--require-verified" in arguments
+    skip_coverage = "--skip-coverage" in arguments
+    binding_path = BINDING
+    if "--binding" in arguments:
+        # The gate's own test needs to point it at a one-entry binding without a second copy of the tree.
+        binding_path = Path(arguments[arguments.index("--binding") + 1]).resolve()
 
-    binding = tomllib.loads(BINDING.read_text())
+    binding = tomllib.loads(binding_path.read_text())
     manifest = tomllib.loads(MANIFEST.read_text())
     entries = flatten(binding)
     if not entries:
         problems.append("the binding has no entries")
 
     verified = 0
+    chosen = 0
     for path, entry in entries:
         state = entry.get("state")
         evidence = entry.get("evidence")
-        if state not in ("unverified", "verified"):
-            problems.append(f"{path}: state {state!r} is neither unverified nor verified")
+        if state not in ("unverified", "verified", "chosen"):
+            problems.append(f"{path}: state {state!r} is neither unverified, verified nor chosen")
+            continue
+        if state == "chosen":
+            chosen += 1
+            # A choice has no source; it has a reason, and the reason has to exist somewhere a person can read it.
+            if not evidence or not evidence.startswith("design:"):
+                problems.append(f"{path}: chosen but names no design anchor")
+                continue
+            target = evidence[len("design:"):]
+            document_name, _, anchor = target.partition("#")
+            document = ROOT / document_name
+            if not document.is_file():
+                problems.append(f"{path}: design anchor {document_name} does not exist")
+            elif not anchor:
+                problems.append(f"{path}: design anchor names no section")
+            elif anchor not in document.read_text():
+                problems.append(f"{path}: design anchor {anchor!r} is not in {document_name}")
             continue
         if state == "verified":
             verified += 1
@@ -153,7 +176,7 @@ def main() -> int:
 
     # Every configuration field of every layer must appear in the binding.
     covered = 0
-    for header, (struct, sections, references) in COVERED.items():
+    for header, (struct, sections, references) in ({} if skip_coverage else COVERED).items():
         present = set()
         for path, _ in entries:
             for section in sections:
@@ -167,20 +190,24 @@ def main() -> int:
             else:
                 covered += 1
 
-    if require_verified and verified != len(entries):
-        problems.append(f"--require-verified: {len(entries) - verified} of {len(entries)} entries are unverified")
+    if require_verified and verified + chosen != len(entries):
+        problems.append(f"--require-verified: {len(entries) - verified - chosen} of {len(entries)} entries are neither verified nor a recorded choice")
 
     for problem in problems:
         print(f"FAIL {problem}")
     if problems:
         print(f"{len(problems)} problem(s)")
         return 1
-    cited = sum(1 for _p, e in entries if e.get("evidence") not in (None, "", "none") and e.get("evidence") != "sheng.sm8550")
+    def is_fact(evidence):
+        return (evidence not in (None, "", "none") and evidence != "sheng.sm8550"
+                and not str(evidence).startswith("design:"))
+    cited = sum(1 for _p, e in entries if is_fact(e.get("evidence")))
     predicted = sum(1 for _p, e in entries if e.get("evidence") == "sheng.sm8550")
-    unsourced = len(entries) - cited - predicted
+    unsourced = len(entries) - cited - predicted - chosen
     print(f"PASS fuxi audio binding: {len(entries)} fields ({covered} layer fields covered), "
-          f"{verified} verified, {len(entries) - verified} unverified")
-    print(f"     {cited} cite a recorded fact, {predicted} are predictions from sheng, {unsourced} have no source yet")
+          f"{verified} verified, {chosen} chosen, {len(entries) - verified - chosen} unverified")
+    print(f"     {cited} cite a recorded fact, {predicted} are predictions from sheng, "
+          f"{chosen} are recorded choices, {unsourced} have no source yet")
     return 0
 
 

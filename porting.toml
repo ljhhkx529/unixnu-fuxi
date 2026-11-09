@@ -180,6 +180,7 @@ paths = ["package/*Adsp*", "package/*AudioPath*", "package/*Cs35l41*", "package/
 inputs = ["The fuxi ADSP firmware and its board-specific memory/interrupt inputs.", "Two CS35L41 amplifiers and the WCD938x codec described by the fixed fuxi device-tree source."]
 configuration = ["No audio component is selected."]
 procedure = [
+  "Run scripts/check-fuxi-audio-binding-selftest.py whenever the binding gate changes: a gate that is never tested can quietly stop gating.",
   "Run scripts/check-qcom-tcsr-hwlock-host.py for the TCSR mutex encoding taken from the mainline driver, not from guesswork.",
   "Run scripts/check-qcom-mapping-host.py for the mapping helper contract - alignment, length, offset and unmap symmetry (debug runbook H8).",
   "Run scripts/check-qcom-hwspinlock-host.py for the bounded hardware spinlock policy (debug runbook H7).",

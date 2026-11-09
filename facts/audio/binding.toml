@@ -35,7 +35,7 @@ timeout_steps = { value = 0, state = "unverified", evidence = "none" }
 stream_instance = { value = 0, state = "unverified", evidence = "none" }
 buffer_address = { value = 0, state = "unverified", evidence = "none" }
 buffer_bytes = { value = 0, state = "unverified", evidence = "none" }
-periods_in_flight = { value = 1, state = "unverified", evidence = "none" }
+periods_in_flight = { value = 2, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#path-periods-in-flight" }
 
 [path.references]
 graph = { value = "", state = "unverified", evidence = "none" }
@@ -98,21 +98,21 @@ interface_word = { value = 0, state = "unverified", evidence = "none" }
 # The block the kernel service and the user-space HAL share. Offsets are part of the ABI; the values are board facts.
 # The page the audio service and the CoreAudio plug-in share, in sheng's shape.
 [abi]
-rate = { value = 0, state = "unverified", evidence = "none" }
-out_channels = { value = 0, state = "unverified", evidence = "none" }
-in_channels = { value = 0, state = "unverified", evidence = "none" }
-period_frames = { value = 0, state = "unverified", evidence = "none" }
-ring_frames = { value = 0, state = "unverified", evidence = "none" }
-lead_frames = { value = 0, state = "unverified", evidence = "none" }
-host_clock_hz = { value = 0, state = "unverified", evidence = "none" }
-anchor_host = { value = 0, state = "unverified", evidence = "none" }
+rate = { value = 48000, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#abi-rate" }
+out_channels = { value = 2, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#abi-channels" }
+in_channels = { value = 2, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#abi-channels" }
+period_frames = { value = 480, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#abi-period" }
+ring_frames = { value = 4800, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#abi-period" }
+lead_frames = { value = 960, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#abi-period" }
+host_clock_hz = { value = 24000000, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#abi-host-clock" }
+anchor_host = { value = 0, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#abi-host-clock" }
 
 [capture]
-channels = { value = 0, state = "unverified", evidence = "none" }
-bit_width = { value = 0, state = "unverified", evidence = "none" }
-period_frames = { value = 0, state = "unverified", evidence = "none" }
-sample_rate = { value = 0, state = "unverified", evidence = "none" }
-expected_periods = { value = 0, state = "unverified", evidence = "none" }
+channels = { value = 2, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#capture" }
+bit_width = { value = 16, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#capture" }
+period_frames = { value = 480, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#capture" }
+sample_rate = { value = 48000, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#capture" }
+expected_periods = { value = 200, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#capture" }
 
 
 # The part's registers and the values this board programs into them.
@@ -138,9 +138,9 @@ boost_peak_value = { value = 4000, state = "unverified", evidence = "amplifier[0
 boost_cap_value = { value = 15, state = "unverified", evidence = "amplifier[0].boost_cap_microfarad" }
 pll_value = { value = 0, state = "unverified", evidence = "none" }
 irq_mask_value = { value = 0, state = "unverified", evidence = "none" }
-mute_on = { value = 0, state = "unverified", evidence = "none" }
-mute_off = { value = 0, state = "unverified", evidence = "none" }
-clock_settle_ms = { value = 0, state = "unverified", evidence = "none" }
+mute_on = { value = 1, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#amp-mute-polarity" }
+mute_off = { value = 0, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#amp-mute-polarity" }
+clock_settle_ms = { value = 10, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#amp-mute-polarity" }
 
 [amp.b]
 i2c_address = { value = 0x40, state = "unverified", evidence = "amplifier[0].i2c_address" }
