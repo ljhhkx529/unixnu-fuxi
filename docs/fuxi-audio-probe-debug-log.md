@@ -398,3 +398,22 @@ PASS QcomAudioBindingGate: 6 cases
 binding 现状：**129 字段 · 0 verified · 17 chosen · 112 unverified**；
 **38 项引用已记录事实 · 8 项 sheng 预测 · 17 项已记录选择 · 66 项仍无来源**（"无来源"从 83 降到 66，
 而且剩下的 66 项现在真的都是"我们还不知道"）。
+
+---
+
+## G1.3 的 host 半：小消息与控制回复在回压下
+
+```text
+test_id: G1.3-host
+result: PASS
+device_commit: 8156808（CDC 子仓库） / 设备仓库 V2
+classification: 200 条 32/64 字节固定消息 + 1 条控制回复，写进 16 KiB ring，再以 64 字节为单位排空：
+               accepted 与写入总量精确相等；overflow = 0；high_water = 写入总量；
+               控制回复完整出现在流尾、未被饿死也未乱序；两段消息的边界（第 100 条 32B 后转到 64B）逐字节可查
+next_single_measurement: G1.3 真机（日志在写的同时，控制回复仍能回来）
+```
+
+子仓库门禁：`python3 -B tests/check.py --target-clang <clang> --output <dir>` → **31 项全部通过**。
+
+**没做的事**：没有在真机上跑。G1.3 的验收要求"日志写入期间控制回复不被饿死"，那只能在手机上观察；host 侧能证明的
+是队列语义与计数，不能替代它。
