@@ -846,3 +846,41 @@ next_single_measurement: S3/G2.1 descriptor-create -> descriptor-release（先�
 
 主机 supervisor 在长时间运行后两次出现 Unix control socket `Connection refused`，重启 supervisor 后同一设备
 session、kernel PING 和 CDC 捕获立即恢复；因此归类为 host 代理生命周期问题，不归因于 G1.3 内核步骤。
+
+---
+
+## S3/G2.1 descriptor 生命周期（2026-11-09）
+
+旧 `FuxiAudioProbe` 的 boot-arg、15 秒线程、mapping 和 dereference 路径全部删除。默认启动只包含两个由 CDC
+固定 operation 调用的 C++ wrapper；`native_audio_probe()` 保留为空定义供 H0 做全树可达性门禁。descriptor
+生命周期下沉到纯 C 状态机，host mock 证明固定地址、失败清理、重复调用拒绝和 release 前资源位清零。
+
+```text
+result: PASS（host/build/device）
+device_commit: 034c459603bc4228fc0c8753a8cd9ec7bbf4beb9
+cdc_commit: fba19d40f2a87c5805804d80c81bc3edadf88a8f
+host_descriptor: 14/14 ASan/UBSan
+host_mapping: 31/31 ASan/UBSan
+host_transport: 35/35
+kernel_build: PASS
+kernel_sha256: 7db8751ceed8a2f1742803fd721da15bf6ea7c9606b965814ab50320d4301e58
+bootimg_sha256: adae45c83112b2c625411c7d9185bc9db2817242f022c79973c4103681db2656
+gpu_addon_sha256: e4b4b7062c03eea7301f9f830ad45d2d5e25c80875dfc3efdd0848c0ec639288
+trust_cache_sha256: 8c2b907f4ef4a813a4092c0b4e724a05d90051772fe13db2082301bd4929d913
+data_uuid: B2A023C5-CC73-45C1-A9E6-26AC8BDD2822
+session: 355d97a5c5380500
+capture: /tmp/fuxi-usb/run-20261109-131847/xnu-usb.log
+continuation_capture: /tmp/fuxi-usb/run-20261109-131932/xnu-usb.log
+gpu_capture: /tmp/fuxi-usb/run-20261109-132024/xnu-usb.log
+create: generation=4 step=4 rc=0 claims=4 finishes=4 resources=1 timeouts=0
+create_ping: PASS
+reconnect_audit: same session, resources still 1
+release: generation=5 step=5 rc=0 claims=5 finishes=5 resources=0 timeouts=0
+release_ping: PASS
+map_guard: generation=6 DIAGNEXT rc=-6 REFUSED; claims/finishes stayed 5/5
+transport: bp=0 bo=0 er=0
+audio_auto_entry: 0
+gpu_regression: client_calls=1007 fence=73/73 gop=24/24 fail=0; no CP/SMMU fault or panic
+classification: G2.1 PASS；未创建 mapping、未取得 VA、未读取 SMEM
+next_single_measurement: S4/G2.2 map-create/getVA（与 unmap 分开，先关闭 cache attribute 合约）
+```

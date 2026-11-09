@@ -50,3 +50,11 @@ boot 2026-11-09T04:23:55Z
   gpu_addon_sha256=e4b4b7062c03eea7301f9f830ad45d2d5e25c80875dfc3efdd0848c0ec639288 owner_trust_sha256=8c2b907f4ef4a813a4092c0b4e724a05d90051772fe13db2082301bd4929d913 data_uuid=B2A023C5-CC73-45C1-A9E6-26AC8BDD2822
   control={"fields": {"poll": "9177", "rx": "46", "rxo": "0", "tx": "0"}, "ok": true, "seq": "00000001", "session": "a425ac65b9c5a4ea", "status": "OK", "verb": "PING"}
   capture=/tmp/fuxi-usb/run-20261109-122353/xnu-usb.log audio_lines=0
+boot 2026-11-09T05:18:31Z
+  device_repo=034c459 unixnu=b973dae
+  kernel_sha256=7db8751ceed8a2f1742803fd721da15bf6ea7c9606b965814ab50320d4301e58
+  image_sha256=adae45c83112b2c625411c7d9185bc9db2817242f022c79973c4103681db2656
+  seed=/Users/mac/Documents/deepseek-harness/default-workspace/UniXNU/out/fuxi/build/owner-data-fixture/owner-data-16g.dbr
+  gpu_addon_sha256=e4b4b7062c03eea7301f9f830ad45d2d5e25c80875dfc3efdd0848c0ec639288 owner_trust_sha256=8c2b907f4ef4a813a4092c0b4e724a05d90051772fe13db2082301bd4929d913 data_uuid=B2A023C5-CC73-45C1-A9E6-26AC8BDD2822
+  control={"fields": {"poll": "8802", "rx": "46", "rxo": "0", "tx": "0"}, "ok": true, "seq": "00000001", "session": "355d97a5c5380500", "status": "OK", "verb": "PING"}
+  capture=/tmp/fuxi-usb/run-20261109-131828/xnu-usb.log audio_lines=0

@@ -20,17 +20,18 @@
 | 默认启动不调用 audio probe | PASS | H0；`native_audio_probe()` 没有启动路径调用者，当前真机日志无 `AUDIO step=` |
 | CDC 固定诊断协议 | PASS | H1–H4；generation、唯一 ticket、重复 claim/stale completion 拒绝、250 ms deadline |
 | 一次性内核 worker | PASS | G1.1–G1.3；三步真机 `claims=3 finishes=3 active=0 timeouts=0`，之后 PING 正常 |
+| Descriptor 生命周期 | PASS（host/device） | 固定 `0x81d00000+0x200000`；create 后 resources=1，release 后 0；无 mapping/read |
 | SMEM 只读 parser | PASS（host） | H5；15 项 corpus/fuzz，ASan/UBSan，无越界、原 image 不变 |
 | SMEM shadow allocator | PASS（host） | H6；16 项精确 byte diff，payload 不清零，free offset 最后且唯一发布 |
 | 真机 SMEM 只读事实 | PASS（device/read-only） | `0x81d00000 + 0x200000`；APPS/ADSP partition `+0x19f000/0x60000`、cacheline 32；item 478/479 已存在，429/443/423/480 不存在 |
 | 板无关音频模型 | PASS（host） | 16 套、20,592 项、0 失败；含 MDT、SMEM/SMP2P/GLINK、ADSP、GPR/APM、period、CS35L41、HAL ABI 模型和 fuzz |
-| GPU/Metal 平台基线 | PASS（device） | G1.3 后 client calls 984、fence 70/70、GOP 22/22、CP/SMMU fault 0 |
+| GPU/Metal 平台基线 | PASS（device） | G2.1 后 client calls 1007、fence 73/73、GOP 24/24、CP/SMMU fault 0 |
 
 当前已刷镜像的关键身份：
 
 ```text
-kernel.macho sha256 c04de1edd2a30c2d51e336dcebfef77de2583cd6ad7251c3db3e228e212e47c4
-boot.img    sha256 14f33af07d4c64d2c0b53c88ac4996a67bdeefb79720bfd9819a9675820a1987
+kernel.macho sha256 7db8751ceed8a2f1742803fd721da15bf6ea7c9606b965814ab50320d4301e58
+boot.img    sha256 adae45c83112b2c625411c7d9185bc9db2817242f022c79973c4103681db2656
 GPU addon   sha256 e4b4b7062c03eea7301f9f830ad45d2d5e25c80875dfc3efdd0848c0ec639288
 Metal trust sha256 8c2b907f4ef4a813a4092c0b4e724a05d90051772fe13db2082301bd4929d913
 Data seed   sha256 efcde232f6563faf955631a3a81f4ba4a16202ff821dc3ea32ea5ae88ada7e40
@@ -43,7 +44,7 @@ Data UUID          B2A023C5-CC73-45C1-A9E6-26AC8BDD2822
 | --- | --- | --- |
 | H7/H8 | PASS（host） | H7 32 项、TCSR 编码 23 项；H8 mapping helper 31 项，均经 ASan/UBSan |
 | G1.3 | PASS（host/device） | 真机精确 100 条 32-byte + 100 条 64-byte；PING 成功，bp/bo 维持 0/0 |
-| G2 | 未完成 | descriptor/map/单 word read/unmap 和 cache 属性 parity 的分步真机证据 |
+| G2 | G2.1 PASS；其余未完成 | descriptor 生命周期已关闭；仍缺 map/单 word read/unmap 与 cache parity |
 | G3 | 未完成 | TCSR hwspinlock 3 的真机识别、bounded acquire/release |
 | G4 | 未完成 | 从真实只读 snapshot 复制到普通 RAM 后的 shadow allocation |
 | G5/G6 | 未完成 | 单一真实 SMEM allocation 与 SMP2P 最小初始化 |
@@ -62,7 +63,7 @@ Data UUID          B2A023C5-CC73-45C1-A9E6-26AC8BDD2822
 
 以下是剩余工程量估算，不是功能完成率，也不能作为验收：
 
-- 安全 bring-up 工具链：约 50%；S0–S2 已关闭，下一项为 S3/G2.1；
+- 安全 bring-up 工具链：约 55%；S0–S3 已关闭，下一项为 S4/G2.2 mapping create/getVA；
 - A0（ADSP 在线）：约 10–15%；
 - A3（第一声）：约 5–10%；
 - A4（可用 CoreAudio 输出）：低于 5%；
@@ -117,7 +118,7 @@ UniXNU 已增加打包门禁：命令行含 `sheng-gpu-addon=1` 时，缺 `--gpu
 | S0 | 冻结安全基线 | 否 | 当前镜像 | 3/3 稳定启动与回归记录 |
 | S1 | H7 hwspinlock 模型 | 否，host | H6 PASS | **PASS：32 项策略 + 23 项 TCSR 编码** |
 | S2 | H8 mapping 合约 + G1.3 | 仅 host/NOOP | S1 PASS | **PASS：H8 host 与 G1.3 host/device 均关闭** |
-| S3 | G2.1 descriptor 生命周期 | 否 | S2 PASS | descriptor create/release PASS |
+| S3 | G2.1 descriptor 生命周期 | 否 | S2 PASS | **PASS：create/release 分步、资源归零、map 仍拒绝** |
 | S4 | G2.2–G2.5 最小只读 mapping | 只读 | S3 PASS | map/read/unmap 分步 PASS |
 | S5 | G2.6 cache 属性 parity | 只读 | S4 PASS | 属性/alias 风险关闭 |
 | S6 | G3 hwspinlock 真机 | lock MMIO | S5 PASS | bounded acquire/release PASS |
