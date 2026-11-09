@@ -44,8 +44,8 @@ graph_id = { value = 1, state = "chosen", evidence = "design:docs/fuxi-audio-abi
 apm_iid = { value = 1, state = "unverified", evidence = "sheng.sm8550" }
 subgraph_id = { value = 1, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#ar-ids" }
 performance = { value = 0, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#graph-performance" }
-direction = { value = 0, state = "unverified", evidence = "none" }
-scenario = { value = 0, state = "unverified", evidence = "none" }
+direction = { value = 0, state = "unverified", evidence = "audioreach.graph_direction_playback" }
+scenario = { value = 1, state = "unverified", evidence = "audioreach.apm_sg_sid_audio_playback" }
 container_id = { value = 1, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#ar-ids" }
 container_position = { value = 0, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#ar-ids" }
 container_stack_bytes = { value = 0x4000, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#graph-performance" }
@@ -57,11 +57,11 @@ link_count = { value = 2, state = "chosen", evidence = "design:docs/fuxi-audio-a
 module = { value = 0x0700100A, state = "unverified", evidence = "audioreach.i2s_sink_module" }
 instance = { value = 0x6002, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#ar-ids" }
 interface_type = { value = 1, state = "unverified", evidence = "audioreach.i2s_intf_type_secondary" }
-interface_index = { value = 0, state = "unverified", evidence = "none" }
+interface_index = { value = 0, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#endpoint-slot-and-index" }
 secondary = { value = 1, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#slot-and-rate" }
 line = { value = 2, state = "unverified", evidence = "linux_port.sd_line_index" }
 ws_source = { value = 0, state = "unverified", evidence = "none" }
-slot_mask = { value = 0, state = "unverified", evidence = "none" }
+slot_mask = { value = 0x3, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#endpoint-slot-and-index" }
 
 [path.format]
 media = { value = 0, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#path-format" }
@@ -88,7 +88,7 @@ sample_rate = { value = 48000, state = "chosen", evidence = "design:docs/fuxi-au
 slot_mask_a = { value = 0x1, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#slot-and-rate" }
 slot_mask_b = { value = 0x2, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#slot-and-rate" }
 slot_count = { value = 2, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#slot-and-rate" }
-shmem_module = { value = 0, state = "unverified", evidence = "none" }
+shmem_module = { value = 0x07001000, state = "unverified", evidence = "audioreach.wr_shared_mem_ep_module" }
 interface_word = { value = 0, state = "unverified", evidence = "none" }
 
 # The block the kernel service and the user-space HAL share. Offsets are part of the ABI; the values are board facts.

@@ -116,3 +116,11 @@ endpoint.secondary  = 1        （我们确实在 Secondary MI2S 上，见 I2S_I
 理由：采样率与 ABI/环用同一个 48 kHz；两个单声道功放各占一个时隙，**T 是设备树里的第一个 codec，所以是左声道、
 时隙 0；B 是第二个，右声道、时隙 1**——这与 `stereo-routing.patch` 的声道顺序一致。`endpoint.secondary` 为 1 是因为
 接口类型已经是 secondary，而不是可选风格。A1/A2 会用实际出声与采集来验证时隙安排。
+
+## endpoint-slot-and-index
+
+`endpoint.interface_index = 0`（该接口类型下的第 0 个实例）、`endpoint.slot_mask = 0x3`（这条端点同时承载两个时隙，
+因为两颗单声道功放分别落在时隙 0 与 1）。理由：一条 MI2S 端点把它承载的时隙整体描述出来，比让每个功放各自
+声明自己的时隙更简单，也与 `slot-and-rate` 里 a=0x1/b=0x2 的分配一致。A1 用实际出声验证。
+
+`topology.shmem_module` 不在此列：它是有出处的——播放流的共享内存端点就是 `MODULE_ID_WR_SHARED_MEM_EP`。

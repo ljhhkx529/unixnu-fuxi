@@ -664,3 +664,37 @@ next_single_measurement: G2.1 真机（第一次 DIAGNEXT 走 NOOP，第二次�
 剩下 11 项，全部等具体输入：`graph.direction/scenario`、`topology.interface_word`、`endpoint.ws_source/
 slot_mask/interface_index`、`topology.shmem_module`（协议枚举与拓扑细节）；`device_id_value`、`revision_value`、
 `buffer_address`（只能由真机给出）；`reg_asp_enables`（该芯片没有这个寄存器）。
+
+---
+
+## S10 完成：无来源只剩 6 项
+
+又确立 6 项：
+
+| 项 | 值 | 出处 |
+| --- | --- | --- |
+| `path.graph.scenario` | 1 | `APM_SUB_GRAPH_SID_AUDIO_PLAYBACK = 0x1`（`audioreach.h`） |
+| `path.graph.direction` | 0 | `q6apm.c` 用 `cfg->direction == SNDRV_PCM_STREAM_CAPTURE`(1) 判别，播放即 0 |
+| `path.topology.shmem_module` | 0x07001000 | 播放流的共享内存端点就是 `MODULE_ID_WR_SHARED_MEM_EP` |
+| `path.endpoint.interface_index` | 0 | chosen：该接口类型下的第 0 个实例 |
+| `path.endpoint.slot_mask` | 0x3 | chosen：这条端点承载两个时隙（见 `slot-and-rate`） |
+| （另）`apm_sg_sid_audio_record = 0x2` | — | 采集通路以后要用 |
+
+最终：
+
+```text
+131 字段 · 0 verified · 58 chosen · 73 unverified
+56 项有已记录事实 · 11 项 sheng 预测 · 58 项已记录选择 · 6 项无来源
+```
+
+**剩下 6 项，全部要么是"还没确立的编码"，要么是"只能由真机给出"，要么是"这颗芯片没有"**：
+
+| 项 | 为什么还没有 |
+| --- | --- |
+| `endpoint.ws_source`、`topology.interface_word` | 编码方式未确立（需要 I2S 配置结构或拓扑反编译） |
+| `device_id_value`、`revision_value` | 只能读芯片（A3） |
+| `buffer_address` | 运行时映射决定的 IOVA（A2） |
+| `reg_asp_enables` | 该芯片没有这个寄存器，等代码决定是否删 |
+
+本机没有 `alsatplg`，所以拓扑反编译这条暂时走不通——这也意味着那 7 个协议枚举里剩下的 2 个编码，
+短期内只能靠 AudioReach 的其它头文件，而不是靠反编译产物。
