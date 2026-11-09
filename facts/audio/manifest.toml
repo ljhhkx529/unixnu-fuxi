@@ -20,6 +20,7 @@ scl_gpio = 1
 source = "qcom/fuxi-sm8550.dtsi:243-290; qcom/kalama-qupv3.dtsi:535-550; qcom/kalama-pinctrl.dtsi:1231-1271"
 runtime_verified = false
 
+
 [[amplifier]]
 role = "B"
 compatible = "cirrus,cs35l41"
@@ -149,3 +150,16 @@ smem_lock_id = 3
 compatible = "qcom,tcsr-mutex"
 source = "uefi-fuxi/Platforms/Xiaomi/fuxiPkg/FdtBlob/sm8550-xiaomi-fuxi.dtb, decompiled: tcsr_mutex_block reg = <0x1f40000 0x20000>; tcsr_mutex syscon = <tcsr_mutex_block 0x0 0x1000>; smem hwlocks = <&tcsr_mutex 3>"
 runtime_verified = false
+
+# The encoding, from the mainline driver rather than from guesswork. Verified against
+# drivers/hwspinlock/qcom_hwspinlock.c at torvalds/linux@7475ea8b58616b33c04afb976cf0fbaad9dd63fb: the tcsr-mutex match
+# data uses offset 0 and stride 0x1000 for 32 locks, the whole 32-bit register is the lock, acquiring writes the processor
+# id and confirms it by reading back, and releasing writes zero.
+encoding_source = "drivers/hwspinlock/qcom_hwspinlock.c @ torvalds/linux 7475ea8b58616b33c04afb976cf0fbaad9dd63fb"
+locks_per_bank = 32
+apps_proc_id = 1
+lock_stride = 0x1000
+smem_lock_register = 0x1f43000
+acquire_value = 1
+release_value = 0
+acquire_reads_back = true

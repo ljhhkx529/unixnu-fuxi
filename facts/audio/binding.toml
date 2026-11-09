@@ -160,3 +160,9 @@ tcsr_size = { value = 0x20000, state = "unverified", evidence = "hwlock.tcsr_siz
 syscon_offset = { value = 0x0, state = "unverified", evidence = "hwlock.syscon_offset" }
 syscon_size = { value = 0x1000, state = "unverified", evidence = "hwlock.syscon_size" }
 smem_lock_id = { value = 3, state = "unverified", evidence = "hwlock.smem_lock_id" }
+locks_per_bank = { value = 32, state = "unverified", evidence = "hwlock.locks_per_bank" }
+owner_id = { value = 1, state = "unverified", evidence = "hwlock.apps_proc_id" }
+lock_stride = { value = 0x1000, state = "unverified", evidence = "hwlock.lock_stride" }
+smem_lock_register = { value = 0x1f43000, state = "unverified", evidence = "hwlock.smem_lock_register" }
+acquire_value = { value = 1, state = "unverified", evidence = "hwlock.acquire_value" }
+release_value = { value = 0, state = "unverified", evidence = "hwlock.release_value" }

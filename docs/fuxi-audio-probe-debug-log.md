@@ -248,3 +248,49 @@ next_single_measurement: G1.3 的 host 部分（32/64 字节固定日志与回�
 
 **边界**：本层只证明算术与对称性。页表属性、MAIR 与 cache alias **不能**由 host 证明——那是 G2.6 的设备义务，
 runbook 已把这一点写死。
+
+---
+
+## G3 前置解除了：TCSR 编码有可引用来源
+
+原先 G3 卡在"锁寄存器编码不能臆造"。现在有了来源，而且来源是被核对过的代码而不是二手描述：
+
+```text
+来源: drivers/hwspinlock/qcom_hwspinlock.c @ torvalds/linux 7475ea8b58616b33c04afb976cf0fbaad9dd63fb
+tcsr-mutex 匹配数据: offset 0, stride 0x1000, 每 bank 32 把锁, regmap reg_stride 4, max_register 0x20000
+获取: 向字段写 QCOM_MUTEX_APPS_PROC_ID(1), 再读回, 读回等于 1 才算拿到
+释放: 读 owner, 然后写 0（即使 owner 不是我们，主线也照写 0，只是先报错）
+字段: REG_FIELD(base + id * stride, 0, 31) —— 整个 32 位寄存器就是一把锁
+```
+
+与 fuxi 自己的 DTB 对得上：`tcsr_mutex` 的 `syscon = <&tcsr_mutex_block 0x0 0x1000>`，SMEM 用 `hwlocks = <&tcsr_mutex 3>`，
+因此 **锁 3 的寄存器是 0x1f40000 + 3×0x1000 = 0x1f43000**。
+
+已实现 `package/QcomTcsrHwlock.c`（编码，参数化：base/stride/locks_per_bank/owner_id 都是参数），并与 H7 的
+策略层通过 `QcomHwlockDevice` 对接。
+
+```text
+test_id: G3-host
+result: PASS
+mapping_api: package/QcomTcsrHwlock.c + 注入式寄存器访问（host 用数组模拟）
+hwlock_acquire_rc: 覆盖 Ok / Busy（写丢失、读回不匹配）/ OwnerMismatch / BadId
+classification: 23 项断言。偏移：锁 0=0x1f40000、锁 3=0x1f43000、锁 31=0x1f5f000，锁 32 与 UINT32_MAX 越界被拒；
+               获取=一次写 owner id + 一次读回；写丢失（寄存器保留别人的 id）→ Busy；
+               释放别人的锁 → OwnerMismatch 但仍写 0；越界 id 不触达寄存器；
+               策略层通过编码适配器获取=一次写；重复获取被策略层拒（寄存器不再被写）；释放清 0
+next_single_measurement: G3 真机（同一个适配器对着真实 MMIO）
+```
+
+binding：118 字段，0 verified，**19 项引用已记录事实**（本轮 +6）。仍然 0 verified 是对的——**没有一个值在真机上被测量过**。
+
+## 另一个来源：fuxi 的 Linux 移植仓库
+
+`https://github.com/ilovecnxx/xiaomi13-fuxi-linux-ubuntu26.10-kernel7.3`（`main` = `7f12106`）已在 `/tmp/fuxi-linux`
+稀疏克隆。它与我们目标相关的部分：
+
+- `kernel/patches/0004-audio.patch`、`work/patches/audio-bringup-20261029/`（`audio.dtsi`、`sc8280xp.c` 机器驱动、
+  `stereo-routing.patch`、UCM 配置）——**S10/A3/A5 的板级事实来源**；
+- `device-info/cmd-db-fuxi.txt`——从设备抓下来的 **ADSP 命令数据库**，正是 A1（GPR/APM）要用的；
+- `research/01-mainline-drivers.md`——主线驱动调研。
+
+下一轮起用它给 `facts/audio` 补来源（尤其是当前 91 项无来源字段里的板级接线与命令面）。
