@@ -1,164 +1,105 @@
 /* SPDX-License-Identifier: BSD-2-Clause-Patent */
-/* The audio probe, stage 0: read SMEM through the ported driver and say what is there.
+/* The audio bring-up probe, one step per boot.
  *
- * The device has an ADSP this tree has never spoken to. Before anything is voted, clocked or written, one thing can be
- * established with reads alone: whether the SMEM partition exists at the address the platform documents, whether the
- * items the audio line needs are allocated, and what the SMP2P inbound item says. That answers the question the binding
- * cannot: which of its numbers are this board's rather than sheng's.
+ * The runbook in docs/fuxi-audio-probe-debug-runbook.md asks for experiments that are small enough that a failure names the
+ * action that failed. The earlier design built a 1.6 KiB report and printed it in one call, which made every crash a
+ * guess about which of six reads died. This one takes a step number, performs exactly one action, and prints two short
+ * checkpoints around it:
  *
- * Nothing here writes: it maps one range read-only and parses it with package/QcomSmem.c, the same code the host tests
- * drive, so a device run also checks that parser against real memory.
+ *   AUDIO step=3 phase=BEGIN
+ *   AUDIO step=3 phase=END rc=0 value=0x24434f54
  *
- * The report goes to the kernel log and, when asked, to the panic screen, because this phone has no serial console.
+ * A missing END with the control channel still answering points at that action; a missing END with the channel gone is a
+ * kernel fault inside it. Either way the next step is one action, not a rewrite.
+ *
+ * Steps (each needs its own boot, and nothing here writes):
+ *   1  create the descriptor and release it
+ *   2  create the descriptor and the mapping, report the virtual address, do not dereference
+ *   3  mapping, then one 32-bit read of the TOC magic
+ *   4  mapping, then one 32-bit read of the partition magic
+ *   5  mapping, then one 32-bit read of the item 478 header
  */
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
-#include <libkern/libkern.h>
 #include <kern/task.h>
 #include <kern/thread.h>
 #include <pexpert/pexpert.h>
 #include <stdarg.h>
 
 extern "C" {
-#include "QcomSmem.h"
-
-/* Legacy boot argument consumed only if native_audio_probe() is called.  The current boot path has no such caller. */
-int fuxi_audio_probe = 0;
-
-/* Retained for a future gated diagnostic provider; it must not be restored to the boot path. */
-void native_audio_probe(void);
+int fuxi_audio_step = 0;
 }
 
 #define kSmemBase 0x81d00000ull
 #define kSmemSize 0x200000u
-#define kRemotePid 2u
-
-enum {kItemOut = 429, kItemIn = 443, kItemCrash = 423, kItemGlinkDesc = 478, kItemGlinkTx = 479, kItemGlinkRx = 480};
-
-static const uint16_t kAudioItems[] = {kItemOut, kItemIn, kItemCrash, kItemGlinkDesc, kItemGlinkTx, kItemGlinkRx};
+#define kTocOffset (kSmemSize - 0x1000u)
+#define kPartitionOffset 0x19f000u
+#define kItem478Offset 0x19f030u
 
 namespace {
 
-char gReport[1600];
-size_t gUsed;
-
-void say(const char *format, ...)
+void checkpoint(int step, const char *phase, int rc, uint32_t value, int has_value)
 {
-    if (gUsed + 1u >= sizeof gReport) return;
-    va_list args;
-    va_start(args, format);
-    const int wrote = vsnprintf(gReport + gUsed, sizeof gReport - gUsed, format, args);
-    va_end(args);
-    if (wrote > 0) gUsed += (size_t)wrote;
-    if (gUsed >= sizeof gReport) gUsed = sizeof gReport - 1u;
-}
-
-/* The same bytes as words, which is what a descriptor is: eight of them for the GLINK header, the first few of a FIFO. */
-void sayWords(const QcomSmem *smem, uint32_t offset, uint32_t words)
-{
-    for (uint32_t i = 0; i < words; ++i) say(" %08x", qcom_smem_read32(smem, offset + 4u * i));
-}
-
-/* The first bytes of an item as text, so a name or a descriptor can be recognised without trusting it. */
-void sayBytes(const QcomSmem *smem, uint32_t offset, uint32_t limit)
-{
-    char text[33];
-    uint32_t used = 0;
-    for (uint32_t i = 0; i < limit && used < sizeof text - 1u; ++i) {
-        const uint32_t word = qcom_smem_read32(smem, offset + (i & ~3u));
-        const uint8_t c = (uint8_t)(word >> (8u * (i & 3u)));
-        text[used++] = (c >= 0x20 && c < 0x7f) ? (char)c : '.';
-    }
-    text[used] = 0;
-    say("'%s'", text);
-}
-
-void run()
-{
-    say("audio probe: smem 0x%llx + 0x%x\n", kSmemBase, kSmemSize);
-    IOMemoryDescriptor *descriptor = IOMemoryDescriptor::withPhysicalAddress(kSmemBase, kSmemSize, kIODirectionIn);
-    if (!descriptor) {say("smem: no descriptor\n"); return;}
-    IOMemoryMap *map = descriptor->createMappingInTask(kernel_task, 0, kIOMapAnywhere | kIOMapReadOnly);
-    descriptor->release();
-    if (!map || !map->getVirtualAddress()) {say("smem: not mapped\n"); if (map) map->release(); return;}
-
-    QcomSmem smem;
-    smem.base = (volatile uint8_t *)map->getVirtualAddress();
-    smem.size = kSmemSize;
-
-    /* The partition the APPS host shares with the ADSP, then the global one. */
-    QcomSmemPartition part;
-    const int rc = qcom_smem_partition(&smem, QCOM_SMEM_HOST_APPS, (uint16_t)kRemotePid, &part);
-    say("partition apps/adsp: rc %d", rc);
-    if (rc == QcomSmemOk) say(" at 0x%x size 0x%x cacheline %u\n", part.offset, part.size, part.cacheline);
-    else say("\n");
-
-    if (rc == QcomSmemOk) {
-        for (unsigned i = 0; i < sizeof kAudioItems / sizeof kAudioItems[0]; ++i) {
-            uint32_t offset = 0, size = 0;
-            const int found = qcom_smem_find(&smem, &part, kAudioItems[i], &offset, &size);
-            if (found != QcomSmemOk) {say("item %u: rc %d\n", kAudioItems[i], found); continue;}
-            say("item %u: at 0x%x size %u first 32 ", kAudioItems[i], offset, size);
-            sayBytes(&smem, offset, 32u);
-            say("\n");
-            /* Words as well: a descriptor or a FIFO header is numbers, not text. */
-            if (size >= 32u && offset < smem.size) {
-                say("  words:");
-                sayWords(&smem, offset, 8u);
-                say("\n");
-            }
-        }
-    }
-
-    /* Everything the partition holds, not only the six ids the audio line needs: what the boot loader set up is worth
-     * knowing before anything is allocated. */
-    if (rc == QcomSmemOk) {
-        const int items = qcom_smem_item_count(&smem, &part);
-        say("partition holds %d uncached items:", items);
-        for (int i = 0; i < items && i < 24; ++i) {
-            uint16_t id = 0;
-            uint32_t at = 0, bytes = 0;
-            if (qcom_smem_item_at(&smem, &part, (uint32_t)i, &id, &at, &bytes) == QcomSmemOk)
-                say(" %u@0x%x/%u", id, at, bytes);
-        }
-        say("\n");
-    }
-
-    /* The global partition carries the item table itself; its presence confirms the base is right. */
-    QcomSmemPartition global;
-    const int grc = qcom_smem_partition(&smem, QCOM_SMEM_HOST_GLOBAL, QCOM_SMEM_HOST_GLOBAL, &global);
-    say("partition global: rc %d", grc);
-    if (grc == QcomSmemOk) say(" at 0x%x size 0x%x\n", global.offset, global.size);
-    else say("\n");
-
-    map->release();
+    if (has_value) IOLog("AUDIO step=%d phase=%s rc=%d value=0x%08x\n", step, phase, rc, value);
+    else IOLog("AUDIO step=%d phase=%s rc=%d\n", step, phase, rc);
 }
 
 }  // namespace
 
-/* Historical delayed worker, currently unreachable.  Waiting for USB does not isolate a kernel fault: this code must be
- * split into individually acknowledged diagnostic steps before it gains a caller again. */
-#define kProbeDelayMs 20000u
+/* The checkpoints have to reach the host, and the USB CDC channel only exists after userland starts, so the step runs
+ * from a thread that waits for it. One boot still performs exactly one step: the thread only moves the moment, not the
+ * amount of work, and a fault inside the step still costs one boot and names itself in the log. */
+#define kStepDelayMs 15000u
 
-static void audioProbeThread(void *, wait_result_t)
+static int gStep;
+
+static void audioStepThread(void *, wait_result_t)
 {
-    IOSleep(kProbeDelayMs);
-    gUsed = 0;
-    gReport[0] = 0;
-    run();
-    IOLog("fuxi-audio-probe:\n%s", gReport);
-    if (fuxi_audio_probe >= 2) panic("fuxi-audio-probe:\n%s", gReport);
+    const int step = gStep;
+    IOSleep(kStepDelayMs);
+
+    /* Step 1: the descriptor alone. */
+    checkpoint(step, "BEGIN", 0, 0, 0);
+    IOMemoryDescriptor *descriptor =
+        IOMemoryDescriptor::withPhysicalAddress(kSmemBase, kSmemSize, kIODirectionIn);
+    if (!descriptor) {
+        checkpoint(step, "END", -1, 0, 0);
+        return;
+    }
+    if (step == 1) {
+        descriptor->release();
+        checkpoint(step, "END", 0, 0, 0);
+        return;
+    }
+
+    /* Steps 2 to 5: a read-only mapping, then one action. */
+    IOMemoryMap *map = descriptor->createMappingInTask(kernel_task, 0, kIOMapAnywhere | kIOMapReadOnly);
+    descriptor->release();
+    if (!map || !map->getVirtualAddress()) {
+        if (map) map->release();
+        checkpoint(step, "END", -2, 0, 0);
+        return;
+    }
+    const volatile uint32_t *base = (const volatile uint32_t *)map->getVirtualAddress();
+    if (step == 2) {
+        checkpoint(step, "END", 0, (uint32_t)(uintptr_t)base, 1);
+        return;
+    }
+
+    const uint32_t offset = step == 3 ? kTocOffset : (step == 4 ? kPartitionOffset : kItem478Offset);
+    const uint32_t value = base[offset / 4u];
+    checkpoint(step, "END", 0, value, 1);
 }
 
 extern "C" void native_audio_probe(void)
 {
-    /* The argument is read here so the patch that calls this stays one line. */
-    int value = 0;
-    if (PE_parse_boot_argn("fuxi-audio-probe", &value, sizeof value)) fuxi_audio_probe = value;
-    if (!fuxi_audio_probe) return;
+    int step = 0;
+    if (!PE_parse_boot_argn("fuxi-audio-step", &step, sizeof step) || step < 1) return;
+    fuxi_audio_step = step;
+    gStep = step;
     thread_t thread = nullptr;
-    if (kernel_thread_start(audioProbeThread, nullptr, &thread) != KERN_SUCCESS) {
-        IOLog("fuxi-audio-probe: no thread, skipped\n");
+    if (kernel_thread_start(audioStepThread, nullptr, &thread) != KERN_SUCCESS) {
+        IOLog("AUDIO step=%d phase=NOTHREAD\n", step);
         return;
     }
     thread_deallocate(thread);

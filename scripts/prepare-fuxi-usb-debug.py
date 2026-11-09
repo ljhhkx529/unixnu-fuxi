@@ -13,6 +13,28 @@ XNU_REVISION = 'd8b80295118ef25ac3a784134bcf95cd8e88109f'
 PROFILE = 'darwin23-fuxi'
 
 
+def source_sha256(module):
+    """Hash the module worktree that is copied into the consumer staging tree.
+
+    The device repository deliberately accepts reviewed, uncommitted module changes
+    during bring-up.  A Git revision alone therefore cannot identify the staged
+    source.  Ignore only Git metadata and interpreter caches; new source and test
+    files must invalidate the stage as well.
+    """
+    digest = hashlib.sha256()
+    for path in sorted(module.rglob('*')):
+        relative = path.relative_to(module)
+        if '.git' in relative.parts or '__pycache__' in relative.parts:
+            continue
+        if path.is_symlink():
+            digest.update(b'L\0' + str(relative).encode() + b'\0')
+            digest.update(str(path.readlink()).encode() + b'\0')
+        elif path.is_file():
+            digest.update(b'F\0' + str(relative).encode() + b'\0')
+            digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
 def replace_once(text, old, new):
     if text.count(old) != 1:
         raise ValueError('ambiguous source adaptation anchor: ' + old[:120])
@@ -27,9 +49,11 @@ def stage(module, xnu, output):
         raise ValueError('unexpected module/XNU source revision')
     takeover_patch = Path(__file__).with_name('fuxi-usb-exact-stream.patch')
     signature = hashlib.sha256(Path(__file__).read_bytes() + takeover_patch.read_bytes()).hexdigest()
+    module_sha256 = source_sha256(module)
     record = output / 'fuxi-stage.json'
     if record.is_file():
-        if json.loads(record.read_text())['adapter_sha256'] != signature:
+        staged = json.loads(record.read_text())
+        if staged.get('adapter_sha256') != signature or staged.get('module_sha256') != module_sha256:
             raise ValueError('staged adapter changed; use a fresh build tree')
         return
     if output.exists():
@@ -169,9 +193,9 @@ static void diag_checkpoint(unsigned int checkpoint)
     path = output / 'scripts/build.py'
     source = path.read_text()
     source = replace_once(source,
-        "'_bzero', '_memcpy', '_memset'}",
-        "'_bzero', '_memcpy', '_memset', '_fuxi_usb_probe_step',"
-        " '_qcom_reset_prepare_bootloader', '_qcom_reset_to_bootloader', '_qcom_reset_request'}")
+        "'_bzero', '_memcpy', '_memset', '_qcom_reset_request'}",
+        "'_bzero', '_memcpy', '_memset', '_qcom_reset_request', '_fuxi_usb_probe_step',"
+        " '_qcom_reset_prepare_bootloader', '_qcom_reset_to_bootloader'}")
     # Every refusal and every entry is traced: a bring-up that returns before its first logical probe
     # (a refused acquire, an already-set usb_busy) would otherwise leave no evidence at all.
     path.write_text(source)
@@ -182,7 +206,8 @@ static void diag_checkpoint(unsigned int checkpoint)
     text = replace_once(text, "profiles = {'sm8550': ROOT / 'soc/Sm8550.h'}", "profiles = {'sm8550': ROOT / 'soc/Sm8550.h', 'fuxi': ROOT / 'soc/FuxiSm8550.h'}")
     path.write_text(text)
     record.write_text(json.dumps(dict(module_revision=QUD_REVISION, xnu_revision=XNU_REVISION,
-                     adapter_sha256=signature, profile=PROFILE, reset_qualified=False,
+                     module_sha256=module_sha256, adapter_sha256=signature,
+                     profile=PROFILE, reset_qualified=False,
                      cold_initialization=False, hardware_verified=False,
                      exact_stream_takeover=True,
                      takeover_patch_sha256=hashlib.sha256(takeover_patch.read_bytes()).hexdigest()), indent=2) + '\n')

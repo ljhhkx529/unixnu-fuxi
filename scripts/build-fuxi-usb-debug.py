@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Build and qualify the selected fuxi USB archive using actual XNU records."""
 import json
+import hashlib
+import importlib.util
 import os
 from pathlib import Path
 import shutil
@@ -42,8 +44,28 @@ def resolve_qud_module():
 
 
 qud = resolve_qud_module()
-# Stage the pinned QcomXnuUsbDebug and its Darwin23/fuxi integration profile on first use
-# (prepare-fuxi-usb-debug.py is idempotent once the staged module record matches).
+# Stage the pinned QcomXnuUsbDebug and its Darwin23/fuxi integration profile.  The
+# module is an independent repository and bring-up commonly builds reviewed
+# worktree changes before they are committed, so HEAD is not a sufficient cache
+# key.  Recreate only this generated staging directory when its source digest (or
+# the consumer adapter digest) no longer matches.
+prepare_path = root / 'scripts/prepare-fuxi-usb-debug.py'
+prepare_spec = importlib.util.spec_from_file_location('prepare_fuxi_usb_debug', prepare_path)
+prepare_module = importlib.util.module_from_spec(prepare_spec)
+prepare_spec.loader.exec_module(prepare_module)
+
+stage_record = module / 'fuxi-stage.json'
+if stage_record.is_file():
+    staged = json.loads(stage_record.read_text())
+    adapter_inputs = prepare_path.read_bytes()
+    adapter_inputs += (root / 'scripts/fuxi-usb-exact-stream.patch').read_bytes()
+    adapter_sha256 = hashlib.sha256(adapter_inputs).hexdigest()
+    if (staged.get('module_sha256') != prepare_module.source_sha256(qud) or
+            staged.get('adapter_sha256') != adapter_sha256):
+        shutil.rmtree(module)
+elif module.exists():
+    # A failed adaptation must never become the input of the next archive build.
+    shutil.rmtree(module)
 if not (module / 'tests/check.py').is_file():
     subprocess.run([sys.executable, root / 'scripts/prepare-fuxi-usb-debug.py',
                     '--module', qud, '--xnu', root / 'refer/xnu',

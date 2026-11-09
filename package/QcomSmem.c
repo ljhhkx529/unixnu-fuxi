@@ -10,12 +10,34 @@
 #define ENTRY 16u
 
 uint32_t qcom_smem_read32(const QcomSmem *smem, uint32_t offset) {return *(volatile uint32_t *)(smem->base + offset);}
-void qcom_smem_write32(const QcomSmem *smem, uint32_t offset, uint32_t value)
+
+#if defined(QCOM_SMEM_TEST_TRACE_WRITES)
+extern void qcom_smem_test_trace_write(uint32_t offset, uint32_t value, int publishes);
+#define TRACE_WRITE(offset, value, publishes) qcom_smem_test_trace_write((offset), (value), (publishes))
+#else
+#define TRACE_WRITE(offset, value, publishes) ((void)(publishes))
+#endif
+
+static void store32(const QcomSmem *smem, uint32_t offset, uint32_t value, int publishes)
 {
     *(volatile uint32_t *)(smem->base + offset) = value;
+    TRACE_WRITE(offset, value, publishes);
+}
+
+void qcom_smem_write32(const QcomSmem *smem, uint32_t offset, uint32_t value)
+{
+    store32(smem, offset, value, 0);
+}
+
+static void publish32(const QcomSmem *smem, uint32_t offset, uint32_t value)
+{
+    /* Match qcom_smem_alloc_private(): the completed entry becomes visible before the free offset publishes it. */
 #if defined(__aarch64__) && defined(KERNEL)
     __asm__ volatile("dmb oshst" ::: "memory");
+#else
+    __atomic_thread_fence(__ATOMIC_RELEASE);
 #endif
+    store32(smem, offset, value, 1);
 }
 static uint32_t rd(const QcomSmem *s, uint32_t at) {return qcom_smem_read32(s, at);}
 static int fits(uint64_t at, uint64_t length, uint64_t size) {return at <= size && length <= size - at;}
@@ -105,9 +127,8 @@ int qcom_smem_alloc(const QcomSmem *smem, const QcomSmemPartition *p, uint16_t i
     qcom_smem_write32(smem, p->offset + at + 4, aligned);
     qcom_smem_write32(smem, p->offset + at + 8, aligned - size);  /* padding_data, padding_header 0 */
     qcom_smem_write32(smem, p->offset + at + 12, 0);
-    for (uint32_t i = 0; i < aligned; i += 4) qcom_smem_write32(smem, p->offset + at + ENTRY + i, 0);
-    /* The entry is complete before the free mark moves over it. */
-    qcom_smem_write32(smem, p->offset + 12, at + need);
+    /* The allocator owns the entry metadata, not the payload. Protocol initialization is a separate transaction. */
+    publish32(smem, p->offset + 12, at + need);
     return QcomSmemOk;
 }
 

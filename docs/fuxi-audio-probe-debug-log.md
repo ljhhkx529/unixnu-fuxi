@@ -73,3 +73,79 @@ next_single_measurement: H6（shadow allocation 的 byte diff）
 **没有任何一次**被当成合法分区表。
 
 **不做的事**：不据此宣称真实 SMEM 的页表属性或 cache 语义正确——那是 G2.6 的设备义务。
+
+---
+
+## H6 — shadow allocation byte-diff
+
+```text
+test_id: H6
+result: PASS
+device_commit: 工作区未提交（host 测试）
+kernel_commit: 未参与
+image_sha256: 未参与
+boot_args: 未参与
+smem_before_checksum: ba14d21544394d58
+smem_after_checksum: 108a80e8bc8c8a6b
+unexpected_diff: 无
+classification: 等价构造 SMEM image 的未使用 partition 区域预填 0xcc；一次 13-byte item allocation
+                只修改 16-byte entry header 和 offset_free_uncached。payload 16 bytes 保持 0xcc；
+                write trace 为四个非发布 entry writes，最后且唯一一次 publication 是 free offset。
+                重复 allocation 返回 Exists 且零写；空间不足返回 NoSpace 且零写。
+next_single_measurement: H7（bounded hwspinlock host model）
+```
+
+门禁：`python3 scripts/check-fuxi-audio-probe-h6.py`
+
+该门禁同时在 ASan/UBSan 下运行 16 项检查。allocator 不再隐式清零 payload；协议数据初始化必须在后续单独、可审计的
+transaction 中完成。测试 trace 由 `QCOM_SMEM_TEST_TRACE_WRITES` 仅在 host 测试构建启用，生产构建没有 trace 分支。
+
+**不做的事**：它没有映射真实 SMEM、没有取得 hwspinlock，也没有证明 Darwin mapping 属性、互连可见性或真实
+`dmb oshst` 效果。真实 snapshot 上的普通 RAM shadow 验证仍属于 G4；第一次真实写仍须等待 G2-G4 全部通过。
+
+---
+
+## H3 — 并发请求下的唯一 owner
+
+```text
+test_id: H3
+result: PASS
+device_commit: 51ec7d4（CDC 子仓库） / 设备仓库 V2
+kernel_commit: 未参与（host 测试）
+image_sha256: 未参与
+control_protocol_revision: DIAGSTATUS/DIAGARM/DIAGNEXT/DIAGCANCEL/DIAGRESET
+generation: 覆盖 1..3
+step_id: 覆盖 1
+hwlock_acquire_rc: 未参与
+begin_seen: 未参与
+end_seen: 未参与
+ping_before: 未参与
+ping_after: 未参与
+deadline_ms: 25（tick 单位）
+panic_or_reset_evidence: 无
+unexpected_diff: 无
+classification: 两次 NEXT 只有一次入队；两次 claim 只有一次成功；状态洪泛不改变任何字段；
+               RUNNING 时 RESET 被拒；NEXT 后 CANCEL 使该步不可再被 claim；旧 generation 的 ticket 无法完成新步
+next_single_measurement: H4
+```
+
+发现并修掉一个真实语义缺陷：**ticket 原来是值语义**——把赢家的 ticket 复制一份就能"再次完成"同一步。
+现在 ticket 带单调 id，状态在步结束（完成 / 超时 / 取消 / 断连）时失效该 id，因此**"精确一次"是被强制的**，
+不再是假设。
+
+## H4 — deadline 与超时上界
+
+```text
+test_id: H4
+result: PASS
+device_commit: 51ec7d4（CDC 子仓库）
+kernel_commit: 未参与（host 测试）
+deadline_ms: 25 / 10（tick 单位）
+panic_or_reset_evidence: 无
+classification: budget=0 被拒（不存在无界步）；deadline-1 仍 RUNNING；到达 deadline 记 TIMEOUT；
+               已超时后再完成返回 STALE，不能把超时改写成成功；超时后 state 仍可审计（step/generation/last_rc）；
+               reset 是唯一恢复路径，且下次 arm 是新 generation
+next_single_measurement: H5（已完成，见上）；G1.2 安全空 worker
+```
+
+门禁：`python3 -B drivers/QcomXnuUsbDebug/tests/check.py --target-clang <clang> --output <dir>` → **31 项全部通过**（ASan/UBSan）。

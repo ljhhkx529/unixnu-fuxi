@@ -141,9 +141,10 @@ Linux private allocator 的关键顺序是：
 2. `wmb()`；
 3. 最后推进 `offset_free_uncached`。
 
-当前 `qcom_smem_alloc()` 还会清零整个 payload，并且 `qcom_smem_write32()` 每个 word 都执行一次 `dmb oshst`。这不是
-主线 private allocator 的行为。真实写入前要在 shadow image 上证明 byte diff 和发布顺序；是否清零 payload 必须由协议需求决定，
-不能把 host array test 的成功当作 interconnect/cache/order 的证明。
+H6 已把 `qcom_smem_alloc()` 收敛为主线 private allocator 的发布形状：allocator 只写四个 entry word，不清零 payload；
+完成 entry 后执行一次 release barrier，最后推进 `offset_free_uncached`。协议 payload 的初始化属于后续独立 transaction，
+不能隐含在 allocation 中。H6 的 host trace 只证明源代码写集合与顺序，不能把 host array test 的成功当作
+interconnect/cache/order 的真机证明。
 
 ## 4. 推荐调试架构
 
@@ -292,6 +293,9 @@ last_completed_step
 - **步骤**：记录 before checksum；只申请一个 item；生成 byte diff；重新解析；再申请同 item。
 - **PASS**：diff 只含新 entry header 和最后发布的 free offset；existing 返回 Exists；no-space 完全不改 image。
 - **重点**：分别验证“是否清零 payload”的设计决定，不要沿用当前实现而不解释。
+- **当前结果**：PASS（`scripts/check-fuxi-audio-probe-h6.py`）。等价构造 image 的未用区域填充 `0xcc`；16 项检查证明
+  payload 保持不变、diff 仅落在新 entry header 与 free offset、重复 item/空间不足均为零写入，且 trace 中四个 entry word
+  后只有一次最终 publication。它不替代 G4 的真实脱敏 snapshot，也不授权真实 SMEM 写入。
 
 ### H7：hwspinlock 模型
 
@@ -526,3 +530,39 @@ Host、build 和 device 结果必须分开写。`host PASS` 不能写成 `device
 ```
 
 在 G5 之前，目标不是“尽快写进 SMEM”，而是把所有可能让系统和串口同时死亡的动作缩成一个能够唯一归因的最小步骤。
+
+## 13. 执行记录
+
+### H1-H4 与 G1.1-G1.2：NOOP 控制通道和一次性 worker 已完成真机验收
+
+- CDC 新增固定 verb：`DIAGSTATUS`、`DIAGARM`、`DIAGNEXT`、`DIAGCANCEL`、`DIAGRESET`。
+- provider 固定为 `noop`；`DIAGNEXT` 只创建一次性空 worker，不创建音频线程、不映射 SMEM、不访问 MMIO。
+- 只有 ACK 完整入队并提交 control sequence 后，状态才进入 queued；随后单步完成为 done。
+- 回压不会消费 control sequence，也不会改变诊断状态。
+- host 模型与 codec：31 项通过；独立 ARM64 模块归档构建通过。
+- 真机镜像：kernel SHA-256 `c793f715fa99ba6da2d8f8005c8981b939a74d54952048e384af1580c2bd8ca6`；
+  boot.img SHA-256 `5e068a4b525f4c86f29bdb6aa1ab62b3f0653bc846f6fb8c85cf27e9ccd14d24`。
+- 真机 G1：`idle -> armed -> queued -> done -> idle`；每次回复均为 `provider=noop rc=0`，之后 PING 正常。
+- H3/H4：单 ticket 独占、重复 ARM/NEXT、回压、旧 generation completion、deadline 边界、迟到 completion
+  与 deadline 饱和均有主机测试；timeout 不强杀线程，活动 ticket 返回前拒绝 RESET。
+- G1.2 最终安全镜像：kernel SHA-256 `60d4370f583b9b68b0f1fc57fc51118bc29191fe9da3ca8d38f104fbb5562120`；
+  boot.img SHA-256 `c871ff6f18ff5ccc3f8750c53eedf3006dc65988718c6ef6c647bfaa64e07a8f`。
+- 真机 worker 证据：`claims 0 -> 1`、`finishes 0 -> 1`、`active=0`、`timeouts=0`；第二次 ARM 返回
+  `ERR rc=-1` 且 generation 不变；RESET 后 idle，PING 正常。捕获目录：
+  `/tmp/fuxi-usb/g12-safe-final-20261109-091835`。
+- H0 已恢复 PASS：默认 boot path 不再调用 `native_audio_probe()`；最终捕获无 `AUDIO step=`。
+- 本轮仍未建立 descriptor、mapping 或 SMEM 访问；G2 及以后保持未开始。
+
+### 构建与启动事故记录：Data seed UUID 和 CDC staging
+
+- `kern_exec.c:8196` 的 `offline scratch Data mount failed` 不是 DIAG fault。失败镜像把
+  UUID 为 `E095FBF5-B5BA-43CE-ABD7-BF2618B0158C` 的 `out/ipsw/21H461/data.dbr`
+  与绑定 `B2A023C5-CC73-45C1-A9E6-26AC8BDD2822` 的内核组合，
+  `native_ram_block_volume_seed()` 因 UUID 不匹配找不到卷。
+- 改回 `out/fuxi/build/owner-data-fixture/owner-data-16g.dbr` 后，真机日志确认
+  `disk1s1` UUID 为 `B2A023C5-CC73-45C1-A9E6-26AC8BDD2822`、Data mount-complete，随后执行 `/sbin/launchd`。
+- UniXNU payload 构建现在会在 packed seed 的 APFS UUID 与内核配置不同时直接失败；正确 seed 的
+  `payload.json` 记录 `data_volume_uuid=B2A023C5-CC73-45C1-A9E6-26AC8BDD2822`，错误 seed 不再能进入 boot.img。
+- `build-fuxi-usb-debug.py` 原先只在 staging 目录不存在时复制独立 CDC 仓库；因此子仓库工作区的新 DIAG
+  已独立编译，却没有进入完整内核。staging 记录现在包含模块工作区 SHA-256；源码或消费端适配器变化时只重建
+  该生成目录，失败留下的半成品 staging 也不会被下一轮复用。

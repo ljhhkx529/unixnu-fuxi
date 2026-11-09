@@ -39,7 +39,8 @@ int qcom_smem_partition(const QcomSmem *smem, uint16_t host, uint16_t remote, Qc
 /* Offset of the item's data from the SMEM base and its size; QcomSmemMissing when the item is not there. */
 int qcom_smem_find(const QcomSmem *smem, const QcomSmemPartition *part, uint16_t item, uint32_t *offset, uint32_t *size);
 /* Allocates an uncached item of size bytes (rounded up to 8). QcomSmemExists if it is there already (not an error for callers that
- * only need it to exist). Hardware mutex held by the caller. */
+ * only need it to exist). The payload is deliberately left untouched: protocol initialization is a separate transaction. The
+ * entry is completed before a release barrier and the final free-offset publication. Hardware mutex held by the caller. */
 int qcom_smem_alloc(const QcomSmem *smem, const QcomSmemPartition *part, uint16_t item, uint32_t size);
 
 /* The uncached items a partition holds, for a caller that has to report what is there rather than ask for a name it
