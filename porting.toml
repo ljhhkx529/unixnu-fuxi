@@ -191,6 +191,8 @@ procedure = [
   "Run scripts/check-fuxi-audio-binding.py after changing any audio configuration field; a consuming build must pass --require-verified.",
   "Run scripts/check-fuxi-audio-sheng-refs.py <sheng checkout> after changing any value the binding takes from the reference implementation.",
   "Run scripts/check-fuxi-audio-facts.py after changing the board facts.",
+  "Run scripts/fuxi-audio-device.sh before any device work: it reports fastboot, serial or absent with an exit code that matches, because the owner decides which state the phone is in.",
+  "Run scripts/fuxi-audio-s0.sh once per stable boot; three records in facts/audio/s0-boots.txt are S0's gate.",
   "Run scripts/check-fuxi-audio-records.py after changing moving, renaming or deleting a file this area declares.",
   "Run scripts/check-geni-i2c-host.py after changing the GENI I2C core (sheng's, copied unchanged).",
   "Run scripts/check-gpr-host.py after changing the packet codec or the framework readiness query.",

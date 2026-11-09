@@ -719,3 +719,29 @@ struct param_id_i2s_intf_cfg { uint32_t lpaif_type; uint32_t intf_idx; uint16_t 
 我们的绑定结构与协议结构是一一对应的，这一点以前只是"看起来像"，现在有定义了。
 
 无来源：**5 项**（`interface_word`、`reg_asp_enables`、`device_id_value`、`revision_value`、`buffer_address`）。
+
+---
+
+## 设备状态探测与 S0 的单次启动脚本
+
+设备有**两条**被访问的通道，由所有者的按键决定走哪条，所以每轮都应该先问而不是假设：
+
+```bash
+scripts/fuxi-audio-device.sh
+#   state=fastboot serial=<id>        退出码 0
+#   state=serial run=... captured=... 退出码 1（能 PING 通，说明有 qcom-usb-debug 的内核在跑）
+#   state=absent last_capture=...     退出码 2（关机、或在别的系统里）
+```
+
+本轮实测：**state=absent**（不在 fastboot，串口控制通道也拒绝连接，最新捕获是旧的）。
+
+同时把 **S0 的一次启动**做成可重复执行的脚本：`scripts/fuxi-audio-s0.sh`。它做一次启动并验证：
+
+1. 设备必须在 fastboot，否则直接拒绝（退出码 1，带当前状态）；
+2. 用**正确的 Data seed**（`out/fuxi/build/owner-data-fixture/owner-data-16g.dbr`）构建 payload 与镜像；
+3. **校验 payload 里装的就是刚构建的内核**（sha256 相等），并校验 `board.toml` 不含任何 `fuxi-audio-step`/`fuxi-audio-probe`；
+4. 启动后**等控制通道应答**（最多 90 s，不是固定 sleep）；
+5. 记录 kernel sha、image sha、seed、控制通道应答、捕获路径与"音频行数"到 `facts/audio/s0-boots.txt`；
+6. 若控制通道无应答或捕获里出现任何音频行 → **FAIL**。
+
+S0 的验收是**三次**这样的记录，中间需要所有者按键让手机回到 fastboot——脚本只做一次，因为这个动作我不能替你做。
