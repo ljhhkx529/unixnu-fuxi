@@ -222,3 +222,29 @@ smem:             qcom,smem       hwlocks = <&tcsr_mutex 3>
 因此**不写入任何编码**，G3 挂起等待来源。
 
 binding 现状：112 字段，0 verified，**13 项现在引用已记录事实**（本轮新增 5 项 DTB 事实）。
+
+---
+
+## H8 — mapping helper 合约（S2 前半）
+
+```text
+test_id: H8
+result: PASS
+device_commit: b7e123f（设备仓库 V2）
+kernel_commit: 未参与（host 测试）
+mapping_api: package/QcomMapping.c + 注入式 backend（host 用 mock）
+requested_cache_attribute: 未参与（本层不做属性）
+observed_cache_attribute: 未参与
+unexpected_diff: 无
+classification: 31 项断言。非页对齐 PA → backend 收到页对齐基址；跨页范围 → 窗口扩到两页；
+               偏移与页倍数长度不多要一页；零长度、回绕溢出、无 backend 三种拒绝都不触达 backend；
+               backend 失败不留任何状态且其后 unmap 返回 NotMapped；重复 map 被拒（backend 只获取一次）；
+               重复 unmap 被拒（release 只发生一次）；release 收到与 acquire 完全相同的 VA；
+               4 KiB 与 16 KiB 页对同一请求给出不同窗口与相同偏移；page_size=0 取 16 KiB 默认
+next_single_measurement: G1.3 的 host 部分（32/64 字节固定日志与回压计数）
+```
+
+门禁：`python3 scripts/check-qcom-mapping-host.py`（ASan/UBSan）。
+
+**边界**：本层只证明算术与对称性。页表属性、MAIR 与 cache alias **不能**由 host 证明——那是 G2.6 的设备义务，
+runbook 已把这一点写死。

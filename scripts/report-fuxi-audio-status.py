@@ -57,6 +57,7 @@ def main() -> int:
                           ("探针 H0", "scripts/check-fuxi-audio-probe-h0.py"),
                           ("探针 H5", "scripts/check-fuxi-audio-probe-h5.py"),
                           ("探针 H7", "scripts/check-qcom-hwspinlock-host.py"),
+                          ("探针 H8", "scripts/check-qcom-mapping-host.py"),
                           ("探针 H6", "scripts/check-fuxi-audio-probe-h6.py"),
                           ("sheng 参考", "scripts/check-fuxi-audio-sheng-refs.py")):
         result = subprocess.run([sys.executable, str(ROOT / script)], capture_output=True, text=True)
