@@ -41,8 +41,8 @@ Data UUID          B2A023C5-CC73-45C1-A9E6-26AC8BDD2822
 
 | 层级 | 状态 | 仍缺少的第一性证据 |
 | --- | --- | --- |
-| H7/H8 | 未完成 | hwspinlock host model；mapping helper 的对齐、属性和对称释放合约 |
-| G1.3 | 未完成 | 32/64-byte 日志与 CDC 回压的真机验收 |
+| H7/H8 | PASS（host） | H7 32 项、TCSR 编码 23 项；H8 mapping helper 31 项，均经 ASan/UBSan |
+| G1.3 | host PASS / device 未完成 | 200 条 32/64-byte 消息和控制回复无丢失/重排；仍缺真机并发日志验收 |
 | G2 | 未完成 | descriptor/map/单 word read/unmap 和 cache 属性 parity 的分步真机证据 |
 | G3 | 未完成 | TCSR hwspinlock 3 的真机识别、bounded acquire/release |
 | G4 | 未完成 | 从真实只读 snapshot 复制到普通 RAM 后的 shadow allocation |
@@ -115,8 +115,8 @@ UniXNU 已增加打包门禁：命令行含 `sheng-gpu-addon=1` 时，缺 `--gpu
 | 阶段 | 目标 | 写硬件/共享内存 | 入口条件 | 出口 |
 | --- | --- | --- | --- | --- |
 | S0 | 冻结安全基线 | 否 | 当前镜像 | 3/3 稳定启动与回归记录 |
-| S1 | H7 hwspinlock 模型 | 否，host | H6 PASS | 锁模型 sanitizer PASS |
-| S2 | H8 mapping 合约 + G1.3 | 仅 host/NOOP | S1 PASS | helper 合约与小日志 PASS |
+| S1 | H7 hwspinlock 模型 | 否，host | H6 PASS | **PASS：32 项策略 + 23 项 TCSR 编码** |
+| S2 | H8 mapping 合约 + G1.3 | 仅 host/NOOP | S1 PASS | **H8 PASS、G1.3 host PASS；device 半待执行** |
 | S3 | G2.1 descriptor 生命周期 | 否 | S2 PASS | descriptor create/release PASS |
 | S4 | G2.2–G2.5 最小只读 mapping | 只读 | S3 PASS | map/read/unmap 分步 PASS |
 | S5 | G2.6 cache 属性 parity | 只读 | S4 PASS | 属性/alias 风险关闭 |

@@ -778,3 +778,26 @@ qcom_usb_diag_result = qcom_usb_debug_control_run_diag(qcom_usb_diag_generation,
 传输层的 `qcom_usb_debug_control_run_diag()`：校验 ticket 仍是领取时的那张、步已编译且已实现，否则返回
 `STALE`/`REFUSED`；当前只有 NOOP 走通。**这样每个步骤的行为都能在传输层写、在传输层测**，
 而线程保持"跑一次、发布结果、终止"这一件简单的事。
+
+---
+
+## CDC 恢复与 S2 host 收束（2026-11-09）
+
+后续 step-runner `88e0e5b` 尚未经过真机生命周期验收，按设备所有者要求从实验镜像中撤回。当前构建 pin 和父仓库
+gitlink 均恢复为最后一次真机验收的 `51ec7d4`；`88e0e5b` 仍由子仓库 `main` 保存，没有删除历史。
+
+```text
+result: PASS（host/build）；device INCONCLUSIVE（本机未枚举 fastboot 或 CDC）
+cdc_revision: 51ec7d45aca49da8cdddc1ae5a9105885e567313
+cdc_archive_sha256: 3640d118c2c6268f4a8e78ebdc042fd0cad5696357fa33b7c38ca7d50bce2aba
+kernel_sha256: d261f263271f416aecb9e1a77547612dfc76ea1e2bdb0b9a6ddd5c02ff89f0a1
+payload_sha256: 76b1aa23d91eebdef6f42a0b305ed7dd18a8a545cd77369dc9a5444246f2f05b
+bootimg_sha256: 5bd914a9bd9bdeba83e2ff138b7a1604cf94a79198f81ce023610828544cae9a
+classification: staged module 明确记录 51ec7d4；42 项适配模型与 20 项 XNU integration 通过；
+                archive 中不存在 sxnu_diag_step 符号。H7 32 项、TCSR 23 项、H8 31 项通过。
+                G1.3 host 半以 200 条 32/64-byte 消息 + 1 条控制回复通过，运行时代码未改变。
+next_single_measurement: 设备枚举到 fastboot 后执行 S0 第 1/3 次启动和 G1.3 device 半
+```
+
+旧的 S0 脚本也已修正：payload 强制带 GPU addon、Metal owner trust 和正确 Data seed，并从 `payload.json` 验证
+kernel hash、addon/trust 非空及 Data UUID；不再读取构建结束后已删除的 staging 文件。

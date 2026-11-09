@@ -14,6 +14,8 @@ WX=$(dirname "$DEVICE")
 UNIXNU="$WX/UniXNU"
 PROFILE=out/fuxi/ipados-17.7.11-21H461/fuxi
 SEED="${FUXI_DATA_SEED:-$UNIXNU/out/fuxi/build/owner-data-fixture/owner-data-16g.dbr}"
+GPU_ADDON="${FUXI_GPU_ADDON:-$UNIXNU/$PROFILE/tree/build/fuxi-gpu-addon.ngpu}"
+OWNER_TRUST="${FUXI_OWNER_TRUST:-$UNIXNU/$PROFILE/tree/build/adreno-metal-plugin/owner-trust.bundle}"
 IMAGE="${FUXI_S0_IMAGE:-/tmp/fuxi-s0.img}"
 RECORD="${FUXI_S0_RECORD:-$DEVICE/facts/audio/s0-boots.txt}"
 WAIT="${FUXI_S0_WAIT:-90}"
@@ -26,16 +28,31 @@ state=fastboot*) ;;
 esac
 
 [ -f "$SEED" ] || { echo "no data seed at $SEED"; exit 1; }
+[ -f "$GPU_ADDON" ] || { echo "no GPU addon at $GPU_ADDON"; exit 1; }
+[ -f "$OWNER_TRUST" ] || { echo "no Metal owner trust cache at $OWNER_TRUST"; exit 1; }
 
 cd "$UNIXNU"
-./unixnu build payload --uefi ../uefi-fuxi --kernel "$PROFILE/kernel/kernel.macho" \
-    --unique-chip-id 0x0123456789abcdef --data-ramdisk "$SEED" > /tmp/fuxi-s0-payload.log 2>&1
-./unixnu bootimg --uefi ../uefi-fuxi --target DEBUG \
+./unixnu build payload -D ../unixnu-fuxi --uefi ../uefi-fuxi --kernel "$PROFILE/kernel/kernel.macho" \
+    --unique-chip-id 0x0123456789abcdef --data-ramdisk "$SEED" \
+    --owner-trust-cache "$OWNER_TRUST" --gpu-addon "$GPU_ADDON" > /tmp/fuxi-s0-payload.log 2>&1
+./unixnu bootimg -D ../unixnu-fuxi --uefi ../uefi-fuxi --target DEBUG \
     --dtb ../uefi-fuxi/Platforms/Xiaomi/fuxiPkg/FdtBlob/sm8550-xiaomi-fuxi.dtb -o "$IMAGE" > /tmp/fuxi-s0-bootimg.log 2>&1
 
 kernel_sha=$(shasum -a 256 "$PROFILE/kernel/kernel.macho" | cut -d' ' -f1)
-payload_kernel=$(shasum -a 256 "$PROFILE/payload/stage/EFI/UniXNU/Payloads/kernel.macho" | cut -d' ' -f1)
+read -r payload_kernel payload_gpu payload_trust payload_uuid < <(python3 - "$PROFILE/payload/payload.json" <<'PY'
+import json
+import sys
+d = json.load(open(sys.argv[1]))
+print(d.get("kernel_sha256") or "missing", d.get("gpu_addon_sha256") or "missing",
+      d.get("trust_cache_sha256") or "missing", d.get("data_volume_uuid") or "missing")
+PY
+)
 [ "$kernel_sha" = "$payload_kernel" ] || { echo "the payload does not carry the kernel that was built"; exit 1; }
+[ "$payload_gpu" != missing ] || { echo "the payload has no GPU addon"; exit 1; }
+[ "$payload_trust" != missing ] || { echo "the payload has no Metal owner trust cache"; exit 1; }
+[ "$payload_uuid" = B2A023C5-CC73-45C1-A9E6-26AC8BDD2822 ] || {
+    echo "the payload has the wrong Data UUID: $payload_uuid"; exit 1;
+}
 image_sha=$(shasum -a 256 "$IMAGE" | cut -d' ' -f1)
 if grep -q 'fuxi-audio-step\|fuxi-audio-probe' "$DEVICE/board.toml"; then
     echo "board.toml asks for an audio step; this is not a default image"; exit 1
@@ -43,11 +60,16 @@ fi
 
 cd "$DEVICE"
 ./scripts/fuxi-usb-debug.sh start >/dev/null 2>&1 || true
-fastboot boot "$IMAGE" > /tmp/fuxi-s0-fastboot.log 2>&1
+# This bootloader acknowledges `fastboot boot` but does not reliably expose the
+# XNU CDC device afterwards.  Use the project's qualified boot_a workflow.
+fastboot flash boot "$IMAGE" > /tmp/fuxi-s0-fastboot.log 2>&1
+fastboot reboot >> /tmp/fuxi-s0-fastboot.log 2>&1
 
 answer=""
 for _ in $(seq 1 "$WAIT"); do
-    answer=$(./scripts/fuxi-usb-debug.sh ctl ping 2>&1 | tail -1)
+    # The port normally does not exist for the first part of boot.  Under
+    # `set -e`, a failed early probe must not terminate the bounded wait.
+    answer=$(./scripts/fuxi-usb-debug.sh ctl ping 2>&1 | tail -1 || true)
     case "$answer" in *'"ok": true'*) break ;; esac
     answer=""
     sleep 1
@@ -63,6 +85,7 @@ mkdir -p "$(dirname "$RECORD")"
     echo "  kernel_sha256=$kernel_sha"
     echo "  image_sha256=$image_sha"
     echo "  seed=$SEED"
+    echo "  gpu_addon_sha256=$payload_gpu owner_trust_sha256=$payload_trust data_uuid=$payload_uuid"
     echo "  control=$( [ -n "$answer" ] && printf '%s' "$answer" | sed 's/^ *//' || echo 'no answer' )"
     echo "  capture=$capture audio_lines=$audio_lines"
 } | tee -a "$RECORD"

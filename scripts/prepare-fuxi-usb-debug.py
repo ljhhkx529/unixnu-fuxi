@@ -8,7 +8,9 @@ from pathlib import Path
 import shutil
 import subprocess
 
-QUD_REVISION = '88e0e5b694e91518eca38d739d54e84b46d7287f'
+# G1.3 candidate: the first three fixed, non-hardware steps only.  Descriptor,
+# mapping, MMIO and SMEM-write operations remain compile-time unimplemented.
+QUD_REVISION = '62f2ef8ed0b154531be005605ac08409ae14b029'
 XNU_REVISION = 'd8b80295118ef25ac3a784134bcf95cd8e88109f'
 PROFILE = 'darwin23-fuxi'
 
