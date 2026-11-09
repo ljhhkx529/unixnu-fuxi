@@ -149,3 +149,28 @@ next_single_measurement: H5（已完成，见上）；G1.2 安全空 worker
 ```
 
 门禁：`python3 -B drivers/QcomXnuUsbDebug/tests/check.py --target-clang <clang> --output <dir>` → **31 项全部通过**（ASan/UBSan）。
+
+---
+
+## 基线冻结（2026-11-09）
+
+| 仓库 | 分支 | 提交 |
+| --- | --- | --- |
+| UniXNU | `main` | `b973dae`（payload 校验 Data seed 的 APFS UUID） |
+| 设备仓库 | `V2` | `50027b2` |
+| CDC 子仓库 | `main` | `51ec7d4` |
+
+**已验收镜像**（G1 NOOP 真机 PASS，来自 runbook 第 13 节）：
+
+```text
+kernel  sha256 c793f715fa99ba6da2d8f8005c8981b939a74d54952048e384af1580c2bd8ca6
+boot.img sha256 5e068a4b525f4c86f29bdb6aa1ab62b3f0653bc846f6fb8c85cf27e9ccd14d24
+```
+
+**当前工作区产物不是已验收镜像**：`out/fuxi/.../kernel/kernel.macho` 为单步探针实验所构建，
+sha256 `5917b722da70c9cef75c127387afa4d1f9ec7dd6be17f2718443093bf1aa4065`。
+任何 G2 实验必须记录它实际运行的内核哈希，不得把两者混为一谈。
+
+重建已验收镜像的做法：用上表三个提交，`CONFIG_XNU_OWNER_DATA_MOUNT=y`、Data seed 用
+`out/fuxi/build/owner-data-fixture/owner-data-16g.dbr`（UUID `B2A023C5-CC73-45C1-A9E6-26AC8BDD2822`），
+且 `board.toml` 不含 `fuxi-audio-step`。
