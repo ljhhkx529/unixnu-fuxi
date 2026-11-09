@@ -333,3 +333,30 @@ binding 现状：**129 字段，0 verified，30 项引用已记录事实**（本
 
 91 项里最大的一块是 `[amp.registers]` 的 28 个 `reg_*`（CS35L41 寄存器地址）。下一轮用同样的办法从主线
 `sound/soc/codecs/cs35l41.h` 取名字与地址——那是 A3/S14 的真实依据，不是猜。
+
+---
+
+## S10 文件审计（第二部分）：CS35L41 的寄存器地址有出处了
+
+来源：主线 `include/sound/cs35l41.h` 与 `sound/soc/codecs/cs35l41-lib.c`
+（`torvalds/linux@7475ea8b58616b33c04afb976cf0fbaad9dd63fb`，shell 里 curl 可取）。
+
+**只填了名字与用法都能对上的**：
+
+| binding 字段 | 主线定义 | 地址 |
+| --- | --- | --- |
+| `reg_device_id` | `CS35L41_DEVID` | 0x00000000 |
+| `reg_revision` | `CS35L41_REVID` | 0x00000004 |
+| `reg_global_enables` | `CS35L41_PWR_CTRL1`（bit0 = `GLOBAL_EN_MASK`，写入处已核对） | 0x00002014 |
+| `reg_block_enables` | `CS35L41_PWR_CTRL2`（boost/监视器/主功放的位都在这） | 0x00002018 |
+| `reg_mute` | `CS35L41_AMP_OUT_MUTE` | 0x00002024 |
+| `reg_pll_ctrl` | `CS35L41_PLL_CLK_CTRL` | 0x00002C04 |
+| `reg_boost_peak` | `CS35L41_BSTCVRT_PEAK_CUR` | 0x00003808 |
+| `reg_irq1_mask1` | `CS35L41_IRQ1_MASK1` | 0x00010110 |
+
+**明确没填的**（写进 manifest 的 `unnamed` 字段）：`reg_asp_enables`、`reg_asp_ctrl`、`reg_boost_cap`、
+`reg_irq1_eint1`、`reg_irq1_eint2`。原因各不相同——块使能是 `PWR_CTRL2/3` 的位而不是独立寄存器；ASP 使能掩码属于
+头文件里没按这个名字命名的控制寄存器；boost 电容是系数而不是单独寄存器；两个 EINT 字段在头文件里叫
+`IRQ1_STATUS1/STATUS2`，与本项目的命名不一致。**名字对不上就不写**，这比填一个看起来合理的数字强。
+
+binding 现状：**129 字段 · 0 verified · 37 项引用已记录事实（本轮 +8）· 8 项 sheng 预测 · 84 项无来源**（上一轮 91）。

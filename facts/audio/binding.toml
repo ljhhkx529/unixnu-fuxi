@@ -117,19 +117,19 @@ expected_periods = { value = 0, state = "unverified", evidence = "none" }
 
 # The part's registers and the values this board programs into them.
 [amp.registers]
-reg_device_id = { value = 0, state = "unverified", evidence = "none" }
-reg_revision = { value = 0, state = "unverified", evidence = "none" }
-reg_global_enables = { value = 0, state = "unverified", evidence = "none" }
-reg_block_enables = { value = 0, state = "unverified", evidence = "none" }
+reg_device_id = { value = 0x00000000, state = "unverified", evidence = "linux_cs35l41.device_id" }
+reg_revision = { value = 0x00000004, state = "unverified", evidence = "linux_cs35l41.revision" }
+reg_global_enables = { value = 0x00002014, state = "unverified", evidence = "linux_cs35l41.global_enables" }
+reg_block_enables = { value = 0x00002018, state = "unverified", evidence = "linux_cs35l41.block_enables" }
 reg_asp_enables = { value = 0, state = "unverified", evidence = "none" }
 reg_asp_ctrl = { value = 0, state = "unverified", evidence = "none" }
-reg_boost_peak = { value = 0, state = "unverified", evidence = "none" }
+reg_boost_peak = { value = 0x00003808, state = "unverified", evidence = "linux_cs35l41.boost_peak" }
 reg_boost_cap = { value = 0, state = "unverified", evidence = "none" }
-reg_pll_ctrl = { value = 0, state = "unverified", evidence = "none" }
-reg_mute = { value = 0, state = "unverified", evidence = "none" }
+reg_pll_ctrl = { value = 0x00002C04, state = "unverified", evidence = "linux_cs35l41.pll_ctrl" }
+reg_mute = { value = 0x00002024, state = "unverified", evidence = "linux_cs35l41.mute" }
 reg_irq1_eint1 = { value = 0, state = "unverified", evidence = "none" }
 reg_irq1_eint2 = { value = 0, state = "unverified", evidence = "none" }
-reg_irq1_mask1 = { value = 0, state = "unverified", evidence = "none" }
+reg_irq1_mask1 = { value = 0x00010110, state = "unverified", evidence = "linux_cs35l41.irq1_mask1" }
 device_id_value = { value = 0, state = "unverified", evidence = "none" }
 revision_value = { value = 0, state = "unverified", evidence = "none" }
 enable_value = { value = 0, state = "unverified", evidence = "none" }

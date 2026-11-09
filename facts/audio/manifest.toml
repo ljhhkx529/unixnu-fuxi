@@ -193,3 +193,20 @@ card = "xiaomi,fuxi-sndcard model Xiaomi-13, topology qcom/sm8550/Xiaomi-13-tplg
 amp_dsp_firmware = "cirrus/cs35l41-dsp1-spk-prot-xiaomi-fuxi-B.{wmfw,bin} and the T counterpart"
 earpiece_mux_gpio = 68
 runtime_verified = false
+
+# The amplifier's register addresses, from the mainline driver rather than from a datasheet transcription. Each one below
+# has an exact name in include/sound/cs35l41.h at torvalds/linux@7475ea8b58616b33c04afb976cf0fbaad9dd63fb, and the global
+# enable is cited to the code that writes it: regmap_update_bits(regmap, CS35L41_PWR_CTRL1, CS35L41_GLOBAL_EN_MASK, ...)
+# in sound/soc/codecs/cs35l41-lib.c. Nothing here says what our own driver will write into them.
+[linux_cs35l41]
+source = "include/sound/cs35l41.h and sound/soc/codecs/cs35l41-lib.c @ torvalds/linux 7475ea8b58616b33c04afb976cf0fbaad9dd63fb"
+device_id = 0x00000000        # CS35L41_DEVID
+revision = 0x00000004         # CS35L41_REVID
+global_enables = 0x00002014   # CS35L41_PWR_CTRL1, global enable is bit 0 (CS35L41_GLOBAL_EN_MASK)
+boost_peak = 0x00003808       # CS35L41_BSTCVRT_PEAK_CUR
+pll_ctrl = 0x00002C04         # CS35L41_PLL_CLK_CTRL
+mute = 0x00002024             # CS35L41_AMP_OUT_MUTE
+irq1_mask1 = 0x00010110       # CS35L41_IRQ1_MASK1
+block_enables = 0x00002018    # CS35L41_PWR_CTRL2: the register whose bits the driver toggles for boost, the monitors and the main amplifier
+unnamed = "No register with these meanings is named in the header: the block enables are individual bits of PWR_CTRL2/PWR_CTRL3, the ASP enable masks belong to a control register the header does not name that way, the boost capacitor is a coefficient rather than its own register, and the two EINT fields correspond to IRQ1_STATUS1/STATUS2 under a name this project does not use."
+runtime_verified = false
