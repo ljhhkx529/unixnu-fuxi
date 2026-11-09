@@ -63,7 +63,8 @@ def main():
             # lives in this archive so the kernel needs no second link entry and no second patch.
             (cxx, KIT / 'FuxiAudioProbe.cpp', CXX_FLAGS + osfmk + includes)]
     for source in (ROOT / 'drivers/FuxiFtsTouch/FtsProtocol.c', ROOT / 'drivers/FuxiFtsTouch/FtsTouchCore.c',
-                   ROOT / 'drivers/QcomGeniSpi/GeniSpi.c', KIT / 'QcomRpmh.c', KIT / 'QcomSmem.c'):
+                   ROOT / 'drivers/QcomGeniSpi/GeniSpi.c', KIT / 'QcomRpmh.c', KIT / 'QcomSmem.c',
+                   KIT / 'FuxiAudioDescriptor.c'):
         jobs.append((c, source, C_FLAGS + osfmk))
     objects = []
     for rec, source, flags in jobs:

@@ -10,7 +10,7 @@ import subprocess
 
 # G1.3 candidate: the first three fixed, non-hardware steps only.  Descriptor,
 # mapping, MMIO and SMEM-write operations remain compile-time unimplemented.
-QUD_REVISION = 'bc321b0ab2d1cb5bc9fedcd152d3de70823e69e9'
+QUD_REVISION = 'fba19d40f2a87c5805804d80c81bc3edadf88a8f'
 XNU_REVISION = 'd8b80295118ef25ac3a784134bcf95cd8e88109f'
 PROFILE = 'darwin23-fuxi'
 
@@ -195,8 +195,10 @@ static void diag_checkpoint(unsigned int checkpoint)
     path = output / 'scripts/build.py'
     source = path.read_text()
     source = replace_once(source,
-        "'_bzero', '_memcpy', '_memset', '_qcom_reset_request'}",
-        "'_bzero', '_memcpy', '_memset', '_qcom_reset_request', '_fuxi_usb_probe_step',"
+        "'_bzero', '_memcpy', '_memset', '_qcom_reset_request',\n"
+        "                   '_fuxi_audio_diag_run', '_fuxi_audio_diag_resources'}",
+        "'_bzero', '_memcpy', '_memset', '_qcom_reset_request',\n"
+        "                   '_fuxi_audio_diag_run', '_fuxi_audio_diag_resources', '_fuxi_usb_probe_step',"
         " '_qcom_reset_prepare_bootloader', '_qcom_reset_to_bootloader'}")
     # Every refusal and every entry is traced: a bring-up that returns before its first logical probe
     # (a refused acquire, an already-set usb_busy) would otherwise leave no evidence at all.
