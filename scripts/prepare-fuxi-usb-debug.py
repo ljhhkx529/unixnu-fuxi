@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-QUD_REVISION = 'b20537b14196dfb3f07474ecf821920d300d752d'
+QUD_REVISION = '88e0e5b694e91518eca38d739d54e84b46d7287f'
 XNU_REVISION = 'd8b80295118ef25ac3a784134bcf95cd8e88109f'
 PROFILE = 'darwin23-fuxi'
 
