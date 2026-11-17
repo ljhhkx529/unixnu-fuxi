@@ -190,11 +190,13 @@ fuxi_usb_refresh_bg (void)
   if (st.phase == 0xFFFFFFFFu) {
     return;
   }
-  name = st.phase == 3 ? "ACTIVE" : st.phase == 2 ? "PREPARING" :
+  /* The phase stays ACTIVE while the CDC watchdog waits for a persistent fault
+   * (the worker must keep running); the honest transport state is io_failed. */
+  name = (st.phase == 3 && st.io_failed) ? "IO_FAILED" : st.phase == 3 ? "ACTIVE" : st.phase == 2 ? "PREPARING" :
          st.phase == 1 ? "DISABLED" : st.phase == 4 ? "STOPPED" :
          st.phase == 5 ? "REFUSED" : st.phase == 6 ? "IO_FAILED" : "NOT_INIT";
 
-  native_usb_panic_bg = (st.phase == 3) ? 0xFF00FF00u :
+  native_usb_panic_bg = (st.phase == 3 && !st.io_failed) ? 0xFF00FF00u :
                         (st.phase == 2) ? 0xFFFFFF00u : 0xFFFF0000u;
   native_usb_status_color = native_usb_panic_bg;
 
@@ -203,7 +205,7 @@ fuxi_usb_refresh_bg (void)
   snprintf (native_usb_status_row[1], sizeof native_usb_status_row[1],
             "probe %u %s", st.diag_checkpoint, fuxi_usb_checkpoint_name (st.diag_checkpoint));
   snprintf (native_usb_status_row[2], sizeof native_usb_status_row[2],
-            st.phase == 3 ? "ok, core running" : "fail %s", fuxi_usb_error_name (st.error));
+            (st.phase == 3 && !st.io_failed) ? "ok, core running" : "fail %s", fuxi_usb_error_name (st.error));
   if (st.error == QCOM_USB_DEBUG_INHERITED_STATE_REFUSED) {
     snprintf (native_usb_status_row[3], sizeof native_usb_status_row[3],
               "qres %u %s", st.qcom_result, fuxi_usb_qusb_name (st.qcom_result));
@@ -235,9 +237,25 @@ fuxi_usb_refresh_bg (void)
               "tr %u a %x b %x", st.last_trace, st.trace_a, st.trace_b);
     native_usb_status_rows = 6;
   }
-  /* Once the port is ACTIVE the lease and register rows say nothing useful, and every extra row is
-   * another ~40k uncached stores per repaint: keep the success window to the two status rows. */
+  /* ACTIVE describes the controller, not the worker or command service. A live
+   * poll counter and ctl=1 distinguish them when the port remains enumerated
+   * but HELLO receives no reply. */
   if (st.phase == 3u) {
-    native_usb_status_rows = 2u;
+    snprintf (native_usb_status_row[2], sizeof native_usb_status_row[2],
+              "ctl=%u poll=%u rx=%u gen=%u", st.control_enabled,
+              st.poll_calls, st.rx_pending, st.rx_generation);
+    native_usb_status_rows = 3u;
+  } else if (st.phase == QCOM_USB_DEBUG_IO_FAILED) {
+    /* The worker has stopped polling, so CDC cannot deliver a later STATUS reply.
+     * Keep the first failure's values on the independent display overlay. */
+    snprintf (native_usb_status_row[3], sizeof native_usb_status_row[3],
+              "core=%d io=%u poll=%u", (int)st.core_result,
+              st.io_failed, st.poll_calls);
+    snprintf (native_usb_status_row[4], sizeof native_usb_status_row[4],
+              "dwc=%d event=%08x", (int)st.dwc3_failed,
+              st.dwc3_last_event);
+    snprintf (native_usb_status_row[5], sizeof native_usb_status_row[5],
+              "trace=%u a=%x b=%x", st.last_trace, st.trace_a, st.trace_b);
+    native_usb_status_rows = 6u;
   }
 }

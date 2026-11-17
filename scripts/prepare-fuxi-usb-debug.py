@@ -65,8 +65,9 @@ def stage(module, xnu, output):
  * PHY, power and device routing must be inherited from the supplied firmware.
  * No display provider is claimed here.
  *
- * QUD_PSCI_SMC_RESET stays 0: fuxi's SMC SYSTEM_RESET path is not qualified here, so the control
- * channel offers STATUS and SCREENSHOT but no REBOOT (the module answers nohook). */
+ * QUD_PSCI_SMC_RESET is 1 for fuxi: the PSCI SYSTEM_RESET conduit is enabled so the CDC watchdog
+ * can recover a dead transport. It was certified with the fuxi-reset-test boot argument before the
+ * watchdog was allowed to use it. */
 #include "Sm8550.h"
 #undef QUD_SOC_NAME
 #define QUD_SOC_NAME "fuxi-sm8550-inherited"
@@ -75,7 +76,7 @@ def stage(module, xnu, output):
 #undef QUD_USB_PRODUCT
 #define QUD_USB_PRODUCT "Xiaomi 13 XNU Debug"
 #undef QUD_PSCI_SMC_RESET
-#define QUD_PSCI_SMC_RESET 0
+#define QUD_PSCI_SMC_RESET 1
 #define QUD_ALLOW_EXACT_STREAM_TAKEOVER 1
 ''')
     subprocess.run(['git', 'apply', '--check', str(takeover_patch)], cwd=output, check=True)

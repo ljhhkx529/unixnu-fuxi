@@ -7,11 +7,18 @@
 #   fuxi-usb-debug.sh log [lines]    follow the newest capture (default 40 lines then follow)
 #   fuxi-usb-debug.sh ctl <verb>     hello | status | ping | reboot (hello is implicit)
 #   fuxi-usb-debug.sh ls             list capture runs
+#   fuxi-usb-debug.sh ctl-one <verb>  run the command in a self-contained session
 #
 # The collector owns the serial port while it runs, so every control command goes through its unix
 # socket instead of opening the port a second time. Each attach gets a fresh run directory because
 # the collector refuses to reuse one, and the supervisor restarts it when the phone reboots and the
 # port comes back.
+#
+# The supervisor is a background process, and some environments kill every process that outlives the
+# shell that started it. The collector then disappears while its socket file stays behind, and the
+# next command fails with "Connection refused" even though the phone is perfectly healthy. The
+# ctl-one subcommand therefore runs the collector and the command in one foreground session, so it
+# never depends on a surviving background process.
 set -euo pipefail
 
 DEVICE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -98,6 +105,31 @@ PY
       "$PYTHON" -B "$MODULE/xnu_usb_control.py" --socket "$run/usb-control.sock" hello >/dev/null || true
     fi
     "$PYTHON" -B "$MODULE/xnu_usb_control.py" --socket "$run/usb-control.sock" "$@"
+    ;;
+  ctl-one)
+    shift
+    if [ $# -eq 0 ]; then echo "usage: $0 ctl-one <hello|status|ping|reboot|reboot-fastboot>" >&2; exit 2; fi
+    verb="$1"; shift
+    # A run directory must be unique: the collector refuses to reuse one, and a stale directory
+    # from a killed run would make it refuse to start.
+    run="$STATE/one-$(date +%Y%m%d-%H%M%S)-$$"
+    mkdir -p "$run"
+    "$PYTHON" -B "$MODULE/collect-xnu-usb.py" --serial "$SERIAL" --output "$run" \
+      --wait 30 --seconds 120 --no-marker --control-socket >"$run/collector.out" 2>&1 &
+    collector=$!
+    cleanup() { kill "$collector" 2>/dev/null || true; wait "$collector" 2>/dev/null || true; }
+    trap cleanup EXIT INT TERM
+    for _ in $(seq 1 60); do
+      [ -S "$run/usb-control.sock" ] && break
+      sleep 0.5
+    done
+    if [ ! -S "$run/usb-control.sock" ]; then
+      echo "fuxi-usb: control channel did not come up; is the phone booted with qcom-usb-ctl=1?" >&2
+      exit 1
+    fi
+    # The collector accepts exactly one request per connection, so the session announcement and
+    # the command need separate connections, which the client tool already does.
+    "$PYTHON" -B "$MODULE/xnu_usb_control.py" --socket "$run/usb-control.sock" "$verb" "$@"
     ;;
   ls)
     ls -1dt "$STATE"/run-* 2>/dev/null | head -20 || echo "none"
