@@ -4,6 +4,10 @@ zzyf-sheng-amp.patch
 fuxi-touch-probe.patch
 fuxi-keystore-probe.patch
 fuxi-audio-probe.patch
+# The audio server plug-in's mount over /System/Library/Audio/Plug-Ins/HAL (the fourth bindfs mount of the
+# GPU addon, next to the Metal plugin's): the owner's FuxiAudio.driver sits next to the system's own HAL
+# drivers.  It needs the addon mount patch above, so it comes after it.
+fuxi-audio-addon-mount.patch
 fuxi-display-load-status.patch
 fuxi-gpu-role.patch
 zzzc-boot-log.patch
