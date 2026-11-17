@@ -240,9 +240,12 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                # amplifier resets, 4 brings the serial engine up, 5 reads the amplifiers' identity,
                # 6 mutes them and powers them up, 7 unmutes them once the PLLs are locked.
                "fuxi-amp=7",
-               # The command line has a 1023 byte limit (DarwinBoot's CommandLine[1024]),
-               # so the switches that are only useful while debugging are dropped here.
-               "offline-legacy-unit-scale=2",
+               # The UI scale: scanout pixels per logical point. 3 is the phone's
+               # scale, and it is the one that goes with the 1125x2436 logical
+               # mode in /chosen (375x812 points at 3x, the iPhone X screen type
+               # UIKit knows). With the iPad's 2 the phone layout would be laid
+               # out at the wrong point size.
+               "offline-legacy-unit-scale=3",
                # fuxi-panel-black=1 is deliberately absent: it painted every swap as the blank
                # frame (no OLED burn-in, but also no picture). With it gone the panel shows the
                # system UI, and the diagnostic page is left to boot-progress.
@@ -315,26 +318,49 @@ persistent_data = true
 # ADT root properties: the fuxi identity AppleImage4 needs for software
 # unlock (SecurityLock::LockCapsuleInterface). These come from
 # unixnu-fuxi-old's make-fuxi-adt.py --ipad-identity; without them AppleImage4
-# panics with the SecurityLock SOFTWARE_LOCK message. The model is the
-# iPad7,1 / J120 target the unchanged 21H461 IPSW was built for.
+# panics with the SecurityLock SOFTWARE_LOCK message.
+#
+# The identity is the iPhone 14 Pro's (iPhone15,2 / D72), as Kerfand's
+# UniXNU-Fuxi-Arm64e-iOS17 uses for the same board: the phone idiom is what
+# makes UIKit lay the system out for a phone (the keyboard, the Control
+# Center, the springboard's own layout), and the screen type follows the
+# logical mode below. The target-type and the /product values are the phone
+# ones; the security status below is the board's own and stays as it was.
 [adt.root.string]
-model = "iPad7,1"
-target-type = "J120"
+model = "iPhone15,2"
+target-type = "D72"
 
 # The product node AppleImage4 requires. UniXNU-sheng puts model/artwork here
-# for its 27.x target; fuxi uses the old 17.7.11 iPad Pro identity.
+# for its 27.x target; fuxi presents the iPhone 14 Pro identity.
+#
+# No compatible-device-fallback: its value comes from an iPhone device tree,
+# which no pinned source here carries. The value the iPadOS profile carries
+# is dropped below (os_overrides remove).
 [adt.product.string]
 model = "xiaomi,fuxi"
-product-name = "iPad Pro (12.9-inch) (2nd generation)"
-product-description = "iPad Pro (12.9-inch) (2nd generation)"
-artwork-device-idiom = "pad"
+product-name = "iPhone 14 Pro"
+product-description = "iPhone 14 Pro"
+artwork-device-idiom = "phone"
 artwork-display-gamut = "sRGB"
-compatible-device-fallback = "iPad6,7"
 
 [adt.product.u32]
-artwork-device-subtype = 2732
-artwork-scale-factor = 2
+artwork-device-subtype = 2556
+artwork-scale-factor = 3
 thin-bezel = 1
+
+# /product/product-id of the real board device tree (DeviceTree.d73ap.im4p of
+# iPhone15,2_17.7_21H16). libMobileGestalt keys its product table by these
+# 20 bytes (MGGetProductType); without them it answers 0xffffffff, and the
+# clients that switch on the product type (the audio server's routing
+# database, among others) see an unknown device.
+[adt.product.bytes]
+product-id = "d3b5ffca33e4604460655adfd77fdfa4757e7e93"
+
+# /product/audio/acoustic-id of the real board device tree: MobileGestalt's
+# AcousticID, which the audio server turns into its tuning directory
+# (/System/Library/Audio/Tunings/AID<n>).
+[adt.product.audio.u32]
+acoustic-id = 8006
 
 # Security state as on a dev-fused, undemoted board (0,0,1,1): mobileactivationd
 # then takes its native Hactivation branch without a SEP or baseband. The
@@ -346,6 +372,14 @@ certificate-security-mode = 1
 effective-security-mode-sep = 1
 amfi-only-platform-code = 1
 kernel-ctrr-to-be-enabled = 0
+# The display's logical mode: the size the system UI is laid out for, and the
+# size every frame is scaled from and to. 1125x2436 is 375x812 points at 3x,
+# the iPhone X screen type, which UIKit knows; the panel itself is 1080x2400.
+# The two values travel in /chosen rather than on the kernel command line:
+# the board's command line has no room left, and the identity above already
+# lives in the ADT.
+display-logical-width = 1125
+display-logical-height = 2436
 
 [adt.chosen.string]
 osenvironment = "main"
@@ -374,3 +408,11 @@ button-names = ["hold", "voldown", "volup"]
 
 [adt.buttons.u32]
 home-button-type = 2
+
+# The iPadOS profile's /product carries an iPad's compatible-device-fallback
+# ("iPad6,7"). The phone identity above has no such value: its own device
+# tree does not carry one, and no pinned source here carries an iPhone's
+# either. The key is dropped for this profile, so the merge does not keep
+# the profile's value.
+[os_overrides."ipados-17.7.11-21H461"]
+remove = ["adt.product.string.compatible-device-fallback"]

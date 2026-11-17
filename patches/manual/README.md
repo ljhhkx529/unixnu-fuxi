@@ -27,6 +27,8 @@ UniXNU tree.
 | 0014 payload: refuse a Data seed whose volume UUID is not the one the kernel was built for | Checks the seed volume's UUID against the kernel's, so a mismatched data seed fails at build time instead of on the device. |
 | 0015 payload: the kernel command line may use the whole DarwinBoot buffer | Raises the command-line limit to the size of the DarwinBoot buffer; the board's kernel arguments are longer than the old 1000-byte cap. |
 | 0016 gopframebuffer: keep the fuxi panel black on request | Adds the `fuxi-panel-black` boot argument to the display component: the firmware splash is overwritten with black at start and every later swap is painted as the blank frame, so an unattended boot leaves an OLED panel dark instead of showing the splash. |
+| 0017 gopframebuffer: a logical display mode scaled to the panel | The display reports a logical mode of 1125x2436 (375x812 points at 3x, the iPhone X screen type UIKit knows) instead of the panel's 1080x2400, and every frame is scaled down to the panel on the CPU. The logical size comes from the `offline-legacy-logical-width` and `offline-legacy-logical-height` boot arguments or, failing those, from `display-logical-width` and `display-logical-height` in `/chosen`. |
+| 0018 adrenometal: scale a logical-mode frame into the scanout on the GPU | The `scanout_scale` compute kernel resamples a BGRA frame of the logical mode into the scanout, one thread per scanout pixel, so the GPU takes that path instead of refusing the frame and leaving every frame to the display driver's CPU scaling. The refusal's own result travels in the low bits of the completion's error code. |
 
 ## Applying
 
@@ -40,9 +42,16 @@ git am ../../unixnu-fuxi/patches/manual/0*.patch
 `git am` refuses a tree that already carries them, so a checkout that still has the original commits
 (same content, same order) needs no action. Verify with `git log --oneline` before and after.
 
-Patch 0016 applies to the GopFramebuffer component's own checkout:
+Patch 0016 and 0017 apply to the GopFramebuffer component's own checkout:
 
 ```sh
 cd ../UniXNU/drivers/GopFramebuffer
-git am ../../../../unixnu-fuxi/patches/manual/0016-*.patch
+git am ../../../../unixnu-fuxi/patches/manual/0016-*.patch ../../../../unixnu-fuxi/patches/manual/0017-*.patch
+```
+
+Patch 0018 applies to the AdrenoMetal component's own checkout:
+
+```sh
+cd ../UniXNU/drivers/AdrenoMetal
+git am ../../../../unixnu-fuxi/patches/manual/0018-*.patch
 ```
