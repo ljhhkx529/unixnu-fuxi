@@ -1,0 +1,31 @@
+From 2213a9b64c413590981aa4bef28ee2e0c8dc720d Mon Sep 17 00:00:00 2001
+From: ljhhkx529 <ljhzyx520@gmail.com>
+Date: Tue, 17 Nov 2026 18:27:20 +0800
+Subject: [PATCH 09/15] build-adreno-metal-plugin: accept the arm64 build of
+ the plugin source
+
+AdrenoMetal's plugin calls patchFramebufferBranch only inside its arm64e block,
+so an arm64 translation unit of the same source has no caller and -Werror stops
+the build with unused-function. The function is correct for the target that
+reaches it; only the arm64 build (the iPadOS 17 one) does not.
+
+The warning is switched off for that build only.
+---
+ scripts/build-adreno-metal-plugin.py | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/scripts/build-adreno-metal-plugin.py b/scripts/build-adreno-metal-plugin.py
+index efa16b4..c1da016 100644
+--- a/scripts/build-adreno-metal-plugin.py
++++ b/scripts/build-adreno-metal-plugin.py
+@@ -28,6 +28,10 @@ if OUT.exists():
+ bundle.mkdir(parents=True)
+ sdk = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip()
+ base = ['xcrun', 'clang', '-target', 'arm64e-apple-ios27.0' if IOS27 else 'arm64-apple-ios17.0', '-isysroot', sdk, '-O2', '-g', '-Wall', '-Wextra', '-Werror',
++        # patchFramebufferBranch is called only inside the arm64e block, so on the arm64 build of this same source it
++        # has no caller. The function is correct for the target that uses it; the arm64 translation unit simply does
++        # not reach it.
++        '-Wno-unused-function',
+         '-fstack-protector-strong']
+ VULKAN_INCLUDE = ROOT / '.cache/mesa-work/include'
+ TURNIP = ROOT / ('build/mesa-tu-ios27' if IOS27 else 'build/mesa-tu-ios') / 'src/freedreno/vulkan/libvulkan_freedreno.dylib'

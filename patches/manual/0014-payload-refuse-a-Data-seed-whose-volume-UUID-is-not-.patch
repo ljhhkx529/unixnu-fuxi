@@ -1,0 +1,236 @@
+From f55dec8f4ee12de8e35160b62cc4004cca6bfa02 Mon Sep 17 00:00:00 2001
+From: ljhhkx529 <ljhzyx520@gmail.com>
+Date: Tue, 17 Nov 2026 18:29:00 +0800
+Subject: [PATCH 14/15] payload: refuse a Data seed whose volume UUID is not
+ the one the kernel was built for
+
+Persistent storage does not make the seed interchangeable: the native block
+provider publishes the APFS volume by the UUID compiled into the kernel. A seed
+with another UUID is written and then never published, which looks like a
+storage fault on the device.
+
+For packed DBRDISK1 inputs the UUID is available without mounting the image,
+so the mismatched pair is rejected before the payload is written. The kernel's
+own value comes from CONFIG_XNU_OWNER_DATA_VOLUME_UUID.
+
+The GPU addon gets the same treatment: a kernel that asks for sheng-gpu-addon=1
+must have its user-space payload with it. The kernel-side Adreno bring-up can
+retire its self-test fences without the addon, so a kernel-only payload looks
+healthy until SpringBoard asks for Metal. The boot argument is treated as an
+input contract, and a payload with the plugin or its owner trust cache omitted
+never reaches bootimg.
+---
+ docs/concepts/payload.md       |  9 +++++++
+ docs/zh/concepts/payload.md    |  9 +++++++
+ scripts/test-runtime-inputs.py | 27 +++++++++++++++++--
+ scripts/unixnu/payload.py      | 47 +++++++++++++++++++++++++++++-----
+ 4 files changed, 84 insertions(+), 8 deletions(-)
+
+diff --git a/docs/concepts/payload.md b/docs/concepts/payload.md
+index c485524..78442e6 100644
+--- a/docs/concepts/payload.md
++++ b/docs/concepts/payload.md
+@@ -101,6 +101,10 @@ The bundle is copied into the kernel window and its address and size replace the
+ 
+ An `--owner-trust-cache` bundle is copied without the `[payload] trust_cache_sha256` check. It carries the original caches and extra modules such as the GPU plugin.
+ 
++When the effective kernel command line contains `sheng-gpu-addon=1`, both `--gpu-addon` and `--owner-trust-cache` are mandatory.
++The payload build fails if either is missing. Kernel-side Adreno self-tests can otherwise pass while the user-space Metal plugin is
++absent, producing a deceptively bootable image with no usable Metal path.
++
+ ## Data ramdisk
+ 
+ When the selected kernel configuration enables `CONFIG_XNU_OWNER_DATA_MOUNT`,
+@@ -119,6 +123,11 @@ A Data seed can be delivered in two forms:
+ 
+ The packed form carries a header with the magic `DBRDISK1`, version 1, the page size, the expanded size and an extent table of `(offset, length)` pairs. Omitted ranges are zeroed RAM.
+ 
++When `CONFIG_XNU_OWNER_DATA_MOUNT` and `[payload.adt] packed_data_ramdisk` are enabled,
++the payload builder also reads the APFS volume UUID from the packed seed. It refuses to
++write a payload when that UUID differs from `CONFIG_XNU_OWNER_DATA_VOLUME_UUID`; a
++persistent overlay still has to be published through the preserved matching seed.
++
+ `scripts/seed-data-grow.py` grows a packed seed to the tablet's storage. The kernel accepts a Data disk of up to 1 TiB, and above 2 GiB the typed provider keeps only the nonzero pages of the seed.
+ 
+ ## Determinism
+diff --git a/docs/zh/concepts/payload.md b/docs/zh/concepts/payload.md
+index b6bac22..7f9aa88 100644
+--- a/docs/zh/concepts/payload.md
++++ b/docs/zh/concepts/payload.md
+@@ -106,6 +106,10 @@ DarwinBoot 校验 trust cache 包：
+ 
+ `--owner-trust-cache` 包不经过 `[payload] trust_cache_sha256` 校验。它携带原始缓存和 GPU 插件等额外模块。
+ 
++当最终内核命令行包含 `sheng-gpu-addon=1` 时，必须同时提供 `--gpu-addon` 和 `--owner-trust-cache`，缺少任意一项都会让
++payload 构建直接失败。否则内核侧 Adreno 自检仍可能通过，但用户态 Metal 插件并不存在，从而生成一个看似能启动、实际没有
++可用 Metal 路径的镜像。
++
+ ## Data ramdisk
+ 
+ Data 种子有两种交付形式：
+@@ -117,6 +121,11 @@ Data 种子有两种交付形式：
+ 
+ Packed 形式包含 magic `DBRDISK1`、版本 1、页大小、展开大小和 `(offset, length)` extent 表。未列出的范围是零填充 RAM。
+ 
++启用 `CONFIG_XNU_OWNER_DATA_MOUNT` 和 `[payload.adt] packed_data_ramdisk` 时，
++payload 构建器还会读取 packed seed 内的 APFS 卷 UUID。若它与
++`CONFIG_XNU_OWNER_DATA_VOLUME_UUID` 不同，构建会在写入 payload 前失败；即使使用持久化
++overlay，也必须继续提供与内核匹配的原始 seed 来发布该卷。
++
+ `scripts/seed-data-grow.py` 把 packed 种子增长到平板的存储大小。内核接受最大 1 TiB 的 Data 磁盘，超过 2 GiB 时 typed provider 只保存种子的非零页。
+ 
+ ## 确定性
+diff --git a/scripts/test-runtime-inputs.py b/scripts/test-runtime-inputs.py
+index 5a59bcc..5429c79 100644
+--- a/scripts/test-runtime-inputs.py
++++ b/scripts/test-runtime-inputs.py
+@@ -13,16 +13,17 @@ from unittest.mock import patch
+ from unixnu.config import parse_config
+ from unixnu.kernel import check_prelink_regressions
+ from unixnu import runtime
++from unixnu.payload import check_data_input, check_gpu_addon_input
+ from unixnu.util import Error
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+ IDENTITY = '2A5E9027-D9E1-40F9-983C-41BD3F1994F5'
+ 
+ 
+-def seed(path):
++def seed(path, identity=IDENTITY):
+     block = bytearray(4096)
+     block[32:36] = b'APSB'
+-    block[240:256] = uuid.UUID(IDENTITY).bytes
++    block[240:256] = uuid.UUID(identity).bytes
+     path.write_bytes(struct.pack('<8sIIQQ', b'DBRDISK1', 1, 4096, 4096, 1) + struct.pack('<QQ', 0, 4096) + block)
+ 
+ 
+@@ -70,6 +71,19 @@ class RuntimeInputs(unittest.TestCase):
+             runtime.prepare(ctx, kernel_build=True)
+             self.assertEqual(ctx.need_config()['XNU_OWNER_DATA_VOLUME_UUID'], IDENTITY)
+ 
++    def test_plain_payload_rejects_packed_seed_uuid_mismatch(self):
++        with tempfile.TemporaryDirectory() as td:
++            ctx = self.context(Path(td))
++            ctx.board = {'payload': {'adt': {'packed_data_ramdisk': True}}}
++            ctx.config = ctx.need_config()
++            ctx.config_name = None
++            data = Path(ctx.args.data_ramdisk)
++            self.assertEqual(check_data_input(ctx, data), IDENTITY)
++            other = data.with_name('other.dbr')
++            seed(other, '11111111-2222-4333-8444-555555555555')
++            with self.assertRaisesRegex(Error, 'differs from compiled CONFIG_XNU_OWNER_DATA_VOLUME_UUID'):
++                check_data_input(ctx, other)
++
+     def test_new_gap_rejected_but_resolved_gap_allowed(self):
+         policy = dict(missing={}, stubbed={'owner': {'0x1000': 1}}, required_original_branches=['adapter'])
+         record = dict(collection_slide='0x100', missing={}, stubbed={'owner': {'0x1100': 1}},
+@@ -85,6 +99,15 @@ class RuntimeInputs(unittest.TestCase):
+         with self.assertRaisesRegex(Error, 'adapter branch'):
+             check_prelink_regressions(record, policy)
+ 
++    def test_gpu_enabled_payload_requires_addon_and_owner_trust(self):
++        arguments = ['native-ufs-root=1', 'sheng-gpu-addon=1']
++        with self.assertRaisesRegex(Error, '--gpu-addon'):
++            check_gpu_addon_input(arguments, None, 'owner.bundle')
++        with self.assertRaisesRegex(Error, '--owner-trust-cache'):
++            check_gpu_addon_input(arguments, 'gpu.ngpu', None)
++        check_gpu_addon_input(arguments, 'gpu.ngpu', 'owner.bundle')
++        check_gpu_addon_input(['sheng-gpu-addon=0'], None, None)
++
+ 
+ if __name__ == '__main__':
+     unittest.main()
+diff --git a/scripts/unixnu/payload.py b/scripts/unixnu/payload.py
+index e477d71..9658e13 100644
+--- a/scripts/unixnu/payload.py
++++ b/scripts/unixnu/payload.py
+@@ -39,18 +39,37 @@ def check_args(arguments):
+ 
+ 
+ def check_data_input(ctx, data):
+-    """An owner-Data kernel needs a seed even when it resumes a persistent overlay."""
+-    if data:
+-        return
++    """An owner-Data kernel needs the exact seed its compiled UUID selects.
++
++    Persistent storage does not make the seed interchangeable: the native block
++    provider publishes the APFS volume by the UUID compiled into the kernel.  For
++    packed DBRDISK1 inputs the UUID is available without mounting the image, so
++    reject a mismatched kernel/seed pair before writing the payload.
++    """
+     from .config import parse_config
+     config = ctx.config
+     if not ctx.config_path.is_file() and ctx.config_name:
+         selected = ctx.device / 'configs' / ctx.config_name
+         if selected.is_file():
+             config = parse_config(selected.read_text())
+-    if config.get('XNU_OWNER_DATA_MOUNT'):
++    if not config.get('XNU_OWNER_DATA_MOUNT'):
++        return None
++    if not data:
+         raise Error('CONFIG_XNU_OWNER_DATA_MOUNT requires --data-ramdisk FILE (or [build] data_ramdisk); '
+                     'persistent Data still needs its original seed to publish the volume')
++    path = expand(data)
++    if not path.is_file():
++        return None  # build() reports the missing path with its existing diagnostic.
++    packed = ctx.board.get('payload', {}).get('adt', {}).get('packed_data_ramdisk', False)
++    expected = config.get('XNU_OWNER_DATA_VOLUME_UUID')
++    if not packed or not expected:
++        return None
++    from .runtime import seed_uuid
++    observed = seed_uuid(ctx.tree, path)
++    if observed != expected:
++        raise Error(f'Data seed UUID {observed} differs from compiled CONFIG_XNU_OWNER_DATA_VOLUME_UUID '
++                    f'{expected}; use the preserved matching seed or rebuild the kernel for this seed')
++    return observed
+ 
+ 
+ def check_native_root(kernel, arguments, vmm_present=False):
+@@ -73,6 +92,20 @@ def check_native_root(kernel, arguments, vmm_present=False):
+         raise Error('the native UFS root kernel lacks the linked sheng PMGR integration')
+ 
+ 
++def check_gpu_addon_input(arguments, addon, owner_trust):
++    """Do not silently build a GPU-enabled command line without its user-space payload.
++
++    The kernel-side Adreno bring-up can still retire its self-test fences when the addon is absent.  That makes a bad image look
++    healthy until SpringBoard asks for Metal.  Treat the boot argument as an input contract so a payload with the plugin or its
++    owner trust cache omitted never reaches bootimg.
++    """
++    enabled = any(argument == 'sheng-gpu-addon=1' for argument in arguments)
++    if enabled and not addon:
++        raise Error('sheng-gpu-addon=1 requires --gpu-addon FILE; refusing a kernel-only GPU payload with no Metal plugin')
++    if enabled and not owner_trust:
++        raise Error('sheng-gpu-addon=1 requires --owner-trust-cache FILE containing the Metal plugin trust cache')
++
++
+ def write_volume(stage, image, label, size_mib):
+     for tool_name in ('mformat', 'mcopy'):
+         tool(tool_name, 'brew install mtools')
+@@ -126,7 +159,7 @@ def build(ctx, kernel=None):
+         if allowed and not owner_trust and sha256_file(trust) not in allowed:
+             raise Error(f'{trust} is not one of the trust caches this board accepts (board.toml [payload] trust_cache_sha256)')
+     data = expand(args.data_ramdisk) if getattr(args, 'data_ramdisk', None) else None
+-    check_data_input(ctx, data)
++    data_uuid = check_data_input(ctx, data)
+     if data and not data.is_file():
+         raise Error(f'Data ramdisk not found: {data}')
+     if getattr(args, 'skip_setup', False):
+@@ -138,6 +171,7 @@ def build(ctx, kernel=None):
+     addon = expand(args.gpu_addon) if getattr(args, 'gpu_addon', None) else None
+     if addon and (not addon.is_file() or addon.read_bytes()[:8] != b'NGPUADD2'):
+         raise Error(f'GPU addon not found or not made by scripts/make-gpu-addon.py: {addon}')
++    check_gpu_addon_input(arguments, addon, owner_trust)
+     policy_path = spec.get('root_policies')
+     policies = expand(policy_path.format(tree=ctx.tree, out=ctx.work)) if policy_path else None
+     if policies:
+@@ -252,7 +286,8 @@ def build(ctx, kernel=None):
+     data_report = {'kernel_sha256': sha256_file(kernel), 'payload_kernel_sha256': sha256_file(payloads / 'kernel.macho'),
+                    'adt_sha256': sha256_file(payloads / 'kernel.macho.adt'), 'kernel_args': line,
+                    'trust_cache_sha256': sha256_file(trust) if trust else None, 'gpu_addon_sha256': sha256_file(addon) if addon else None,
+-                   'data_ramdisk_sha256': sha256_file(data) if data else None, 'skip_setup': bool(getattr(args, 'skip_setup', False)), 'panic_screen': bool(spec.get('panic_screen')),
++                   'data_ramdisk_sha256': sha256_file(data) if data else None, 'data_volume_uuid': data_uuid,
++                   'skip_setup': bool(getattr(args, 'skip_setup', False)), 'panic_screen': bool(spec.get('panic_screen')),
+                    'payload_sha256': sha256_file(image), 'payload_bytes': image.stat().st_size, 'hardware_tested': False}
+     report.write_text(json.dumps(data_report, indent=2) + '\n')
+     shutil.rmtree(stage)

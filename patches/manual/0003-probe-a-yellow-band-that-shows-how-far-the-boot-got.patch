@@ -1,0 +1,219 @@
+From 29c429bf3d001442f93379b7793b4749cd4e59c9 Mon Sep 17 00:00:00 2001
+From: ljhhkx529 <ljhzyx520@gmail.com>
+Date: Tue, 17 Nov 2026 18:24:52 +0800
+Subject: [PATCH 03/15] probe: a yellow band that shows how far the boot got
+
+The board's boot produced a screen with no sign of how far it came, and the
+serial log was the only place the answer was. This adds a fifth band to the
+entry probe: a yellow strip the kernel paints when it reaches a chosen step,
+so the panel itself says where the boot is.
+
+The band is drawn through the kernel's own vinfo (v_baseaddr is the mapped
+framebuffer), not the boot-argument physical address, because by the time the
+later stages run the MMU is on. The stage it marks is selected by the caller,
+and the one this commit leaves in place is the Data mount: stage 4.
+
+The steps the band moves through are the ones the boot actually reaches:
+AppleImage4 registering its API, PE_create_console returning with the vinfo set
+up, the bl _bsd_init call site, NativeUfs::probe attaching the root, the
+RamBlock attaching the Data volume, the volume lookup and the seed, the
+persistent store attaching and being read, the Data mount call and its
+completion. Each step moved the band one place, so the trail is the history of
+the bring-up itself.
+
+The payload builder grows the matching switch: a board that asks for
+paint_yellow = true gets the probe patched with --paint-yellow.
+---
+ scripts/patch-xnu-entry-probe.py | 103 ++++++++++++++++++++++++++++++-
+ scripts/unixnu/payload.py        |   5 +-
+ 2 files changed, 105 insertions(+), 3 deletions(-)
+
+diff --git a/scripts/patch-xnu-entry-probe.py b/scripts/patch-xnu-entry-probe.py
+index 9e3e598..4d98917 100644
+--- a/scripts/patch-xnu-entry-probe.py
++++ b/scripts/patch-xnu-entry-probe.py
+@@ -46,7 +46,9 @@ PANIC_VA = 0xFFFFFFF00BF69B04      # _panic
+ VINFO_VA = 0xFFFFFFF00C0A2970      # _vinfo
+ PANIC_CAVE_END = 0xFFFFFFF00B9D0FF0
+ CAVE_SIZE = 0x60
+-CAVES = {1: 0xFFFFFFF00B9D0500, 2: 0xFFFFFFF00B9D0560, 3: 0xFFFFFFF00B9D05C0, 4: 0xFFFFFFF00B9D0620}
++CAVES = {1: 0xFFFFFFF00B9D0500, 2: 0xFFFFFFF00B9D0560, 3: 0xFFFFFFF00B9D05C0, 4: 0xFFFFFFF00B9D0620,
++         5: 0xFFFFFFF00B9D04A0}  # stage 5 (paint yellow) reuses the zero padding between the entry and CAVES[1]
++                                 # so the panic screen keeps its room after CAVES[2].
+ TIMEBASE = 19200000
+ 
+ PAINT = """
+@@ -68,6 +70,30 @@ PAINT = """
+   dsb sy
+ """
+ 
++# Yellow band for stage 5. This runs after the MMU is on, so it draws through
++# the kernel's vinfo (v_baseaddr is the mapped framebuffer), not the boot-args
++# physical address. Band index 3 = below DarwinBoot's green, blue and magenta.
++YELLOW_PAINT = """
++  ldr  x9, =stage
++  ldr  w11, [x9]
++  ldr  x9, =vinfo
++  ldr  w10, [x9, #12]
++  ldr  w13, [x9, #0]
++  ldr  x9, [x9, #16]
++  mul  x10, x10, x13
++  lsr  x10, x10, #4
++  bic  x10, x10, #7
++  mul  x12, x10, x11
++  add  x9, x9, x12
++  movz w13, #0xFF00
++  movk w13, #0xFFFF, lsl #16
++1:
++  stp  w13, w13, [x9], #8
++  subs x10, x10, #8
++  b.hi 1b
++  dsb  sy
++"""
++
+ SOURCES = {
+     1: ".text\n.global _start\n_start:\n" + PAINT.format(args='x0', band=1, lo='0x00FF', hi='0xFF00') + "  b target\n",
+     2: ".text\n.global _start\n_start:\n" + PAINT.format(args='x20', band=2, lo='0x00FF', hi='0xFFFF')
+@@ -116,6 +142,7 @@ _start:
+   wfe
+   b 2b
+ """ + ".ltorg\n",
++    5: ".text\n.global _start\n_start:\n  .inst 0x52800088\n  .inst 0xb90ecf28\n" + YELLOW_PAINT + "  b target\n.ltorg\n",
+ }
+ 
+ RESET_BEFORE = """.text
+@@ -170,6 +197,70 @@ def find_call(data, symbols, function, name, occurrence):
+     return hits[occurrence - 1]
+ 
+ 
++def find_call_anywhere(data, symbols, name, occurrence=1):
++    """The VA and target of the Nth `bl name` anywhere in the kernel text."""
++    hits = []
++    for vmaddr, vmsize, fileoff, filesize in SEGMENTS:
++        if not filesize:
++            continue
++        limit = min(vmsize, filesize)
++        for va in range(vmaddr, vmaddr + limit, 4):
++            word = struct.unpack_from('<I', data, fileoff + (va - vmaddr))[0]
++            if word >> 26 == 0b100101:
++                delta = word & 0x3FFFFFF
++                delta -= (1 << 26) if delta & (1 << 25) else 0
++                target = va + delta * 4
++                if symbols.get(target) == name:
++                    hits.append((va, target))
++    if len(hits) < occurrence:
++        raise SystemExit(f'No bl {name} found ({len(hits)} hits)')
++    return hits[occurrence - 1]
++
++
++def find_dlxk_link_ret(data):
++    """Locate image4_dlxk_link's `ret` by its unique instruction sequence.
++
++    The symbol is stripped from the prelinked kernel, but the function body is
++    stable: adrp x8; ldr x9,[x8,#off]; cbnz x9,+8; str x0,[x8,#off]; ret.
++    """
++    ldr = bytes.fromhex('09e542f9')  # 0xf942e509 little-endian
++    for vmaddr, vmsize, fileoff, filesize in SEGMENTS:
++        if not filesize:
++            continue
++        region = data[fileoff:fileoff + min(vmsize, filesize)]
++        i = 0
++        while True:
++            i = region.find(ldr, i)
++            if i < 0:
++                break
++            w1 = struct.unpack_from('<I', region, i + 4)[0]
++            w2 = struct.unpack_from('<I', region, i + 8)[0]
++            w3 = struct.unpack_from('<I', region, i + 12)[0]
++            if w1 == 0xB5000069 and w2 == 0xF902E500 and w3 == 0xD65F03C0:
++                return vmaddr + i + 12  # address of the `ret`
++            i += 4
++    raise SystemExit('image4_dlxk_link sequence not found')
++
++
++def find_stage4_write(data):
++    """Locate the Data-mount stage=4 write (mov w8,#4; str w8,[x25,#0xecc])."""
++    mov = struct.pack('<I', 0x52800088)
++    st = struct.pack('<I', 0xB90ECF28)
++    for vmaddr, vmsize, fileoff, filesize in SEGMENTS:
++        if not filesize:
++            continue
++        region = data[fileoff:fileoff + min(vmsize, filesize)]
++        i = 0
++        while True:
++            i = region.find(mov, i)
++            if i < 0:
++                break
++            if region[i + 4:i + 8] == st:
++                return vmaddr + i
++            i += 4
++    raise SystemExit('Data mount stage=4 write not found')
++
++
+ def assemble_c(source, va, workdir, symbols):
+     """Build a freestanding C file for VA; returns (bytes, load address of the first byte, address of panic_screen).
+ 
+@@ -361,6 +452,8 @@ def main():
+     parser.add_argument('--reset-before', action='store_true', help='reset at the call site before invoking SYMBOL (requires --reset-after)')
+     parser.add_argument('--panic-screen', action='store_true', help='draw panic() messages on the screen')
+     parser.add_argument('--no-reset', action='store_true', help='no reset probe at all')
++    parser.add_argument('--paint-yellow', action='store_true',
++                        help='paint a yellow band below the other three after AppleImage4 registers its API (_image4_dlxk_link)')
+     parser.add_argument('--occurrence', type=int, default=1, help='which call to SYMBOL (1 = first)')
+     parser.add_argument('--in', dest='function', default='_arm_init', help='function that makes the call (default _arm_init)')
+     args = parser.parse_args()
+@@ -384,6 +477,10 @@ def main():
+     # (site, cave stage, symbols the cave is linked with)
+     sites = [(ENTRY_VA, 1, {'target': START_FIRST_CPU}),
+              (MMU_ENABLE_VA, 2, {'target': MMU_ENABLE_VA + 4})]
++    if args.paint_yellow:
++        site = find_stage4_write(data)
++        sites.append((site, 5, {'target': site + 8, 'vinfo': kernel_names.get('_vinfo', VINFO_VA),
++                                'stage': kernel_names.get('_native_owner_data_stage')}))
+     if args.no_reset:
+         description = 'no reset probe'
+     elif args.reset_after:
+@@ -394,6 +491,8 @@ def main():
+     else:
+         sites.append((AFTER_MMU_VA, 3, {'target': AFTER_MMU_VA + 4}))
+         description = f'stage 3 reset {args.reset_delay} s after the MMU is on'
++    if args.paint_yellow:
++        description += ', yellow band at stage=4 (Data mount complete)'
+ 
+     with tempfile.TemporaryDirectory() as tmp:
+         for site, stage, symbols in sites:
+@@ -403,6 +502,8 @@ def main():
+                 raise SystemExit(f'Stage {stage} code is too large')
+             data[file_offset(CAVES[stage]):file_offset(CAVES[stage]) + len(code)] = code
+     for site, stage, _ in sites:
++        if site is None:
++            continue
+         struct.pack_into('<I', data, file_offset(site), branch(site, CAVES[stage]))
+     if args.panic_screen:
+         # Right after the last probe cave in use, so the padding is shared as tightly as possible.
+diff --git a/scripts/unixnu/payload.py b/scripts/unixnu/payload.py
+index 0774c8e..e477d71 100644
+--- a/scripts/unixnu/payload.py
++++ b/scripts/unixnu/payload.py
+@@ -162,10 +162,11 @@ def build(ctx, kernel=None):
+     payloads.mkdir(parents=True)
+     shutil.copyfile(kernel, payloads / 'kernel.macho')
+     # The entry probe (stage bars, optional reset) is wanted with either setting; the panic screen is only one part of it.
+-    if spec.get('panic_screen') or spec.get('entry_probe_reset_delay'):
++    if spec.get('panic_screen') or spec.get('entry_probe_reset_delay') or spec.get('paint_yellow'):
+         probe = (['--reset-delay', str(int(spec['entry_probe_reset_delay']))]
+                  if spec.get('entry_probe_reset_delay') else ['--no-reset'])
+         screen = ['--panic-screen'] if spec.get('panic_screen') else []
++        paint = ['--paint-yellow'] if spec.get('paint_yellow') else []
+         if spec.get('entry_probe_reset_delay') and spec.get('entry_probe_reset_after'):
+             # Stage 4 in place of stage 3: reset after the Nth call to SYMBOL in FUNCTION.
+             probe += ['--reset-after', spec['entry_probe_reset_after'], '--in', spec.get('entry_probe_reset_in', '_arm_init'),
+@@ -173,7 +174,7 @@ def build(ctx, kernel=None):
+             if spec.get('entry_probe_reset_before'):
+                 # At the call site, without making the call (and without the delay).
+                 probe.append('--reset-before')
+-        run(['python3', ctx.tree / 'scripts/patch-xnu-entry-probe.py', payloads / 'kernel.macho', *screen, *probe],
++        run(['python3', ctx.tree / 'scripts/patch-xnu-entry-probe.py', payloads / 'kernel.macho', *screen, *probe, *paint],
+             cwd=ctx.tree, env=dict(os.environ, UNIXNU_UEFI=str(ctx.uefi or '')), log_file=ctx.logs / 'payload-patch.log')
+         # The probes rewrite instructions inside __text, which the source corecrypto POST hashes.
+         if b'_source_corecrypto14_bootstrap\0' in Path(kernel).read_bytes():

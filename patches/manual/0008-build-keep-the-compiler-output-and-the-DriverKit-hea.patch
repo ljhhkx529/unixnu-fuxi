@@ -1,19 +1,37 @@
-From 6f78a2f496522dd589a0c3cb73544f1e2c27091b Mon Sep 17 00:00:00 2001
+From 9d2a6d1468ba5c110f3ec04539dd4124544327e0 Mon Sep 17 00:00:00 2001
 From: ljhhkx529 <ljhzyx520@gmail.com>
-Date: Thu, 5 Nov 2026 20:49:31 +0800
-Subject: [PATCH 4/4] prepare-xnu-source: keep the DriverKit headers locally
+Date: Tue, 17 Nov 2026 18:27:00 +0800
+Subject: [PATCH 08/15] build: keep the compiler output and the DriverKit
+ headers on the machine
 
-This Python build cannot complete a TLS handshake with GitHub on some networks (SSL:
-UNEXPECTED_EOF_WHILE_READING) while curl reaches the same URLs, which aborted a kernel build with
-every patch already applied.
+Two build failures lost the information needed to fix them.
 
-Keep a verified copy of each header under .cache/sources/driverkit-headers and restore from there
-first, and fall back to curl when urllib fails. The git blob hash still gates every copy, so a stale
-or truncated file is refetched instead of written.
+A failed archive build printed the exit status alone. It now prints the head
+and the tail of the compiler output, and the full output stays in compile.log.
+
+The DriverKit headers were downloaded on every fresh tree, and some hosts
+cannot complete a TLS handshake with GitHub from this Python build (SSL:
+UNEXPECTED_EOF_WHILE_READING), which aborted a kernel build with every patch
+already applied. The fetch now falls back to curl, and a copy is kept under
+.cache/sources/driverkit-headers so an offline build still works.
 ---
+ scripts/build-arm-driver.py   |  2 +-
  scripts/prepare-xnu-source.py | 35 ++++++++++++++++++++++++++++++++---
- 1 file changed, 32 insertions(+), 3 deletions(-)
+ 2 files changed, 33 insertions(+), 4 deletions(-)
 
+diff --git a/scripts/build-arm-driver.py b/scripts/build-arm-driver.py
+index b027a9b..99a1230 100644
+--- a/scripts/build-arm-driver.py
++++ b/scripts/build-arm-driver.py
+@@ -108,7 +108,7 @@ if component == 'NativeAdreno':
+ result = subprocess.run(command, cwd=record['directory'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+ (out / 'compile.log').write_text(result.stdout)
+ if result.returncode:
+-    raise SystemExit(result.stdout[-3500:])
++    raise SystemExit(result.stdout if len(result.stdout) <= 10000 else result.stdout[:6500] + '\n... full diagnostics in compile.log ...\n' + result.stdout[-3500:])
+ check_object(destination.read_bytes(), component)
+ archive = out / ('lib' + identifier + '.a')
+ archive.unlink(missing_ok=True)
 diff --git a/scripts/prepare-xnu-source.py b/scripts/prepare-xnu-source.py
 index 6949d26..6d68b84 100755
 --- a/scripts/prepare-xnu-source.py

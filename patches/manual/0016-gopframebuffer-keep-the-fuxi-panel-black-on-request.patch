@@ -1,0 +1,68 @@
+From f66fc0b0167f2a9d9ddee9f20e812c91220a7f02 Mon Sep 17 00:00:00 2001
+From: ljhhkx529 <ljhzyx520@gmail.com>
+Date: Tue, 17 Nov 2026 18:34:43 +0800
+Subject: [PATCH] gopframebuffer: keep the fuxi panel black on request
+
+The fuxi board has no backlight control in the legacy display path, so an
+unattended boot leaves the firmware's splash on an OLED panel. Add the
+fuxi-panel-black boot argument: when it is set, the firmware splash is
+overwritten with black at start and every later swap is painted as the
+blank frame and retired, so the panel is scanned but stays dark.
+
+Co-Authored-By: Kerfand <mouse233@qq.com>
+---
+ NativeLegacyDisplay.cpp | 27 +++++++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/NativeLegacyDisplay.cpp b/NativeLegacyDisplay.cpp
+index c3776ab..1724dec 100644
+--- a/NativeLegacyDisplay.cpp
++++ b/NativeLegacyDisplay.cpp
+@@ -157,6 +157,9 @@ class NativeLegacyDisplay : public IOMobileFramebufferLegacy {
+     void *shadow=nullptr;uint64_t shadowBytes=0;bool shadowValid=false;
+     bool primary=false;
+     bool logicalPM=false;
++    // fuxi-panel-black=1: keep the panel black for unattended debugging (no OLED burn-in). Every swap is painted as the blank frame and the
++    // firmware's boot splash is overwritten at start; the panel stays scanned, but every pixel is off.
++    bool forceBlack=false;
+     bool transferred=false;
+     // Every request the validator accepted and the family has not retired yet. A client may submit swap N+1 while swap N is still on the GPU
+     // (int-131: swap 3 was validated during swap 2's GPU copy and one remembered pointer lost swap 2, which then never retired and left
+@@ -492,6 +495,14 @@ public:
+             if(memory) {native_legacy_ring=memory;native_legacy_ring_cap=cap;}
+         }
+         if(primary && bootMapping)announcePoweredByFirmware();
++        if(bootMapping){unsigned black=0;if(PE_parse_boot_argn("fuxi-panel-black",&black,sizeof black) && black) {
++            forceBlack=true;
++            PE_Video v={};uint32_t bw=0,bh=0;getDisplayDimensions(&bw,&bh);
++            if(!PE_current_console(&v) && v.v_baseAddr==bootMapping->getPhysicalAddress() && v.v_depth==32 &&
++               native_legacy_surface_bounds(bw,bh,v.v_rowBytes,bootMapping->getLength(),bootMapping->getLength()))
++                native_legacy_fill_pixels(reinterpret_cast<volatile void *>(bootMapping->getVirtualAddress()),
++                    bootMapping->getLength(),v.v_rowBytes,bw,bh,0xff000000U);
++        }}
+         unsigned enabled=0;PE_parse_boot_argn("offline-legacy-pm",&enabled,sizeof(enabled));
+         if(!enabled)return true;
+         unsigned phase=0;PE_parse_boot_argn("offline-legacy-phase",&phase,sizeof(phase));
+@@ -579,6 +590,22 @@ public:
+         // synchronous CPU surfaces, with no GPU or display fence fabricated.
+         OSObject *surface=nullptr;
+         memcpy(&surface,reinterpret_cast<const unsigned char *>(request)+kRequestSurfaces,sizeof(surface));
++        if(forceBlack) {
++            // fuxi-panel-black: paint every swap black and retire it, whatever the console state says.
++            uint32_t bw=0,bh=0;getDisplayDimensions(&bw,&bh);
++            native_legacy_prepare_scanout();
++            directToBoot();
++            PE_Video v={};
++            const uint64_t row=(PE_current_console(&v) || !v.v_rowBytes)?uint64_t(bw)*4:v.v_rowBytes;
++            native_legacy_fill_pixels(reinterpret_cast<volatile void *>(bootMapping->getVirtualAddress()),
++                bootMapping->getLength(),row,bw,bh,0xff000000U);
++            __asm__ volatile("dsb sy" ::: "memory");
++            shadowValid=false;transferred=true;
++            native_legacy_frame_observed(1,0,0,0,0,0);
++            native_legacy_transfer_observed(kIOReturnSuccess,request,(uint64_t)bw*bh*4);
++            finishTransfer(request);
++            return;
++        }
+         if(!surface) {
+             // Validated blank swap (all layers disabled over black): solid-fill the actual GOP.
+             PE_Video blank={};

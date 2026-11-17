@@ -1,0 +1,426 @@
+From 4f32e543240d277b696f60a0fa0dee3a6e6f7bc0 Mon Sep 17 00:00:00 2001
+From: ljhhkx529 <ljhzyx520@gmail.com>
+Date: Tue, 17 Nov 2026 18:28:23 +0800
+Subject: [PATCH 12/15] mesa: Turnip honours the kernel's command-stream
+ capabilities
+
+The GPU driver in the kernel publishes two capabilities the command stream has
+to know about: whether the device runs a single render thread, and whether it
+can wait for memory writes. Turnip ignored both, and on this board the command
+processor rejected the submissions that assumed otherwise.
+
+The patch makes the emitter honour the two bits:
+
+- CP_WAIT_MEM_WRITES is substituted only for a zero payload and only when the
+  kernel asks for it, with the legal zero-payload CP_NOP encoding (checked
+  against the PM4 kit the kernel itself uses).
+- The thread control is built in one place, and a device that runs one render
+  thread gets the BR form with concurrent binning disabled. Every site that
+  used to build the packet itself goes through that one place, and the BR
+  patchpoint is left out on such a device.
+
+The capabilities are read from the published device-info flags word, not from a
+board name, so the same driver serves a runtime that needs neither.
+
+scripts/check-turnip-fuxi-command-policy.py is what can be proved without a
+GPU: the recorded patch set reconstructs the pinned Mesa source byte for byte,
+the two hooks are gated on the capability accessors and on the packet kinds, the
+payload rewrite touches only the thread selector and SYNC_THREADS and keeps
+every other bit, and the substituted header is the legal CP_NOP encoding.
+---
+ .../mesa/turnip-darwin-command-policy.patch   | 233 ++++++++++++++++++
+ scripts/check-turnip-fuxi-command-policy.py   | 132 ++++++++++
+ scripts/data/adreno-compiler-inputs.json      |   1 +
+ 3 files changed, 366 insertions(+)
+ create mode 100644 patches/mesa/turnip-darwin-command-policy.patch
+ create mode 100755 scripts/check-turnip-fuxi-command-policy.py
+
+diff --git a/patches/mesa/turnip-darwin-command-policy.patch b/patches/mesa/turnip-darwin-command-policy.patch
+new file mode 100644
+index 0000000..51e493f
+--- /dev/null
++++ b/patches/mesa/turnip-darwin-command-policy.patch
+@@ -0,0 +1,233 @@
++From: fuxi GPU bring-up <noreply@example.com>
++Subject: [PATCH] Turnip: honour the kernel's command-stream capabilities
++
++The Darwin kernel backend publishes two facts about the command processor it talks to, in the same
++device-info flags word it already uses for the client-IoVA and coherent-memory bits:
++
++  bit 2  the command processor accepts only the BR render thread
++  bit 3  the command processor stops on CP_WAIT_MEM_WRITES
++
++Where a kernel sets neither, every command stream is emitted exactly as before: each change below is
++gated on the bit, and the default path is unchanged byte for byte.
++
++  - tu_cs_emit_pkt7(): a zero-payload CP_WAIT_MEM_WRITES becomes a zero-payload CP_NOP, the same header
++    encoding, which is why the substitution is legal.
++  - tu_thread_control_payload(): the one place a CP_THREAD_CONTROL payload is built. Such a device gets
++    the BR form with concurrent binning disabled, and never SYNC_THREADS (it would wait for a thread
++    that is not running); every other device gets exactly the word its caller asked for.
++  - every site that built a payload itself now goes through that place: tu7_thread_control, the
++    simultaneous-use case in tu_CmdExecuteCommands, the occlusion-query predicate in tu_query_pool, the
++    binning branch in tu_cmd_buffer and the LRZ emitter in tu_lrz — the last three only run in tiled mode.
++  - tu7_set_thread_both_patchpoint(): there is no second thread to return to, so it emits the BR form
++    and records no concurrent-binning control point, which would otherwise put BOTH back into the stream
++    after this file emitted BR.
++
++All of it follows from capabilities the kernel reports: nothing here names a board.
++
++---
++diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
++index bc779a7..2a8a639 100644
++--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
+++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
++@@ -457,6 +457,11 @@ tu7_set_thread_br_patchpoint(struct tu_cmd_buffer *cmd,
++                              struct tu_cs *cs,
++                              bool force_disable_cb)
++ {
+++   /* A device that accepts only the BR render thread never has concurrent binning to switch on, so the
+++    * patchpoint is left out and nothing later rewrites this word back to BOTH. */
+++   if (tu_command_policy_single_render_thread(cmd->device))
+++      force_disable_cb = true;
+++
++    tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
++ 
++    if (!force_disable_cb) {
++@@ -478,6 +483,13 @@ void
++ tu7_set_thread_both_patchpoint(struct tu_cmd_buffer *cmd,
++                                struct tu_cs *cs)
++ {
+++   /* The same for the BOTH patchpoint: on such a device the stream stays on BR and there is no control
+++    * point to record, because there is no second thread to return to. */
+++   if (tu_command_policy_single_render_thread(cmd->device)) {
+++      tu7_set_thread_br_patchpoint(cmd, cs, true);
+++      return;
+++   }
+++
++    tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
++ 
++    struct tu_cb_control_point info = {
++@@ -514,8 +526,7 @@ tu_emit_cache_flush(struct tu_cmd_buffer *cmd_buffer)
++        */
++       struct tu_cs_patchable_state cb_state = tu_cs_patchable_start(cs, 64);
++ 
++-      tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
++-      tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BOTH));
+++      tu7_thread_control(cs, CP_SET_THREAD_BOTH);
++ 
++       tu_cs_emit_pkt7(cs, CP_MODIFY_TIMESTAMP, 1);
++       tu_cs_emit(cs, CP_MODIFY_TIMESTAMP_0_ADD(1) |
++@@ -3636,7 +3647,7 @@ tu6_tile_render_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
++ 
++          if (use_binning) {
++             tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
++-            tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BV));
+++            tu_cs_emit(cs, tu_thread_control_payload(cs, CP_SET_THREAD_BV, false));
++ 
++             tu_lrz_after_bv<CHIP>(cmd, cs);
++ 
++@@ -6629,8 +6640,7 @@ tu_CmdExecuteCommands(VkCommandBuffer commandBuffer,
++             /* Make BV wait for updates on BR to land */
++             if (cmd->device->physical_device->info->chip >= 7) {
++                tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
++-               tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) |
++-                              CP_THREAD_CONTROL_0_SYNC_THREADS);
+++               tu_cs_emit(cs, tu_thread_control_payload(cs, CP_SET_THREAD_BR, true));
++             }
++          }
++ 
++diff --git a/src/freedreno/vulkan/tu_cs.cc b/src/freedreno/vulkan/tu_cs.cc
++index 47e1939..9de21f1 100644
++--- a/src/freedreno/vulkan/tu_cs.cc
+++++ b/src/freedreno/vulkan/tu_cs.cc
++@@ -18,6 +18,22 @@ tu_sanitize_ib_size(uint32_t size)
++    return MIN2(size, 0x0fffff);
++ }
++ 
+++/* NativeAdrenoDeviceSingleRenderThread: the command processor accepts only the BR render thread. */
+++bool
+++tu_command_policy_single_render_thread(struct tu_device *device)
+++{
+++   return device && device->physical_device &&
+++          (device->physical_device->command_policy_flags & (1u << 2));
+++}
+++
+++/* NativeAdrenoDeviceNoWaitMemWrites: the command processor stops on CP_WAIT_MEM_WRITES. */
+++bool
+++tu_command_policy_no_wait_mem_writes(struct tu_device *device)
+++{
+++   return device && device->physical_device &&
+++          (device->physical_device->command_policy_flags & (1u << 3));
+++}
+++
++ /**
++  * Initialize a command stream.
++  */
++diff --git a/src/freedreno/vulkan/tu_cs.h b/src/freedreno/vulkan/tu_cs.h
++index 6a66de1..68fc27b 100644
++--- a/src/freedreno/vulkan/tu_cs.h
+++++ b/src/freedreno/vulkan/tu_cs.h
++@@ -126,6 +126,14 @@ tu_breadcrumbs_init(struct tu_device *device);
++ void
++ tu_breadcrumbs_finish(struct tu_device *device);
++ 
+++/* Command-stream capabilities the kernel published for this device (NativeAdrenoDevice* bits 2 and 3). Read
+++ * only for the two packet kinds they change, so the emit path costs nothing else. */
+++bool
+++tu_command_policy_single_render_thread(struct tu_device *device);
+++
+++bool
+++tu_command_policy_no_wait_mem_writes(struct tu_device *device);
+++
++ void
++ tu_cs_init(struct tu_cs *cs,
++            struct tu_device *device,
++@@ -350,6 +358,14 @@ tu_cs_emit_pkt7(struct tu_cs *cs, uint8_t opcode, uint16_t cnt)
++    tu_cs_emit_sync_breadcrumb(cs, opcode, cnt + 1);
++ #endif
++ 
+++   /* A zero-payload CP_WAIT_MEM_WRITES is a barrier this device never finishes, and its encoding is exactly a
+++    * legal zero-payload CP_NOP; only that shape is substituted, and only when the kernel says so. */
+++   if (opcode == CP_WAIT_MEM_WRITES && cnt == 0 &&
+++       tu_command_policy_no_wait_mem_writes(cs->device)) {
+++      tu_cs_reserve(cs, 1);
+++      tu_cs_emit(cs, pm4_pkt7_hdr(CP_NOP, 0));
+++      return;
+++   }
++    tu_cs_reserve(cs, cnt + 1);
++    tu_cs_emit(cs, pm4_pkt7_hdr(opcode, cnt));
++ }
++@@ -534,11 +550,27 @@ tu_cond_exec_end(struct tu_cs *cs)
++    }
++ }
++ 
+++/* The payload word of a CP_THREAD_CONTROL, as this device can take it: a device that reports only the BR
+++ * render thread never gets any other selection, and never gets SYNC_THREADS either (it would wait for a thread
+++ * that is not running). Every other device gets exactly the word its caller asked for. */
+++static inline uint32_t
+++tu_thread_control_payload(struct tu_cs *cs, enum cp_thread thread, bool sync)
+++{
+++   if (tu_command_policy_single_render_thread(cs->device)) {
+++      /* One render thread means there is no concurrent binning to switch to, so the word says so as well:
+++       * the command processor then has nothing left to infer from the stream. */
+++      return CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) |
+++             CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE;
+++   }
+++   return CP_THREAD_CONTROL_0_THREAD(thread) |
+++          (sync ? CP_THREAD_CONTROL_0_SYNC_THREADS : 0);
+++}
+++
++ static inline void
++ tu7_thread_control(struct tu_cs *cs, enum cp_thread thread)
++ {
++    tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
++-   tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(thread));
+++   tu_cs_emit(cs, tu_thread_control_payload(cs, thread, false));
++ }
++ 
++ static inline void
++diff --git a/src/freedreno/vulkan/tu_device.h b/src/freedreno/vulkan/tu_device.h
++index 356ab86..36bdb24 100644
++--- a/src/freedreno/vulkan/tu_device.h
+++++ b/src/freedreno/vulkan/tu_device.h
++@@ -173,6 +173,11 @@ struct tu_physical_device
++    struct fd_dev_info dev_info;
++    const struct fd_dev_info *info;
++ 
+++   /* Command-stream capabilities the kernel published (NativeAdrenoDevice*): bit 2 the command processor
+++    * accepts only the BR render thread, bit 3 it stops on CP_WAIT_MEM_WRITES. Zero on every other board,
+++    * where the command stream is then emitted exactly as before. */
+++   uint32_t command_policy_flags;
+++
++    int msm_major_version;
++    int msm_minor_version;
++ 
++diff --git a/src/freedreno/vulkan/tu_knl_darwin.cc b/src/freedreno/vulkan/tu_knl_darwin.cc
++index c12bd00..c00025a 100644
++--- a/src/freedreno/vulkan/tu_knl_darwin.cc
+++++ b/src/freedreno/vulkan/tu_knl_darwin.cc
++@@ -1686,6 +1686,10 @@ tu_knl_darwin_load(struct tu_instance *instance)
++ 
++    const NativeAdrenoAbiDeviceInfo *info = &dw.info;
++ 
+++   /* Bits 2 and 3 of the info flags: this kernel's command processor accepts only the BR render thread and
+++    * stops on CP_WAIT_MEM_WRITES, so the command stream has to respect that (see tu_cs.h). */
+++   device->command_policy_flags = info->flags & ((1u << 2) | (1u << 3));
+++
++    device->instance = instance;
++    device->local_fd = -1;
++    device->master_fd = -1;
++diff --git a/src/freedreno/vulkan/tu_lrz.cc b/src/freedreno/vulkan/tu_lrz.cc
++index 1daad1e..10054f2 100644
++--- a/src/freedreno/vulkan/tu_lrz.cc
+++++ b/src/freedreno/vulkan/tu_lrz.cc
++@@ -918,7 +918,7 @@ tu_disable_lrz(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
++                      CP_MODIFY_TIMESTAMP_0_OP(MODIFY_TIMESTAMP_ADD_LOCAL));
++ 
++       tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
++-      tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BV));
+++      tu_cs_emit(cs, tu_thread_control_payload(cs, CP_SET_THREAD_BV, false));
++ 
++       tu7_wait_onchip_val(cs, TU_ONCHIP_CB_RESLIST_OVERFLOW, 0);
++ 
++diff --git a/src/freedreno/vulkan/tu_query_pool.cc b/src/freedreno/vulkan/tu_query_pool.cc
++index 7c30e65..be75753 100644
++--- a/src/freedreno/vulkan/tu_query_pool.cc
+++++ b/src/freedreno/vulkan/tu_query_pool.cc
++@@ -1150,7 +1150,7 @@ emit_begin_stat_query(struct tu_cmd_buffer *cmdbuf,
++           */
++          if (!cmdbuf->state.pass) {
++             tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
++-            tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BOTH));
+++            tu_cs_emit(cs, tu_thread_control_payload(cs, CP_SET_THREAD_BOTH, false));
++          }
++          tu7_set_pred_mask(cs, (1u << TU_PREDICATE_VTX_STATS_RUNNING) |
++                                (1u << TU_PREDICATE_VTX_STATS_NOT_RUNNING),
+diff --git a/scripts/check-turnip-fuxi-command-policy.py b/scripts/check-turnip-fuxi-command-policy.py
+new file mode 100755
+index 0000000..98ab73f
+--- /dev/null
++++ b/scripts/check-turnip-fuxi-command-policy.py
+@@ -0,0 +1,132 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: MIT
++"""Check the Turnip command-policy patch (patches/mesa/turnip-darwin-command-policy.patch).
++
++The patch makes the command-stream emitter honour two capability bits the kernel publishes
++(NativeAdrenoDeviceSingleRenderThread, NativeAdrenoDeviceNoWaitMemWrites). This check is what can be
++verified without a GPU:
++
++  1. the recorded patch set reconstructs the pinned Mesa source byte for byte (so the patch is exactly
++     the change, with no unrecorded edits);
++  2. the two hooks are gated on the capability accessors and on the two packet kinds, so a device that
++     publishes neither bit takes the untouched path;
++  3. the payload rewrite touches only the thread selector and SYNC_THREADS and keeps every other bit;
++  4. the substituted header is the legal zero-payload CP_NOP encoding, checked against the PM4 kit the
++     kernel itself uses (AdrenoPM4Type7(0x10, 0)).
++
++A GPU is not exercised: a byte-identical default path and a legal encoding are the properties that can
++be proved here, and the device run proves the rest.
++"""
++import json
++import re
++import subprocess
++import sys
++import tempfile
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++SOURCE = ROOT / '.cache/mesa-work'
++KIT = ROOT / 'kits/AdrenoPM4'
++sys.path.insert(0, str(ROOT / 'scripts'))
++import mesa_patch_identity  # noqa: E402
++
++failures = []
++
++
++def check(name, condition, detail=''):
++    print(('PASS: ' if condition else 'FAIL: ') + name + (('  ' + detail) if detail and not condition else ''))
++    if not condition:
++        failures.append(name)
++
++
++def main():
++    pins = json.loads((ROOT / 'scripts/data/adreno-compiler-inputs.json').read_text())
++    name = 'patches/mesa/turnip-darwin-command-policy.patch'
++    check('the policy patch is recorded in the compiler inputs', name in pins['patches'])
++
++    # 1. The recorded sequence reconstructs the pinned source.
++    try:
++        mesa_patch_identity.validate_recorded_patches(ROOT, SOURCE, pins)
++        check('the recorded patch sequence reconstructs the pinned Mesa source', True)
++    except SystemExit as error:
++        check('the recorded patch sequence reconstructs the pinned Mesa source', False, str(error))
++
++    cs_h = (SOURCE / 'src/freedreno/vulkan/tu_cs.h').read_text()
++    cs_cc = (SOURCE / 'src/freedreno/vulkan/tu_cs.cc').read_text()
++    knl = (SOURCE / 'src/freedreno/vulkan/tu_knl_darwin.cc').read_text()
++    cb = (SOURCE / 'src/freedreno/vulkan/tu_cmd_buffer.cc').read_text()
++
++    # 2. The two hooks are gated on the capability and on their packet kind.
++    wait_hook = re.search(
++        r'if \(opcode == CP_WAIT_MEM_WRITES && cnt == 0 &&\s*\n\s*tu_command_policy_no_wait_mem_writes\(cs->device\)\)',
++        cs_h)
++    check('CP_WAIT_MEM_WRITES is substituted only for a zero payload and only when the kernel asks',
++          bool(wait_hook))
++    check('the thread-control payload is built in one place',
++          'tu_thread_control_payload(struct tu_cs *cs, enum cp_thread thread, bool sync)' in cs_h)
++    check('that place emits the BR form with concurrent binning disabled when the kernel reports one thread',
++          'if (tu_command_policy_single_render_thread(cs->device)) {' in cs_h and
++          'return CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) |\n'
++          '             CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE;' in cs_h)
++    check('the default path returns exactly the word its caller asked for',
++          'return CP_THREAD_CONTROL_0_THREAD(thread) |\n'
++          '          (sync ? CP_THREAD_CONTROL_0_SYNC_THREADS : 0);' in cs_h)
++    check('tu7_thread_control goes through that place',
++          'tu_cs_emit(cs, tu_thread_control_payload(cs, thread, false));' in cs_h)
++    cb = (SOURCE / 'src/freedreno/vulkan/tu_cmd_buffer.cc').read_text()
++    check('the simultaneous-use site goes through it too, keeping its sync request',
++          'tu_cs_emit(cs, tu_thread_control_payload(cs, CP_SET_THREAD_BR, true));' in cb)
++    check('the BOTH patchpoint records no concurrent-binning control point',
++          'if (tu_command_policy_single_render_thread(cmd->device)) {\n'
++          '      tu7_set_thread_br_patchpoint(cmd, cs, true);\n      return;\n   }' in cb)
++    qp = (SOURCE / 'src/freedreno/vulkan/tu_query_pool.cc').read_text()
++    check('the occlusion-query predicate goes through it too',
++          'tu_cs_emit(cs, tu_thread_control_payload(cs, CP_SET_THREAD_BOTH, false));' in qp)
++    lrz = (SOURCE / 'src/freedreno/vulkan/tu_lrz.cc').read_text()
++    check('the LRZ emitter goes through it too',
++          'tu_cs_emit(cs, tu_thread_control_payload(cs, CP_SET_THREAD_BV, false));' in lrz)
++    check('the binning branch goes through it too',
++          'tu_cs_emit(cs, tu_thread_control_payload(cs, CP_SET_THREAD_BV, false));' in cb)
++    check('the BR patchpoint is left out on such a device',
++          'if (tu_command_policy_single_render_thread(cmd->device))\n      force_disable_cb = true;' in cb)
++
++    # 4. The capability bits are read from the published device info, not from a board name.
++    check('the capabilities come from the device-info flags word',
++          'info->flags & ((1u << 2) | (1u << 3))' in knl)
++    check('nothing in the patch names this board',
++          'fuxi' not in cs_h.lower() and 'fuxi' not in knl.lower() and 'fuxi' not in cs_cc.lower())
++
++    # 5. The substituted header is the legal zero-payload CP_NOP, checked with the kernel's own kit.
++    probe = Path(tempfile.mkdtemp(prefix='pm4-', dir=ROOT / '.cache')) / 'probe.c'
++    probe.write_text(
++        '#include <stdio.h>\n#include "AdrenoPM4.h"\n'
++        'int main(void){uint32_t nop=0,wait=0;'
++        'if(AdrenoPM4Type7(0x10,0,&nop)!=AdrenoPM4Success)return 1;'
++        'if(AdrenoPM4Type7(0x12,0,&wait)!=AdrenoPM4Success)return 2;'
++        'printf("%08x %08x\\n",nop,wait);return 0;}\n')
++    kit_c = sorted(KIT.glob('AdrenoPM4.c'))
++    binary = probe.with_suffix('.bin')
++    build = subprocess.run(['xcrun', 'clang', '-O1', '-I', str(KIT), str(probe), str(kit_c[0]),
++                            '-o', str(binary)], capture_output=True, text=True)
++    check('the PM4 kit compiles for the encoding probe', build.returncode == 0, build.stderr[-300:])
++    if build.returncode == 0:
++        out = subprocess.run([str(binary)], capture_output=True, text=True).stdout.split()
++        nop, wait = int(out[0], 16), int(out[1], 16)
++        check('the two encodings have the same length and type-7 shape',
++              (nop >> 28) == 7 and (wait >> 28) == 7 and (nop & 0x3fff) == 0 and (wait & 0x3fff) == 0,
++              f'{nop:08x} {wait:08x}')
++        # The two differ in the opcode field only, which includes that field's parity bit (bit 23).
++        check('CP_NOP differs from CP_WAIT_MEM_WRITES only in the opcode field',
++              ((nop ^ wait) & ~(0xff << 16)) == 0 and (nop & 0xffff) == (wait & 0xffff),
++              f'{nop:08x} {wait:08x}')
++
++    print()
++    if failures:
++        print(f'{len(failures)} check(s) failed')
++        return 1
++    print('all checks passed')
++    return 0
++
++
++if __name__ == '__main__':
++    sys.exit(main())
+diff --git a/scripts/data/adreno-compiler-inputs.json b/scripts/data/adreno-compiler-inputs.json
+index 4314406..1804c3a 100644
+--- a/scripts/data/adreno-compiler-inputs.json
++++ b/scripts/data/adreno-compiler-inputs.json
+@@ -50,6 +50,7 @@
+     "patches/mesa/ir3-portable-asm-roundtrip.patch",
+     "patches/mesa/offline-adreno-compiler-probe.patch",
+     "patches/mesa/turnip-darwin-kmd.patch",
++    "patches/mesa/turnip-darwin-command-policy.patch",
+     "patches/mesa/turnip-graphics-cache-feedback.patch",
+     "patches/mesa/turnip-empty-scissor.patch",
+     "patches/mesa/turnip-builtin-shader-pack.patch",

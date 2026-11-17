@@ -1,14 +1,17 @@
-From 984c0b8a161f28cf6773086e288784a714b6cf61 Mon Sep 17 00:00:00 2001
+From 3c8954e90750874daea0d4929b25318315534e39 Mon Sep 17 00:00:00 2001
 From: ljhhkx529 <ljhzyx520@gmail.com>
-Date: Thu, 5 Nov 2026 20:36:06 +0800
-Subject: [PATCH 2/4] xnu: give the panic screen the CDC status colour
+Date: Tue, 17 Nov 2026 18:26:40 +0800
+Subject: [PATCH 07/15] xnu: give the panic screen the CDC status colour
 
-patch-xnu-entry-probe.py resolves _native_usb_panic_bg next to the other symbols and passes it as
-QUD_BG. The panic screen fills the lower page with that colour, so a refused or active CDC bring-up
-is visible on a photograph without spending padding on the phase logic.
+The USB CDC status colour is a solid band at the top of the lower page, with
+the error text below it. FuxiUsbCompat.c derives the colour from the CDC phase
+(green = ACTIVE, yellow = PREPARING/WAITING, red = not started/failed) and
+stores it in a global word, so this file only reads that word: the padding
+budget cannot afford the phase logic here. With no USB archive the address is
+0, the band disappears and the page stays black.
 
-The frame-pointer walk is removed: it competed with the colour for the same padding budget, and the
-panic message already names the faulting call.
+The frame-pointer walk that used to follow the message is gone: it competed
+with the colour for the same padding budget.
 ---
  scripts/patch-xnu-entry-probe.py | 13 +++++++++++
  scripts/xnu-panic-screen.c       | 39 ++++++++++++++++----------------

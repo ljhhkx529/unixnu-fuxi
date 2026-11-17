@@ -1,0 +1,45 @@
+From cee1d39aa19f0e3835cda3e413b16adb03225900 Mon Sep 17 00:00:00 2001
+From: ljhhkx529 <ljhzyx520@gmail.com>
+Date: Tue, 17 Nov 2026 18:28:00 +0800
+Subject: [PATCH 11/15] Adreno740: board policy as data, and an audit-only
+ command stream
+
+The fork's command-stream corrections are gone (2c838c9 in the Adreno740
+branch): the CP_THREAD_CONTROL rewrite, the CP_WAIT_MEM_WRITES substitution, the
+empty-indirect-buffer experiment and the SYNC_THREADS switch are all deleted,
+and what remains only counts what the runtime gets wrong.
+
+This commit takes the branch state, so components.toml and the gitlink agree.
+The board asks for the two command-stream capabilities through a versioned
+policy structure instead of a boot argument, which is what lets the same driver
+serve a runtime that needs neither.
+---
+ components.toml   | 7 ++++---
+ drivers/Adreno740 | 2 +-
+ 2 files changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/components.toml b/components.toml
+index 392d99b..e7a73c4 100644
+--- a/components.toml
++++ b/components.toml
+@@ -83,9 +83,10 @@ kind = "driver"
+ function = "A740 kernel GPU driver"
+ scope = "gpu"
+ repository = "https://github.com/UniXNU/Adreno740.git"
+-# fuxi bring-up overlay rebased on upstream 6fa7bae2a5b3b523e790eb3e0348af4d98969e4d:
+-# keep the two-dword CP_SMMU_TABLE_UPDATE, process-table read-back, kernel-table mount and thread-control fixes.
+-revision = "a9a2cbb43b89d672e2921e19721a6438b738b17f"
++# fuxi bring-up overlay on upstream 6fa7bae2a5b3b523e790eb3e0348af4d98969e4d: it keeps the two-dword
++# CP_SMMU_TABLE_UPDATE, the process-table read-back and the mount policy, and nothing else: the command-stream
++# corrections the bring-up needed are deleted, so the runtime decides what to emit.
++revision = "2c838c924490cf7663a0767805f6c78ffaeda78c"
+ path = "drivers/Adreno740"
+ hardware = ["Adreno 740", "SM8550"]
+ os_abi = ["ipados-17.7.11-21H461"]
+diff --git a/drivers/Adreno740 b/drivers/Adreno740
+index a9a2cbb..2c838c9 160000
+--- a/drivers/Adreno740
++++ b/drivers/Adreno740
+@@ -1 +1 @@
+-Subproject commit a9a2cbb43b89d672e2921e19721a6438b738b17f
++Subproject commit 2c838c924490cf7663a0767805f6c78ffaeda78c

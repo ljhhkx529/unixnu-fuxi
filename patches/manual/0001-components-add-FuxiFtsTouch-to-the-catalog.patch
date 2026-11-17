@@ -1,0 +1,135 @@
+From 449307ade06052de3b9ce0cbc71178c0220bcaf7 Mon Sep 17 00:00:00 2001
+From: ljhhkx529 <ljhzyx520@gmail.com>
+Date: Tue, 17 Nov 2026 18:23:57 +0800
+Subject: [PATCH 01/15] components: add FuxiFtsTouch to the catalog
+
+The touch controller's driver is the board's own (FuxiFtsTouch), and the catalog
+is how the builder learns about a component: its repository, the revision it
+pins, the source files it owns, the archives it produces and the devices it was
+verified on.
+
+The Chinese page carried a garbled character, fixed with the same change.
+---
+ .gitmodules                       |  3 +++
+ components.toml                   | 20 ++++++++++++++++++++
+ docs/drivers/fuxi-fts-touch.md    | 28 ++++++++++++++++++++++++++++
+ docs/zh/drivers/fuxi-fts-touch.md | 24 ++++++++++++++++++++++++
+ drivers/FuxiFtsTouch              |  1 +
+ 5 files changed, 76 insertions(+)
+ create mode 100644 docs/drivers/fuxi-fts-touch.md
+ create mode 100644 docs/zh/drivers/fuxi-fts-touch.md
+ create mode 160000 drivers/FuxiFtsTouch
+
+diff --git a/.gitmodules b/.gitmodules
+index dff2ced..5c39079 100644
+--- a/.gitmodules
++++ b/.gitmodules
+@@ -55,3 +55,6 @@
+ [submodule "kits/VerifiedRoot"]
+ 	path = kits/VerifiedRoot
+ 	url = https://github.com/UniXNU/VerifiedRoot.git
++[submodule "drivers/FuxiFtsTouch"]
++	path = drivers/FuxiFtsTouch
++	url = https://github.com/OddlyLabs/FuxiFtsTouch.git
+diff --git a/components.toml b/components.toml
+index 2bbfd70..1607fd5 100644
+--- a/components.toml
++++ b/components.toml
+@@ -204,6 +204,26 @@ build = []
+ outputs = []
+ legacy_name = "NativeGeniSpi"
+ 
++[[component]]
++id = "FuxiFtsTouch"
++repository_id = 1441357403
++kind = "driver"
++function = "ST FingerTip FTM5 touch protocol and contact tracking"
++scope = "board"
++repository = "https://github.com/OddlyLabs/FuxiFtsTouch.git"
++revision = "a923703792a94196cefaf49293c162a4919e202a"
++path = "drivers/FuxiFtsTouch"
++hardware = ["ST FingerTip FTM5 (chip id 36 40)"]
++os_abi = ["ipados-17.7.11-21H461"]
++board_dependencies = ["touch power rails", "reset and interrupt pins", "coordinate range"]
++verified_devices = []
++dependencies = ["QcomGeniSpi"]
++source_files = ["FtsProtocol.c", "FtsTouchCore.c"]
++runtime_identifiers = ["FuxiFtsTouch", "FtsProtocol.c"]
++build_stage = "embedded"
++build = []
++outputs = []
++
+ [[component]]
+ id = "GopFramebuffer"
+ repository_id = 1426849559
+diff --git a/docs/drivers/fuxi-fts-touch.md b/docs/drivers/fuxi-fts-touch.md
+new file mode 100644
+index 0000000..a49e6d7
+--- /dev/null
++++ b/docs/drivers/fuxi-fts-touch.md
+@@ -0,0 +1,28 @@
++# FuxiFtsTouch
++
++Start with the [adaptation procedure](/porting/input) for board inputs, source changes, build integration and verification order.
++
++ST FingerTip FTM5 touch protocol and contact tracking, written for the Xiaomi 13 (fuxi, SM8550).
++
++[Source repository](https://github.com/OddlyLabs/FuxiFtsTouch).
++
++The controller keeps its firmware in its own flash: the host resets it, waits for its ready event, starts sensing and
++drains its event FIFO. Callers provide the transport (`struct fts_bus`: full-duplex transfer, delay, reset line); on
++fuxi the board probe passes GENI SPI transfers from [QcomGeniSpi](/drivers/qcom-geni-spi).
++
++| File | Purpose |
++| --- | --- |
++| `FtsProtocol.c` | Framing, register access, FIFO reads, reset with the ready wait and the 4-wire SPI fallback, sensing start |
++| `FtsTouchCore.c` | Contact slots by controller tracking id, error recovery flags, board coordinate transform |
++
++## Board integration
++
++The fuxi device repository [OddlyLabs/unixnu-fuxi](https://github.com/OddlyLabs/unixnu-fuxi) holds the board probe
++(`package/FuxiTouchProbe.cpp`, staged by the boot argument `fuxi-touch=<n>`), the board constants with their sources and
++the archive recipe `scripts/build-fuxi-touch.py`.
++
++```sh
++./unixnu build kernel -D ../unixnu-fuxi
++```
++
++[Component catalog](/reference/components)
+diff --git a/docs/zh/drivers/fuxi-fts-touch.md b/docs/zh/drivers/fuxi-fts-touch.md
+new file mode 100644
+index 0000000..8c0fcd6
+--- /dev/null
++++ b/docs/zh/drivers/fuxi-fts-touch.md
+@@ -0,0 +1,24 @@
++# FuxiFtsTouch
++
++板级输入、源码修改、构建集成和验证顺序，先看[适配流程](/zh/porting/input)。
++
++ST FingerTip FTM5 触控协议与触点跟踪，为小米 13（fuxi，SM8550）编写。
++
++[源码仓库](https://github.com/OddlyLabs/FuxiFtsTouch)。
++
++控制器的固件在芯片自带的 flash 里：主机只需要复位它、等它的就绪事件、开始扫描，然后读事件 FIFO。传输由调用方提供（`struct fts_bus`：全双工收发、延时、复位脚）。在 fuxi 上，板级探针用 [QcomGeniSpi](/zh/drivers/qcom-geni-spi) 的 GENI SPI 传输。
++
++| 文件 | 作用 |
++| --- | --- |
++| `FtsProtocol.c` | 组帧、寄存器读写、读 FIFO、复位并等待就绪（含 4 线 SPI 回退）、开始扫描 |
++| `FtsTouchCore.c` | 按控制器跟踪 ID 管理触点槽位、错误恢复标志、板级坐标变换 |
++
++## 板级集成
++
++fuxi 设备仓库 [OddlyLabs/unixnu-fuxi](https://github.com/OddlyLabs/unixnu-fuxi) 里有板级探针（`package/FuxiTouchProbe.cpp`，用启动参数 `fuxi-touch=<n>` 分阶段打开）、带出处的板级常量，以及归档脚本 `scripts/build-fuxi-touch.py`。
++
++```sh
++./unixnu build kernel -D ../unixnu-fuxi
++```
++
++[组件目录](/zh/reference/components)
+diff --git a/drivers/FuxiFtsTouch b/drivers/FuxiFtsTouch
+new file mode 160000
+index 0000000..a923703
+--- /dev/null
++++ b/drivers/FuxiFtsTouch
+@@ -0,0 +1 @@
++Subproject commit a923703792a94196cefaf49293c162a4919e202a

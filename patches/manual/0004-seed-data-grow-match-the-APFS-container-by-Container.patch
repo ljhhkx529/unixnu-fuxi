@@ -1,0 +1,37 @@
+From 70fb30b77c4e2c52efce254c5c30638c279a1d29 Mon Sep 17 00:00:00 2001
+From: ljhhkx529 <ljhzyx520@gmail.com>
+Date: Tue, 17 Nov 2026 18:25:24 +0800
+Subject: [PATCH 04/15] seed-data-grow: match the APFS container by
+ ContainerReference
+
+The Data seed grows the APFS container of the live device. Matching by
+PhysicalStores picked the wrong container when a machine had more than one
+store behind the same device, and the seed was written into the wrong place.
+
+ContainerReference is the container's own identity, so the match is the one the
+container claims rather than one derived from the stores behind it.
+---
+ scripts/seed-data-grow.py | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/scripts/seed-data-grow.py b/scripts/seed-data-grow.py
+index aa6beb1..ff55b32 100755
+--- a/scripts/seed-data-grow.py
++++ b/scripts/seed-data-grow.py
+@@ -109,8 +109,14 @@ def main():
+             listing = plistlib.loads(subprocess.check_output(['diskutil', 'apfs', 'list', '-plist']))
+             container = None
+             for entry in listing['Containers']:
+-                if any(s['DeviceIdentifier'] == store for s in entry.get('PhysicalStores', [])):
+-                    container = entry['ContainerReference']
++                if entry.get('ContainerReference') == store:
++                    container = store
++                    break
++            if not container:
++                for entry in listing['Containers']:
++                    if any(s['DeviceIdentifier'] == store for s in entry.get('PhysicalStores', [])):
++                        container = entry['ContainerReference']
++                        break
+             if not container:
+                 sys.exit('No APFS container found on the attached seed')
+             run('diskutil', 'apfs', 'resizeContainer', container, '0')

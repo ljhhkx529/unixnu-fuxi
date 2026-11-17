@@ -1,0 +1,66 @@
+From 21e192e0f9342ca051e7394ea33ba16c8ab7b257 Mon Sep 17 00:00:00 2001
+From: Kerfand <347610513+Kerfand@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 18:25:42 +0800
+Subject: [PATCH 05/15] build: the Linux host recipe for the fuxi kernel
+
+The kernel used to be built on a Mac. This makes a Linux host build it too: the
+few sources that assume Apple's tools are rewritten for the host (scripts/linux),
+and the make invocation gets what a Mac provides itself (host compiler, mig,
+memory and CPU counts).
+
+The two Linux hosts this was written for are named in the building page.
+
+Co-Authored-By: Kerfand <347610513+Kerfand@users.noreply.github.com>
+---
+ docs/building.md             | 2 ++
+ docs/zh/building.md          | 2 ++
+ scripts/linux/prepare-xnu.py | 2 +-
+ scripts/unixnu/kernel.py     | 2 +-
+ 4 files changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/docs/building.md b/docs/building.md
+index 0ea75eb..a0e045e 100644
+--- a/docs/building.md
++++ b/docs/building.md
+@@ -357,3 +357,5 @@ All output goes to `out/`:
+ - [Build the kernel](/guide/build-kernel) describes the kernel flags and archives.
+ - [Boot the image](/guide/boot) describes the fastboot commands.
+ - [Reference](/reference/output-layout) lists every report field.
++
++Linux fuxi 21H461 builds use the matching Libc headers ahead of SDK C headers when building compiler-rt. Linux-only warning compatibility also covers unsafe-buffer and duplicate-header diagnostics; semantic build checks remain enabled. Device integration and template packaging are recorded in Kerfand/unixnu-fuxi0721, branch old, USB-RESTORE-20261102.md.
+diff --git a/docs/zh/building.md b/docs/zh/building.md
+index db49506..3e44e19 100644
+--- a/docs/zh/building.md
++++ b/docs/zh/building.md
+@@ -344,3 +344,5 @@ ramdisk 优先使用负载输出，也可以用 `--ramdisk FILE`，或用 `--ram
+ - [构建内核](/zh/guide/build-kernel)介绍内核开关和静态库。
+ - [启动镜像](/zh/guide/boot)介绍 fastboot 命令。
+ - [参考](/zh/reference/output-layout)列出报告字段。
++
++Linux 上构建 fuxi 21H461 时，compiler-rt 优先使用匹配版本的 Libc 头。Linux 警告兼容参数覆盖 unsafe-buffer 和重复头诊断，保留语义检查。设备修复与模板打包见 Kerfand/unixnu-fuxi0721 的 old 分支 USB-RESTORE-20261102.md。
+diff --git a/scripts/linux/prepare-xnu.py b/scripts/linux/prepare-xnu.py
+index efef7a6..d89cc46 100755
+--- a/scripts/linux/prepare-xnu.py
++++ b/scripts/linux/prepare-xnu.py
+@@ -123,7 +123,7 @@ def build_cc_kext():
+         subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-arch', 'arm64', '-isysroot', FAKEROOT,
+                         '-mkernel', '-DKERNEL_USE', '-O3', '-fPIC', '-w',
+                         '-I', rt / 'include', '-I', FAKEROOT / 'System/Library/Frameworks/Kernel.framework/Headers',
+-                        '-idirafter', src / 'Libc/include', '-idirafter', XNU / 'libsyscall/wrappers',
++                        '-I', src / 'Libc/include', '-idirafter', XNU / 'libsyscall/wrappers',
+                         '-c', rt / f'lib/profile/{name}.c', '-o', objects / f'{name}.o'], check=True)
+     subprocess.run(['xcrun', 'libtool', '-static', '-o', out, *(objects / f'{n}.o' for n in PROFILE_SOURCES)],
+                    check=True)
+diff --git a/scripts/unixnu/kernel.py b/scripts/unixnu/kernel.py
+index ac2723c..da9cd5e 100644
+--- a/scripts/unixnu/kernel.py
++++ b/scripts/unixnu/kernel.py
+@@ -99,7 +99,7 @@ def linux_env(ctx):
+             'UNIXNU_PLATFORM_PATH': str(fakeroot / 'Platforms/iPhoneOS.platform'),
+             'CROSS_CLANG': str(toolchain / 'llvm/bin/clang'), 'DARWIN_TRIPLE': 'arm64-apple-ios17.0',
+             'CROSS_EXTRA_FLAGS': '-mllvm -disable-atexit-based-global-dtor-lowering',
+-            'CCC_OVERRIDE_OPTIONS': '# +-Wno-missing-designated-field-initializers +-Wno-unused-but-set-global'}
++            'CCC_OVERRIDE_OPTIONS': '# +-Wno-missing-designated-field-initializers +-Wno-unused-but-set-global +-Wno-unsafe-buffer-usage +-Wno-shadow-header'}
+ 
+ 
+ def archive_plan(ctx):
