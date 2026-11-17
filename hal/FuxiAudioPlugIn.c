@@ -25,7 +25,8 @@ enum {kPlugIn = kAudioObjectPlugInObject, kDevice = 2, kOutStream = 3, kInStream
 #define kDeviceUID "FuxiAudioDevice"
 #define kModelUID "FuxiAudioModel"
 // The time stamp period. It must exceed the safety offset plus an IO cycle, or the audio server never runs IO (i543: 8192, no writes).
-static const UInt32 kZeroPeriod = 0;
+// It is the ring's length in frames (sheng's line), read from the shared page once it is mapped and the board's constant before
+// that: with a zero period GetZeroTimeStamp() divides by zero and the audio server never runs IO at all.
 // The time stamps start at the frame IO started on, as in Apple's sample driver, not on a grid from boot: the audio server took the first
 // stamp, up to a period old, for the start, and wrote that much late (least write-ahead -734 frames with a 16384 period, i539; about
 // -9700 with 65536, i540 to i542). Sample times stay those of the shared timeline. Playback is smooth this way (i544); i545 went back to
@@ -43,6 +44,7 @@ static QcomAudioControl *gControl;
 static Float64 pageRate(void) {return gControl ? (Float64)gControl->rate : (Float64)QCOM_AUDIO_RATE;}
 static UInt32 pageRingFrames(void) {return gControl ? gControl->ring_frames : QCOM_AUDIO_RING_FRAMES;}
 static UInt32 pagePeriodFrames(void) {return gControl ? gControl->period_frames : QCOM_AUDIO_PERIOD_FRAMES;}
+static UInt32 zeroPeriod(void) {return gControl ? gControl->ring_frames : QCOM_AUDIO_RING_FRAMES;}
 
 static int16_t *gOut, *gIn;
 static UInt32 gIoUsers;
@@ -306,7 +308,7 @@ static OSStatus propertyData(AudioObjectID o, const AudioObjectPropertyAddress *
         case kAudioDevicePropertyNominalSampleRate: REPLY(Float64, pageRate());
         case kAudioDevicePropertyAvailableNominalSampleRates: REPLY(AudioValueRange, ((AudioValueRange){pageRate(), pageRate()}));
         case kAudioDevicePropertyIsHidden: REPLY(UInt32, 0);
-        case kAudioDevicePropertyZeroTimeStampPeriod: REPLY(UInt32, kZeroPeriod);
+        case kAudioDevicePropertyZeroTimeStampPeriod: REPLY(UInt32, zeroPeriod());
         case kAudioDevicePropertyClockIsStable: REPLY(UInt32, 1);
         // Raw: the zero time stamps are exact (one host clock), so smoothing only delays the audio server's view of them.
         case kAudioDevicePropertyClockAlgorithm: REPLY(UInt32, kAudioDeviceClockAlgorithmRaw);
@@ -573,10 +575,11 @@ static OSStatus GetZeroTimeStamp(AudioServerPlugInDriverRef d, AudioObjectID o, 
     uint64_t anchor;
     do {seq = gControl->out_seq; anchor = gControl->out_anchor_host;} while ((seq & 1) || seq != gControl->out_seq);
     const uint64_t now = mach_absolute_time();
-    const Float64 period = gHostTicksPerFrame * kZeroPeriod;
+    const UInt32 zeroPeriodFrames = zeroPeriod();
+    const Float64 period = gHostTicksPerFrame * zeroPeriodFrames;
     const uint64_t origin = anchor + (uint64_t)((Float64)gZeroOrigin * gHostTicksPerFrame);
     const uint64_t wraps = now > origin ? (uint64_t)((Float64)(now - origin) / period) : 0;
-    *sampleTime = (Float64)(gZeroOrigin + wraps * kZeroPeriod);
+    *sampleTime = (Float64)(gZeroOrigin + wraps * zeroPeriodFrames);
     *hostTime = origin + (uint64_t)((Float64)wraps * period);
     *seed = 1 + seq / 2 + gZeroSeed;
     return 0;

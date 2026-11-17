@@ -37,6 +37,7 @@
 #include "TouchBoard.h"
 #include "QcomAdsp.h"
 #include "QcomAudioGraph.h"
+#include "QcomAudioAbi.h"
 #include "FuxiGraphReply.h"
 #include "QcomGlink.h"
 #include "QcomMdt.h"
@@ -57,6 +58,14 @@ extern "C" unsigned long gPhysBase, gPhysSize;
 extern "C" uint64_t kvtophys(uint64_t);
 extern "C" int native_ram_block_gpu_addon(const uint8_t **, uint64_t *) __attribute__((weak_import));
 
+/* The audio service iOS's audio server plug-in opens (package/FuxiAudioService.cpp).  Its classes are registered by
+ * the runtime between preModLoad and postModLoad; the service publishes itself once the speaker path is ready. */
+extern "C" void native_audio_service_static_init(void) __asm__("__GLOBAL__sub_I_FuxiAudioService.cpp");
+extern "C" void fuxi_audio_service_start(void);
+extern "C" void fuxi_audio_service_publish(void);
+/* The audio service's state counters (package/FuxiAudioService.cpp owns the storage). */
+extern "C" volatile int32_t native_audio_service[8];
+extern kmod_info_t g_kernel_kmod_info;
 
 namespace {
 
@@ -250,6 +259,26 @@ struct Owner {
     uint32_t amp_pll_lock, amp_errors, amp_pup, amp_powered;
     uint8_t storage[kGlinkStorageBytes];
 };
+
+/* The shared page of the audio service (QcomAudioAbi.h): the control page, the playback ring and the capture ring.
+ * The iOS audio server's plug-in maps all three; the samples move through the playback ring and the DSP takes
+ * them a period at a time.  This is sheng's arrangement (package/AudioProbe.cpp setupShared) with the board's
+ * own numbers. */
+struct Shared {
+    IOBufferMemoryDescriptor *control, *outRing, *inRing;
+    QcomAudioControl *ctl;
+    int16_t *out, *in;
+    volatile uint32_t serving;   // the service accepts requests
+    volatile uint32_t want;      // QcomAudioOutputRunning / QcomAudioInputRunning as the plug-in asks
+    uint64_t next;               // the playback period to send next (absolute, in periods)
+    uint64_t frames;             // the frames the service has consumed
+    uint32_t late;               // periods sent without fresh data
+    uint64_t anchor;             // the host time the timeline starts at
+    uint64_t ticks_per_frame_q32;
+    uint32_t started;            // the first period has been placed on the timeline
+};
+
+Shared gShared;
 
 Owner gOwner;
 FuxiAdspPlatformHooks gHooks;
@@ -2126,6 +2155,65 @@ static void graphClean(const volatile void *p, uint32_t length)
     __asm__ volatile("dsb sy" ::: "memory");
 }
 
+/* Allocates the three shared pages and fills the control page.
+ *
+ * sheng's setupShared() (package/AudioProbe.cpp) is the reference: three kIOMemoryKernelUserShared buffers (the
+ * control page, the playback ring and the capture ring), the control page filled with the board's numbers and the
+ * anchors taken once, so one timeline holds for the whole boot.  The tick rate is computed in 128 bits: with this
+ * board's 19.2 MHz timer (timebase 625/12) 1e9 * 12 << 32 overflows 64 bits, which made the shared timeline run
+ * 3.5 times too fast for the plug-in and the audio server (113.7 ticks per frame instead of 400). */
+static bool setupShared()
+{
+    const IOOptionBits shared = static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryKernelUserShared);
+    gShared.control = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task, shared, QCOM_AUDIO_PAGE_BYTES, QCOM_AUDIO_PAGE_BYTES);
+    gShared.outRing = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task, shared,
+        QCOM_AUDIO_RING_FRAMES * QCOM_AUDIO_OUT_CHANNELS * 2, QCOM_AUDIO_PAGE_BYTES);
+    gShared.inRing = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task, shared,
+        QCOM_AUDIO_RING_FRAMES * QCOM_AUDIO_IN_CHANNELS * 2, QCOM_AUDIO_PAGE_BYTES);
+    if (!gShared.control || !gShared.outRing || !gShared.inRing) return false;
+    gShared.ctl = static_cast<QcomAudioControl *>(gShared.control->getBytesNoCopy());
+    gShared.out = static_cast<int16_t *>(gShared.outRing->getBytesNoCopy());
+    gShared.in = static_cast<int16_t *>(gShared.inRing->getBytesNoCopy());
+    memset(gShared.control->getBytesNoCopy(), 0, QCOM_AUDIO_PAGE_BYTES);
+    memset(gShared.out, 0, (size_t)QCOM_AUDIO_RING_FRAMES * QCOM_AUDIO_OUT_CHANNELS * 2);
+    memset(gShared.in, 0, (size_t)QCOM_AUDIO_RING_FRAMES * QCOM_AUDIO_IN_CHANNELS * 2);
+    mach_timebase_info_data_t tb;
+    clock_timebase_info(&tb);
+    const uint64_t anchor = mach_absolute_time();
+    QcomAudioAbiConfig config = {};
+    config.rate = QCOM_AUDIO_RATE;
+    config.out_channels = QCOM_AUDIO_OUT_CHANNELS;
+    config.in_channels = QCOM_AUDIO_IN_CHANNELS;
+    config.period_frames = QCOM_AUDIO_PERIOD_FRAMES;
+    config.ring_frames = QCOM_AUDIO_RING_FRAMES;
+    /* The lead the plug-in is given: 300 ms, so the audio server writes that far ahead (sheng's kLeadFrames). */
+    config.lead_frames = 30u * QCOM_AUDIO_PERIOD_FRAMES;
+    config.host_clock_hz = static_cast<uint32_t>(1000000000ULL * tb.denom / tb.numer);
+    config.anchor_host = anchor;
+    if (qcom_audio_abi_init(gShared.ctl, &config) != QcomAudioAbiOk) return false;
+    /* The tick rate in 128 bits (see the note above), written back so the plug-in reads the same number. */
+    const uint64_t ticks = static_cast<uint64_t>(((__uint128_t)1000000000ULL * tb.denom << 32) /
+                                                  ((uint64_t)QCOM_AUDIO_RATE * tb.numer));
+    gShared.ticks_per_frame_q32 = ticks;
+    gShared.ctl->ticks_per_frame_q32 = ticks;
+    gShared.anchor = anchor;
+    gShared.next = 0;
+    gShared.frames = 0;
+    gShared.late = 0;
+    gShared.started = 0;
+    return true;
+}
+
+/* The frame of the shared timeline that plays now. */
+static uint64_t sharedFramesNow()
+{
+    if (!gShared.ctl || !gShared.ticks_per_frame_q32) return 0;
+    const uint64_t now = mach_absolute_time();
+    return now > gShared.anchor
+        ? static_cast<uint64_t>(((__uint128_t)(now - gShared.anchor) << 32) / gShared.ticks_per_frame_q32)
+        : 0;
+}
+
 /* Fills one slot of the period buffer.
  *
  * The buffer is silent by default.  A tone is only written when the boot
@@ -2153,6 +2241,45 @@ static void graphFillSlot(unsigned slot, bool tone)
     graphClean(dst, kArPeriodBytes);
 }
 
+/* Copies one period out of the shared playback ring into the DSP's slot.
+ *
+ * The ring is not a whole number of periods, so a period can wrap; the frames taken are cleared afterwards, so a
+ * frame the plug-in did not write in time plays as silence instead of what the ring held one turn earlier
+ * (sheng's submit()).  The ring's frames are the ones the audio server wrote, so this is where iOS's sound
+ * becomes the DSP's sound. */
+static void sharedFillSlot(unsigned slot)
+{
+    if (!gOwner.pcm_va || !gShared.out) return;
+    volatile int16_t *const dst = reinterpret_cast<volatile int16_t *>(gOwner.pcm_va) +
+                                  (uint32_t)(slot * kArPeriodBytes / 2u);
+    /* The first period the plug-in's timeline serves is the one that plays now: the DSP started its
+     * stream before the audio server connected, so the ring's position is the play position and not
+     * the anchor.  From here on the periods follow one another (sheng's gAudio.next). */
+    if (!gShared.started) {
+        gShared.next = sharedFramesNow() / kArPeriodFrames;
+        gShared.started = 1;
+    }
+    const uint64_t period = gShared.next;
+    const uint32_t at = static_cast<uint32_t>((period * kArPeriodFrames) % QCOM_AUDIO_RING_FRAMES);
+    const uint32_t head = QCOM_AUDIO_RING_FRAMES - at < kArPeriodFrames ? QCOM_AUDIO_RING_FRAMES - at : kArPeriodFrames;
+    memcpy(const_cast<int16_t *>(dst), gShared.out + (size_t)at * kArChannels,
+           (size_t)head * kArChannels * 2);
+    if (head < kArPeriodFrames)
+        memcpy(const_cast<int16_t *>(dst) + (size_t)head * kArChannels, gShared.out,
+               (size_t)(kArPeriodFrames - head) * kArChannels * 2);
+    /* The frames are taken: clear them, so a frame the audio server did not write in time plays as silence. */
+    memset(gShared.out + (size_t)at * kArChannels, 0, (size_t)head * kArChannels * 2);
+    if (head < kArPeriodFrames)
+        memset(gShared.out, 0, (size_t)(kArPeriodFrames - head) * kArChannels * 2);
+    /* Late: the audio server was running and had not written the period yet. */
+    if (gShared.ctl && (gShared.want & QcomAudioOutputRunning) &&
+        gShared.ctl->out_written < (period + 1) * kArPeriodFrames)
+        gShared.late++;
+    if (gShared.ctl) gShared.ctl->out_frames = gShared.frames;
+    gShared.frames += kArPeriodFrames;
+    graphClean(dst, kArPeriodBytes);
+}
+
 /* Sends one period to the DSP.
  *
  * The write is fire and forget: the DSP answers with WRITE_DONE when it
@@ -2163,7 +2290,13 @@ static void graphFillSlot(unsigned slot, bool tone)
 static int graphSendPeriod(unsigned slot, bool tone)
 {
     if (!gOwner.period_handle || !gOwner.pcm_va) return -EINVAL;
-    graphFillSlot(slot, tone);
+    /* With the iOS audio server's plug-in connected, the periods carry the
+     * samples the audio server wrote into the shared ring; without it, the
+     * board's own tone (or silence). */
+    if (gShared.serving)
+        sharedFillSlot(slot);
+    else
+        graphFillSlot(slot, tone);
     gOwner.graph_req_size = qcom_ar_write(gOwner.graph_packet, sizeof gOwner.graph_packet,
         gOwner.graph_bind_port, gOwner.period_counter + 1u, kArIidShmem,
         gOwner.period_address[slot], gOwner.period_handle, kArPeriodBytes);
@@ -2174,6 +2307,7 @@ static int graphSendPeriod(unsigned slot, bool tone)
     gOwner.period_active[slot] = 1;
     ++gOwner.period_in_flight;
     ++gOwner.period_sent;
+    if (gShared.serving) ++gShared.next;
     return 0;
 }
 
@@ -2823,6 +2957,19 @@ void ownerThread(void *, wait_result_t)
                     rc = graphRun();
                     printf("fuxi-graph: run rc=%d\n", rc);
                     if (!rc) {
+                            /* The shared page of the audio service: the iOS
+                             * audio server's plug-in maps it, and the
+                             * periods carry the samples it writes.  It is
+                             * set up before the service is published, so the
+                             * plug-in never sees a half-built page. */
+                            if (!setupShared())
+                                printf("fuxi-audio: the shared page could not be set up\n");
+                            else
+                                printf("fuxi-audio: the shared page is ready (ticks/frame %llu)\n",
+                                       (unsigned long long)gShared.ticks_per_frame_q32);
+                            /* The service is published once the speaker path
+                             * is up, so the plug-in finds it. */
+                            fuxi_audio_service_publish();
                         /* The amplifier's PLL can only lock now that the
                          * endpoint's clock is running. */
                         (void)ampRereadStatus();
@@ -3016,4 +3163,55 @@ extern "C" void native_fuxi_adsp_probe(void)
 {
     unsigned mode = 0;
     if (PE_parse_boot_argn("fuxi-adsp", &mode, sizeof mode)) native_fuxi_adsp_probe_mode(mode);
+}
+
+/* The audio service's entry points (package/FuxiAudioService.cpp opens them).
+ *
+ * The plug-in maps the three shared pages and asks for the playback and the capture to start and stop; the
+ * samples themselves never pass through here (sheng's sheng_audio_memory and sheng_audio_request). */
+extern "C" IOBufferMemoryDescriptor *fuxi_audio_memory(uint32_t type)
+{
+    if (!__atomic_load_n(&gShared.serving, __ATOMIC_ACQUIRE)) return nullptr;
+    IOBufferMemoryDescriptor *m = type == QcomAudioMemoryControl ? gShared.control :
+                                  type == QcomAudioMemoryOutput ? gShared.outRing :
+                                  type == QcomAudioMemoryInput ? gShared.inRing : nullptr;
+    if (m) m->retain();
+    return m;
+}
+
+/* The plug-in's requests: the last 16, each ms since boot << 4 | selector, oldest first from [16] (the next slot). */
+extern "C" {volatile uint64_t native_audio_requests[17];}
+extern "C" int fuxi_audio_request(uint32_t selector)
+{
+    if (!__atomic_load_n(&gShared.serving, __ATOMIC_ACQUIRE)) return -1;
+    const uint64_t slot = __atomic_fetch_add(&native_audio_requests[16], 1, __ATOMIC_RELAXED) % 16;
+    native_audio_requests[slot] = nowMs() << 4 | (selector & 15);
+    switch (selector) {
+    case QcomAudioStartOutput: __atomic_or_fetch(&gShared.want, QcomAudioOutputRunning, __ATOMIC_ACQ_REL); break;
+    case QcomAudioStopOutput: __atomic_and_fetch(&gShared.want, (uint32_t)~(uint32_t)QcomAudioOutputRunning, __ATOMIC_ACQ_REL); break;
+    case QcomAudioStartInput: __atomic_or_fetch(&gShared.want, QcomAudioInputRunning, __ATOMIC_ACQ_REL); break;
+    case QcomAudioStopInput: __atomic_and_fetch(&gShared.want, (uint32_t)~(uint32_t)QcomAudioInputRunning, __ATOMIC_ACQ_REL); break;
+    default: return -1;
+    }
+    if (gShared.ctl)
+        __atomic_or_fetch(&gShared.ctl->state, gShared.want & (QcomAudioOutputRunning | QcomAudioInputRunning), __ATOMIC_ACQ_REL);
+    return 0;
+}
+
+/* Publishes the audio service the iOS audio server's plug-in opens.
+ *
+ * The classes are registered late: their static initializer is taken out of __mod_init_func by the build (the
+ * archive builder's objcopy) and run here, between preModLoad and postModLoad, as sheng's publishService()
+ * does for ShengAudioService.cpp. */
+extern "C" void fuxi_audio_service_publish(void)
+{
+    if (!gShared.ctl) return;
+    void *handle = OSMetaClass::preModLoad(g_kernel_kmod_info.name);
+    if (!handle) {printf("fuxi-audio: preModLoad failed\n"); return;}
+    native_audio_service_static_init();
+    if (OSMetaClass::postModLoad(handle)) {printf("fuxi-audio: postModLoad failed\n"); return;}
+    fuxi_audio_service_start();
+    /* The service is up: the plug-in may map the pages now. */
+    __atomic_store_n(&gShared.serving, 1u, __ATOMIC_RELEASE);
+    printf("fuxi-audio: service published, state %d\n", native_audio_service[0]);
 }

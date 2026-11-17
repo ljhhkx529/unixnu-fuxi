@@ -2,10 +2,13 @@
 """Build the independently force-loaded Fuxi ADSP owner-glue archive.
 
 The archive carries the board's audio runtime: the ADSP owner glue (package/FuxiAdspProbe.cpp), the shared
-page's ABI (package/QcomAudioAbi.c) and the board's own layers.
+page's ABI (package/QcomAudioAbi.c) and the audio service the iOS audio server's plug-in opens
+(package/FuxiAudioService.cpp).
 
-The archive is separate from the kernel's own objects, so the board's audio code is compiled with the same
-record the kernel uses and linked as one force-loaded archive.
+The service's classes are registered late: their static initializer leaves __DATA,__mod_init_func and is run
+by the runtime itself between OSMetaClass preModLoad and postModLoad, as UniXNU-sheng does for
+package/ShengAudioService.cpp (scripts/build-gop-legacy-display.py).  The objcopy below removes the section and
+globalises the symbol; the instructions are unchanged.
 """
 import json
 import shutil
@@ -60,6 +63,7 @@ def main():
     bsd = record(OBJ / "bsd/DEVELOPMENT/imageboot.o.json")
     includes = ["-I", KIT, "-I", OUT, "-I", ROOT / ".cache/xnu-work/osfmk"]
     jobs = [(cxx, KIT / "FuxiAdspProbe.cpp", CXX_FLAGS + includes),
+            (cxx, KIT / "FuxiAudioService.cpp", CXX_FLAGS + includes),
             (c, KIT / "FuxiAudioBinding.c", C_FLAGS + includes),
             (c, KIT / "QcomAudioAbi.c", C_FLAGS + includes),
             (c, KIT / "FuxiGraphReply.c", C_FLAGS + includes),
@@ -87,6 +91,21 @@ def main():
         subprocess.run(command(rec, source, obj, flags), cwd=rec["directory"], check=True, timeout=180)
         objects.append(obj)
         print(f"compiled {source.relative_to(ROOT)}")
+    # The audio service's static initializer is taken out of __mod_init_func and globalised, so the runtime
+    # runs it between preModLoad and postModLoad (the kernel's own init table would run it too early, before
+    # the classes are registered).
+    service_obj = OUT / "FuxiAudioService.o"
+    service_late = OUT / "FuxiAudioService.late.o"
+    objcopy = shutil.which("llvm-objcopy") or "/opt/homebrew/opt/llvm/bin/llvm-objcopy"
+    subprocess.run([objcopy, "--remove-section=__DATA,__mod_init_func",
+                    "--globalize-symbol=__GLOBAL__sub_I_FuxiAudioService.cpp", str(service_obj), str(service_late)],
+                   check=True, timeout=120)
+    # Only the late-init copy goes into the archive: the original carries the same
+    # class symbols, so keeping both would give the linker duplicate symbols
+    # (UniXNU-sheng archives only the .late.o of its audio service as well).
+    objects.remove(service_obj)
+    objects.append(service_late)
+    print(f"staged {service_late.relative_to(ROOT)}")
     archive = OUT / "libFuxiAudioRuntime.a"
     archive.unlink(missing_ok=True)
     ar = ["xcrun", "ar"] if shutil.which("xcrun") else [shutil.which("llvm-ar") or "ar"]

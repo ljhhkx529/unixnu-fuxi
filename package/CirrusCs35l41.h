@@ -41,7 +41,7 @@ typedef struct {
 } Cs35l41Hooks;
 
 /* The interrupt bits, as the binding's masks use them. */
-#define CS35L41_EINT2_PLL_LOCK 0x00000001u
+#define CS35L41_EINT2_PLL_LOCK 0x00000002u   /* stock DT / Kerfand: IRQ1_STATUS3 bit 1 */
 #define CS35L41_EINT1_ERRORS 0x1c400000u   /* DC watchdog, amplifier, temperature, boost short */
 
 enum {
