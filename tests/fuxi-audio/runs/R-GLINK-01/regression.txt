@@ -1,0 +1,8 @@
+run: R-GLINK-01
+cdc_ping: True
+data_mount: APFS disk1 active
+launchd: Early boot complete
+metal: {"submitted": 73, "retired": 73}
+gop: {"offers": 24, "done": 24}
+panic: False
+smmu_fault: False

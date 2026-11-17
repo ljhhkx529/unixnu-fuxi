@@ -6,6 +6,7 @@
 
 本文是后续执行清单，不替代以下资料：
 
+- `docs/fuxi-audio-first-sound-agent-runbook.md`：当前以扬声器首次出声为验收目标的 Agent 操作指南；
 - `docs/fuxi-audio-porting-plan.md`：架构、模块和长期设计；
 - `docs/fuxi-audio-probe-debug-runbook.md`：危险真机步骤的隔离规则；
 - `docs/fuxi-audio-probe-debug-log.md`：已经执行的逐轮证据；

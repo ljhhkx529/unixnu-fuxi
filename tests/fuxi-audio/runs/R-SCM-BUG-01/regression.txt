@@ -1,0 +1,8 @@
+run: R-SCM-BUG-01
+cdc_ping: True
+data_mount: APFS disk1 active
+launchd: Early boot complete
+metal: {"submitted": 80, "retired": 80}
+gop: {"offers": 28, "done": 28}
+panic: False
+smmu_fault: False

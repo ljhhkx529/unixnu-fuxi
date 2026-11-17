@@ -1,0 +1,262 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unixnu.local/fuxi-audio/results.schema.json",
+  "title": "Fuxi audio test-result database",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "board",
+    "soc",
+    "target",
+    "updated",
+    "runs"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "board": {
+      "const": "fuxi"
+    },
+    "soc": {
+      "const": "sm8550"
+    },
+    "target": {
+      "type": "string"
+    },
+    "updated": {
+      "type": "string"
+    },
+    "how_to_read": {
+      "type": "string"
+    },
+    "runs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/run"
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "hex": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]+$"
+    },
+    "run": {
+      "type": "object",
+      "required": [
+        "id",
+        "when",
+        "kernel_sha256",
+        "boot_sha256",
+        "cdc_session",
+        "limit",
+        "stage",
+        "last_error",
+        "scm",
+        "smp2p",
+        "regression",
+        "result"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Z0-9][A-Z0-9-]{2,63}$"
+        },
+        "when": {
+          "type": "string"
+        },
+        "kernel_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "boot_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "cdc_session": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "capture": {
+          "type": "string"
+        },
+        "boot_args": {
+          "type": "string"
+        },
+        "firmware_source": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stage": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_error": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string"
+        },
+        "scm": {
+          "type": "object",
+          "required": [
+            "strict_success",
+            "stage_mask",
+            "last_x0",
+            "last_x1",
+            "last_op",
+            "last_pas"
+          ],
+          "additionalProperties": true,
+          "properties": {
+            "strict_success": {
+              "type": "boolean"
+            },
+            "stage_mask": {
+              "$ref": "#/$defs/hex"
+            },
+            "last_x0": {
+              "$ref": "#/$defs/hex"
+            },
+            "last_x1": {
+              "$ref": "#/$defs/hex"
+            },
+            "last_op": {
+              "$ref": "#/$defs/hex"
+            },
+            "last_pas": {
+              "$ref": "#/$defs/hex"
+            },
+            "stages": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "bug": {
+              "type": "string"
+            }
+          }
+        },
+        "smp2p": {
+          "type": "object",
+          "required": [
+            "item",
+            "present",
+            "header_valid",
+            "check_in",
+            "entry_index",
+            "entry_value",
+            "ready"
+          ],
+          "additionalProperties": true,
+          "properties": {
+            "item": {
+              "const": 443
+            },
+            "present": {
+              "type": "boolean"
+            },
+            "header_valid": {
+              "type": "boolean"
+            },
+            "check_in": {
+              "type": "integer"
+            },
+            "entry_index": {
+              "type": "integer"
+            },
+            "entry_value": {
+              "$ref": "#/$defs/hex"
+            },
+            "ready": {
+              "type": "boolean"
+            },
+            "first_seen_ms": {
+              "type": "integer"
+            },
+            "irq_count": {
+              "type": "integer"
+            },
+            "kick_count": {
+              "type": "integer"
+            }
+          }
+        },
+        "rsc": {
+          "type": "object"
+        },
+        "qmp": {
+          "type": "object"
+        },
+        "regression": {
+          "type": "object",
+          "required": [
+            "cdc_ping",
+            "panic",
+            "smmu_fault"
+          ],
+          "additionalProperties": true,
+          "properties": {
+            "cdc_ping": {
+              "type": "boolean"
+            },
+            "panic": {
+              "type": "boolean"
+            },
+            "smmu_fault": {
+              "type": "boolean"
+            },
+            "data_mount": {
+              "type": "string"
+            },
+            "launchd": {
+              "type": "string"
+            },
+            "metal": {
+              "type": "object"
+            },
+            "gop": {
+              "type": "object"
+            }
+          }
+        },
+        "result": {
+          "type": "string",
+          "enum": [
+            "PASS_READY",
+            "PASS_GLINK",
+            "PASS_GPR",
+            "PASS_SPEAKER",
+            "FAIL",
+            "BLOCKED",
+            "BLOCKED_GPR",
+            "INCONCLUSIVE",
+            "BLOCKED_PRE_SCM_FIX"
+          ]
+        },
+        "note": {
+          "type": "string"
+        },
+        "next": {
+          "type": "string"
+        },
+        "glink": {
+          "type": "object"
+        },
+        "gpr": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

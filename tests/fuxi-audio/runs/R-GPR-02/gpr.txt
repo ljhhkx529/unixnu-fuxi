@@ -1,0 +1,18 @@
+run: R-GPR-02
+port: 0x2001
+queries: 50
+answers: 0
+request_opcode: 0x01001021
+request_token: 50
+response_opcode: 0x02001005
+response_token: 50
+result_opcode: 0x01001021
+token_match: True
+request_matches_result: True
+last_opcode: 0x02001005
+last_status: 0x1
+payload0: 0x01001021
+payload1: 0x1
+spf_state: gave_up
+ready: False
+note: The DSP's BASIC_RESULT carries result_opcode 0x01001021, exactly the GET_SPF_STATE request, with status 1 and matching token. This is not an opcode, port or token mismatch; it is the DSP's response to the query. No APM_SPF_STATE ready reply was received.

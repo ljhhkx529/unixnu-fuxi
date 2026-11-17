@@ -1,0 +1,90 @@
+{
+  "id": "R-GRAPH-04",
+  "when": "2026-11-10T00:55:03+08:00",
+  "kernel_sha256": "47daa5735a35fee5d8939b2c0128fc8ce287c186de3116ebcd7fddcf6f1889df",
+  "boot_sha256": "b8cfabbb024f3109b39b5243e6af2e74ade8bdecde605e2e26f3753cb7c2be2d",
+  "cdc_session": "c5ee0c93f6dbc689",
+  "capture": "/private/tmp/fuxi-usb/run-20261110-005318",
+  "boot_args": "fuxi-adsp=2 fgraph=3; muted graph and playback/shmem SET_CFG",
+  "limit": 14,
+  "stage": 13,
+  "last_error": 0,
+  "status": "Device and stream graphs plus endpoint, playback and shmem SET_CFG all returned status 0; CDC responsive",
+  "scm": {
+    "strict_success": true,
+    "stage_mask": "0x3f",
+    "last_x0": "0x0",
+    "last_x1": "0x0",
+    "last_op": "0x5",
+    "last_pas": "0x1"
+  },
+  "smp2p": {
+    "item": 443,
+    "present": true,
+    "header_valid": true,
+    "check_in": 0,
+    "entry_index": 2,
+    "entry_value": "0x6",
+    "ready": true
+  },
+  "glink": {
+    "desc_item": 478,
+    "tx_item": 479,
+    "rx_item": 480,
+    "desc_present": true,
+    "tx_present": true,
+    "rx_present": true,
+    "version_agreed": true,
+    "channel_up": true,
+    "broken": false,
+    "rx_messages": 226,
+    "tx_messages": 108,
+    "unknown_opens": 6,
+    "ladder_stage": 13
+  },
+  "gpr": {
+    "note": "GET_SPF_STATE not used in this graph-only image"
+  },
+  "regression": {
+    "cdc_ping": true,
+    "data_mount": "APFS disk1 active in captured boot",
+    "launchd": "Early boot complete",
+    "metal": {
+      "submitted": 90,
+      "retired": 90
+    },
+    "gop": {
+      "offers": 34,
+      "done": 34
+    },
+    "panic": false,
+    "smmu_fault": false,
+    "sample": "CDC PING after graph phase 6; serial capture has no panic or SMMU fault"
+  },
+  "result": "PASS_GRAPH",
+  "note": "Playback and shared-memory endpoint SET_CFG accepted. SCM/SMP2P/GLINK details carried from earlier baseline, not remeasured individually. No speaker sound.",
+  "next": "Map a real zero-filled buffer, verify a nonzero handle, then send bounded silent periods before amplifier work.",
+  "graph": {
+    "phase": 18,
+    "open_status": 0,
+    "close_status": 0,
+    "speaker_audible": false,
+    "source_port": "0x2001",
+    "subgraph_id": "0x4005",
+    "container_id": "0x5005",
+    "module_id": "0x0700100a",
+    "module_instance": "0x6002",
+    "note": "DIAGSTATUS pages 4/5/7/8/9/10/11/15 measured. No PCM buffer map, period, graph start, amp power or audio output.",
+    "endpoint_config_status": 0,
+    "endpoint_format": "48000 Hz, 16-bit, stereo",
+    "stream_open_status": 0,
+    "stream_close_status": 0,
+    "stream_module_instances": [
+      "0x6101",
+      "0x6102",
+      "0x6103"
+    ],
+    "playback_config_status": 0,
+    "shmem_config_status": 0
+  }
+}

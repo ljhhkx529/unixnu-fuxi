@@ -1,0 +1,93 @@
+{
+  "id": "R-MAP-01",
+  "when": "2026-11-10T01:28:00+08:00",
+  "kernel_sha256": "f58171b6d63dac4c71856555ea4e4684dfa90b764e8f4745e2acc96b660e2b5c",
+  "boot_sha256": "97e1418b1a92a0a0f4b561c89ea88f3bf44ea5743c712feb082324b453435317",
+  "cdc_session": "52d9ce5e21fea923",
+  "capture": "/private/tmp/fuxi-usb/run-20261110-012704",
+  "boot_args": "fuxi-adsp=2 fgraph=4; one bounded low-address PCM map probe",
+  "limit": 14,
+  "stage": 13,
+  "last_error": -34,
+  "status": "Local PCM allocation physical address exceeded 32-bit DSP window; no MEM_MAP sent",
+  "scm": {
+    "strict_success": true,
+    "stage_mask": "0x3f",
+    "last_x0": "0x0",
+    "last_x1": "0x0",
+    "last_op": "0x5",
+    "last_pas": "0x1"
+  },
+  "smp2p": {
+    "item": 443,
+    "present": true,
+    "header_valid": true,
+    "check_in": 0,
+    "entry_index": 2,
+    "entry_value": "0x6",
+    "ready": true
+  },
+  "glink": {
+    "desc_item": 478,
+    "tx_item": 479,
+    "rx_item": 480,
+    "desc_present": true,
+    "tx_present": true,
+    "rx_present": true,
+    "version_agreed": true,
+    "channel_up": true,
+    "broken": false,
+    "rx_messages": 226,
+    "tx_messages": 108,
+    "unknown_opens": 6,
+    "ladder_stage": 13
+  },
+  "gpr": {
+    "note": "GET_SPF_STATE not used in this graph-only image"
+  },
+  "regression": {
+    "cdc_ping": true,
+    "data_mount": "APFS disk1 active in captured boot",
+    "launchd": "not independently checked in this capture",
+    "metal": {
+      "submitted": 77,
+      "retired": 77
+    },
+    "gop": {
+      "offers": 26,
+      "done": 26
+    },
+    "panic": false,
+    "smmu_fault": false,
+    "sample": "CDC PING session 52d9ce5e21fea923; capture had no panic/SMMU fault; no MEM_MAP sent"
+  },
+  "result": "BLOCKED",
+  "note": "DIAGSTATUS page 15 reason 26 means pa+4096 > 4 GiB. Graph control path closed; CDC PING survived. No PCM period, no amplifier operation, no sound. SCM/SMP2P details are carried from R-GRAPH-04, not remeasured individually.",
+  "next": "Reserve or allocate an owned low-DRAM PCM region; verify AP and DSP access before periods and amplifier enable.",
+  "graph": {
+    "phase": 14,
+    "open_status": 0,
+    "close_status": 0,
+    "speaker_audible": false,
+    "source_port": "0x2001",
+    "subgraph_id": "0x4005",
+    "container_id": "0x5005",
+    "module_id": "0x0700100a",
+    "module_instance": "0x6002",
+    "note": "Graph OPEN/SET_CFG/CLOSE previously passed; this image rejected the local buffer before MEM_MAP.",
+    "endpoint_config_status": 0,
+    "endpoint_format": "48000 Hz, 16-bit, stereo",
+    "stream_open_status": 0,
+    "stream_close_status": 0,
+    "stream_module_instances": [
+      "0x6101",
+      "0x6102",
+      "0x6103"
+    ],
+    "playback_config_status": 0,
+    "shmem_config_status": 0,
+    "pcm_map_attempted": false,
+    "pcm_map_handle": 0,
+    "pcm_reason": 26
+  }
+}

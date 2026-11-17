@@ -1,0 +1,79 @@
+{
+  "id": "R-GRAPH-01",
+  "when": "2026-11-10T00:07:02+08:00",
+  "kernel_sha256": "f5d41b65194c7e6079d05fe3ab14b3f1d9072ea73fd32223154679b1a757d06a",
+  "boot_sha256": "cb1e87c15661228e5961e45a71e31b2f0c8156e65aea11251052df16129171c8",
+  "cdc_session": "d55885dc7b40c661",
+  "capture": "/private/tmp/fuxi-usb/run-20261110-000128",
+  "boot_args": "fuxi-adsp=2; one muted device graph OPEN/CLOSE after 70 s",
+  "limit": 14,
+  "stage": 13,
+  "last_error": 0,
+  "status": "Device-only APM GRAPH_OPEN and GRAPH_CLOSE matched status 0; CDC remains responsive",
+  "scm": {
+    "strict_success": true,
+    "stage_mask": "0x3f",
+    "last_x0": "0x0",
+    "last_x1": "0x0",
+    "last_op": "0x5",
+    "last_pas": "0x1"
+  },
+  "smp2p": {
+    "item": 443,
+    "present": true,
+    "header_valid": true,
+    "check_in": 0,
+    "entry_index": 2,
+    "entry_value": "0x6",
+    "ready": true
+  },
+  "glink": {
+    "desc_item": 478,
+    "tx_item": 479,
+    "rx_item": 480,
+    "desc_present": true,
+    "tx_present": true,
+    "rx_present": true,
+    "version_agreed": true,
+    "channel_up": true,
+    "broken": false,
+    "rx_messages": 226,
+    "tx_messages": 108,
+    "unknown_opens": 6,
+    "ladder_stage": 13
+  },
+  "gpr": {
+    "note": "GET_SPF_STATE not used in this graph-only image"
+  },
+  "regression": {
+    "cdc_ping": true,
+    "data_mount": "APFS disk1 active in captured boot",
+    "launchd": "Early boot complete",
+    "metal": {
+      "submitted": 76,
+      "retired": 76
+    },
+    "gop": {
+      "offers": 26,
+      "done": 26
+    },
+    "panic": false,
+    "smmu_fault": false,
+    "sample": "CDC PING after graph phase 6; serial capture has no panic or SMMU fault"
+  },
+  "result": "PASS_GRAPH",
+  "note": "SCM/SMP2P/GLINK fields inherited from R-GPR-08 baseline and were not individually remeasured in this run; graph result and regressions were measured on this boot. This is not speaker audio.",
+  "next": "Configure the endpoint in a separate bounded trial before PCM, amplifier and tone work.",
+  "graph": {
+    "phase": 6,
+    "open_status": 0,
+    "close_status": 0,
+    "speaker_audible": false,
+    "source_port": "0x2001",
+    "subgraph_id": "0x4005",
+    "container_id": "0x5005",
+    "module_id": "0x0700100a",
+    "module_instance": "0x6002",
+    "note": "DIAGSTATUS pages 7, 8 and 15 measured; amp remained muted; no PCM or graph start"
+  }
+}

@@ -1,0 +1,23 @@
+run: R-MAP-01
+port: None
+destination_port: None
+queries: None
+answers: None
+request_opcode: None
+request_token: None
+response_opcode: None
+response_token: None
+result_opcode: None
+token_match: None
+request_matches_result: None
+last_opcode: None
+last_status: None
+payload0: None
+payload1: None
+raw_request_hex: None
+raw_reply_hex: None
+raw_source: None
+sheng_expected_ready_reply: None
+spf_state: None
+ready: None
+note: GET_SPF_STATE not used in this graph-only image

@@ -1,0 +1,8 @@
+run: R-GRAPH-03
+cdc_ping: True
+data_mount: APFS disk1 active in captured boot
+launchd: Early boot complete
+metal: {"submitted": 87, "retired": 87}
+gop: {"offers": 32, "done": 32}
+panic: False
+smmu_fault: False

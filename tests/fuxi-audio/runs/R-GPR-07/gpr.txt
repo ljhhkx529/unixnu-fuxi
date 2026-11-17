@@ -1,0 +1,23 @@
+run: R-GPR-07
+port: 0x1
+destination_port: 1
+queries: 50
+answers: 0
+request_opcode: 0x01001021
+request_token: 50
+response_opcode: 0x02001005
+response_token: 50
+result_opcode: 0x01001021
+token_match: True
+request_matches_result: True
+last_opcode: None
+last_status: 0x1
+payload0: 0x01001021
+payload1: 0x1
+raw_request_hex: None
+raw_reply_hex: None
+raw_source: None
+sheng_expected_ready_reply: None
+spf_state: gave_up
+ready: False
+note: Linux q6apm uses GPR_APM_MODULE_IID (1) as source port; this test used it. The DSP still answers the exact request with ADSP_EFAILED, so source port 1 is not the fix.

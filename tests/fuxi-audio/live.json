@@ -1,0 +1,26 @@
+{
+  "updated": "2026-11-09T23:15:29+08:00",
+  "session": "d259acb8eb88bce7",
+  "seq": "00000019",
+  "resources": 5648128,
+  "page": 6,
+  "value": 5,
+  "stage": 13,
+  "last_error": -60,
+  "raw": {
+    "active": "0",
+    "claims": "0",
+    "dgen": "0",
+    "finishes": "0",
+    "provider": "ladder",
+    "rc": "0",
+    "resources": "5648128",
+    "state": "idle",
+    "step": "0",
+    "timeouts": "0"
+  },
+  "source": "fuxi-usb-diagstatus",
+  "page_stage": null,
+  "page_last_error": null,
+  "observed_monotonic": 7.273
+}

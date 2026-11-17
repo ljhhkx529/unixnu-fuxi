@@ -1,0 +1,11 @@
+run: R-SCM-STRICT-01
+item: 443
+present: True
+header_valid: True
+check_in: 0
+entry_index: 2
+entry_value: 0x2
+ready: True
+first_seen_ms: 3594
+irq_count: 6
+kick_count: 4

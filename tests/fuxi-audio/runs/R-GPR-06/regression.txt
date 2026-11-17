@@ -1,0 +1,8 @@
+run: R-GPR-06
+cdc_ping: True
+data_mount: APFS disk1 active
+launchd: userland running
+metal: {"submitted": 16, "retired": 16}
+gop: {"offers": 1, "done": 1}
+panic: False
+smmu_fault: False

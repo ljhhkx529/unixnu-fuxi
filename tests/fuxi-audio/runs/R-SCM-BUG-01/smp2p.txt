@@ -1,0 +1,11 @@
+run: R-SCM-BUG-01
+item: 443
+present: False
+header_valid: False
+check_in: -1
+entry_index: -1
+entry_value: 0x0
+ready: False
+first_seen_ms: None
+irq_count: 0
+kick_count: 2

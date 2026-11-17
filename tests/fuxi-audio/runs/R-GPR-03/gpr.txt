@@ -1,0 +1,22 @@
+run: R-GPR-03
+port: 0x2001
+queries: 50
+answers: 0
+request_opcode: 0x01001021
+request_token: 50
+response_opcode: 0x02001005
+response_token: 50
+result_opcode: 0x01001021
+token_match: True
+request_matches_result: True
+last_opcode: 0x02001005
+last_status: 0x1
+payload0: 0x01001021
+payload1: 0x1
+raw_request_hex: 60 18 00 00 02 03 01 20 00 00 01 00 00 00 00 00 32 00 00 00 21 10 00 01
+raw_reply_hex: 60 20 00 00 03 02 01 00 00 00 01 20 00 00 32 00 00 00 05 10 00 02 21 10 00 01 01 00 00 00
+raw_source: derived from the decoded header fields and the same gpr_encode/header layout; the one-shot kprintf capture was not retained, and the 100-query/60-second image reset to Fastboot
+sheng_expected_ready_reply: opcode 0x02001007 (APM_SPF_STATE), payload status 1; Fuxi returns 0x02001005 (BASIC_RESULT) payload {0x01001021,1}
+spf_state: gave_up
+ready: False
+note: The query bytes match Sheng's request. The DSP's reply is a BASIC_RESULT for the exact request, with status 1; it is not the SPF_STATE ready packet. This is the remaining semantic blocker.

@@ -1,0 +1,18 @@
+run: R-GLINK-01
+desc_item: 478
+tx_item: 479
+rx_item: 480
+desc_present: True
+tx_present: True
+rx_present: True
+desc_size: 32
+tx_size: 16384
+rx_size: 16384
+version_agreed: True
+channel_up: True
+broken: False
+rx_messages: 10
+tx_messages: 8
+unknown_opens: 4
+ladder_stage: 13
+size_evidence: item 478 readback 0x20 bytes; 479/480 are 0x4000-byte FIFOs (page low 12 bits are zero); channel handshake succeeded

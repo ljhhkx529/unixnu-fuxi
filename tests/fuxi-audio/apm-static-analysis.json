@@ -1,0 +1,134 @@
+{
+  "id": "A-APM-01",
+  "when": "2026-11-09T22:40:00+08:00",
+  "kind": "static-analysis",
+  "sources": [
+    "/tmp/fuxi-linux-snd/work/state/voice-graph-20261101/before-bisect/q6apm.c",
+    "/tmp/fuxi-linux-snd/work/state/voice-graph-20261101/before-bisect/audioreach.c",
+    "/tmp/linux-audio-mainline/sound/soc/qcom/qdsp6/q6apm.c",
+    "/tmp/linux-audio-mainline/sound/soc/qcom/qdsp6/audioreach.c",
+    "/tmp/linux-audio-mainline/sound/soc/qcom/qdsp6/q6dsp-errno.h",
+    "/tmp/linux-audio-mainline/include/dt-bindings/soc/qcom,gpr.h"
+  ],
+  "findings": {
+    "apm_service_id": 1,
+    "apm_service_source": "GPR_APM_MODULE_IID in include/dt-bindings/soc/qcom,gpr.h; ports 2/3/4 are PRM/AMDB/VCPM",
+    "status_1": "ADSP_EFAILED (general failure), not ready",
+    "status_source": "sound/soc/qcom/qdsp6/q6dsp-errno.h",
+    "apm_command_header": "audioreach_alloc_apm_cmd_pkt adds a 16-byte apm_cmd_header (payload address lsw/msw, mem map handle, payload size) even for GET_SPF_STATE",
+    "linux_probe": "q6apm_probe() calls q6apm_get_apm_state() but does not use its return value as a probe gate",
+    "first_checked_apm_operation": "q6apm_graph_open -> q6apm_send_cmd_sync(apm, open_pkt, 0) for APM_CMD_GRAPH_OPEN; audioreach_send_cmd_sync treats result.status > 0 as an error",
+    "conclusion": "GET_SPF_STATE is not a proven hard gate on Fuxi. ADSP_EFAILED is still an error and must not be reclassified as ready. A graph-open status 0 is the first Linux-checked APM success, but opening any graph needs explicit approval."
+  },
+  "incident_diff": {
+    "stable": {
+      "run": "R-GPR-06",
+      "request": "24-byte GPR header only via gpr_spf_next",
+      "timing": "50 queries / 20 s",
+      "glink_intents": 20,
+      "raw_log": "first request/reply only"
+    },
+    "incident": {
+      "run": "I-APM-HEADER-01",
+      "request": "40-byte GPR header + 16-byte zero APM command header via gprSpfQuery",
+      "timing": "50 queries / 20 s",
+      "glink_intents": 20,
+      "raw_log": "first request/reply only"
+    },
+    "functional_difference": "only the 16-byte APM command header and the 40-byte packet size; PAS/RSC/SMP2P/GLINK/amp code unchanged",
+    "observed": "incident image reset to Fastboot before a DIAGSTATUS read; no panic line retained",
+    "hypothesis": "the 40-byte zero-header GET_SPF_STATE is not accepted by this firmware and can destabilize the DSP/GLINK path; do not retry it without a separate stability investigation"
+  },
+  "next_validation": {
+    "name": "single-query muted SPF probe",
+    "bounded": "one 24-byte GET_SPF_STATE only; 1 s answer deadline; no retry loop",
+    "reversible": "fastboot boot only; no boot slot write; rollback image is R-GPR-06 or R-GLINK-01",
+    "muted": "amplifiers stay in reset/global mute; no I2C writes, no PCM, no graph",
+    "acceptance": [
+      "CDC remains alive after the single query",
+      "SCM still 0x3f and SMP2P still ready",
+      "the single reply is recorded; ADSP_EFAILED stays a failure",
+      "no reset/panic/SMMU fault",
+      "if the reply is still EFAILED, stop and decide whether graph-open status 0 may be used as the next gate"
+    ],
+    "not_allowed": [
+      "reinterpret ADSP_EFAILED as ready",
+      "retry the 40-byte APM-header form",
+      "open a speaker graph or unmute an amplifier before a separate approved gate"
+    ]
+  },
+  "graph_selection": {
+    "chosen": "Fuxi AudioReach topology Xiaomi-13-tplg.bin, playback subgraph from facts/audio/binding.toml [path.graph]",
+    "why": "It is the only Fuxi AudioReach APM configuration in the tree with concrete subgraph/container/module ids. The graph contains the Secondary MI2S speaker endpoint, so the test is GRAPH_OPEN only: no endpoint SET_CFG, no PCM format, no map, no prepare/start, no PCM, amplifiers held muted.",
+    "spec": {
+      "apm_iid": 1,
+      "subgraph_id": 1,
+      "performance": 0,
+      "direction": 0,
+      "scenario": 1,
+      "container_id": 1,
+      "container_position": 0,
+      "container_stack_bytes": 16384,
+      "container_domain": 0,
+      "modules": [
+        {
+          "module": "0x07001000",
+          "instance": "0x6003",
+          "inputs": 0,
+          "outputs": 1
+        },
+        {
+          "module": "0x07001000",
+          "instance": "0x6001",
+          "inputs": 1,
+          "outputs": 1
+        },
+        {
+          "module": "0x0700100A",
+          "instance": "0x6002",
+          "inputs": 1,
+          "outputs": 0
+        }
+      ],
+      "links": [
+        [
+          "0x6003",
+          "0x6001"
+        ],
+        [
+          "0x6001",
+          "0x6002"
+        ]
+      ]
+    },
+    "rejected": [
+      {
+        "config": "work/state/voice-graph-20261101/graph-224.json",
+        "reason": "q6voice Voice Call TX handset-mic graph, not APM AudioReach; cannot test APM_CMD_GRAPH_OPEN"
+      },
+      {
+        "config": "work/state/voice-graph-20261101/graph-272.json",
+        "reason": "q6voice Voice Call RX speaker graph; not APM and contains the speaker path"
+      }
+    ],
+    "execution_envelope": {
+      "one_graph_open": "one APM_CMD_GRAPH_OPEN, one-second deadline, no retry",
+      "no_followup": "no SET_CFG, no shared-memory map, no GRAPH_PREPARE/START, no PCM",
+      "amps": "reset/global mute; no I2C writes",
+      "close": "one GRAPH_CLOSE only if the open returned status 0",
+      "rollback": "fastboot boot only; R-GPR-06 or R-GLINK-01",
+      "acceptance": [
+        "GRAPH_OPEN BASIC_RESULT status 0",
+        "GRAPH_CLOSE completes or is bounded",
+        "CDC/SCM/SMP2P stay healthy",
+        "no amp activity or PCM"
+      ],
+      "stop_conditions": [
+        "status != 0",
+        "timeout",
+        "reset/panic/SMMU",
+        "any amp activity"
+      ]
+    }
+  }
+}

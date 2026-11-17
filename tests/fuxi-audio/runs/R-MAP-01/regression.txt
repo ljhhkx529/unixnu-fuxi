@@ -1,0 +1,8 @@
+run: R-MAP-01
+cdc_ping: True
+data_mount: APFS disk1 active in captured boot
+launchd: not independently checked in this capture
+metal: {"submitted": 77, "retired": 77}
+gop: {"offers": 26, "done": 26}
+panic: False
+smmu_fault: False

@@ -1,0 +1,18 @@
+run: R-GPR-03
+desc_item: 478
+tx_item: 479
+rx_item: 480
+desc_present: True
+tx_present: True
+rx_present: True
+desc_size: 32
+tx_size: 16384
+rx_size: 16384
+version_agreed: True
+channel_up: True
+broken: False
+rx_messages: 226
+tx_messages: 108
+unknown_opens: 6
+ladder_stage: 13
+size_evidence: items 478/479/480 present; GLINK handshake succeeded

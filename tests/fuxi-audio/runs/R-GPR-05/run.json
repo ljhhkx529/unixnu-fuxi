@@ -1,0 +1,79 @@
+{
+  "id": "R-GPR-05",
+  "when": "2026-11-09T21:59:10+08:00",
+  "kernel_sha256": "219c478209516dcaacf5ce863235e893b12b929b9feb4b9d828eb73eece7595c",
+  "boot_sha256": "ff5bbf091fe1200f15c6d2b6278c1f89ac5d095fd1d0bc8a9d6297010bb0450b",
+  "cdc_session": "c2d96d046ba7811a",
+  "capture": "/private/tmp/fuxi-usb/run-20261109-215910",
+  "boot_args": "fuxi-adsp=2 (limit=14, GET_SPF_STATE to destination port 2)",
+  "limit": 14,
+  "stage": 13,
+  "last_error": -60,
+  "status": "audio_gpr port 2 also returns BASIC_RESULT status 1",
+  "scm": {
+    "strict_success": true,
+    "stage_mask": "0x3f",
+    "last_x0": "0x0",
+    "last_x1": "0x0",
+    "last_op": "0x5",
+    "last_pas": "0x1"
+  },
+  "smp2p": {
+    "item": 443,
+    "present": true,
+    "header_valid": true,
+    "check_in": 0,
+    "entry_index": 2,
+    "entry_value": "0x6",
+    "ready": true
+  },
+  "glink": {
+    "desc_item": 478,
+    "tx_item": 479,
+    "rx_item": 480,
+    "desc_present": true,
+    "tx_present": true,
+    "rx_present": true,
+    "version_agreed": true,
+    "channel_up": true,
+    "broken": false
+  },
+  "gpr": {
+    "destination_port": 2,
+    "request_destination_port": "0x2",
+    "port": "0x2001",
+    "queries": 50,
+    "answers": 0,
+    "request_opcode": "0x01001021",
+    "request_token": 50,
+    "response_opcode": "0x02001005",
+    "response_token": 50,
+    "result_opcode": "0x01001021",
+    "last_status": "0x1",
+    "payload0": "0x01001021",
+    "payload1": "0x1",
+    "token_match": true,
+    "request_matches_result": true,
+    "spf_state": "gave_up",
+    "ready": false,
+    "note": "Fuxi DTB audio_gpr reg=2 tested as the APM/SPF destination. Same BASIC_RESULT status 1; not an APM ready reply."
+  },
+  "regression": {
+    "cdc_ping": true,
+    "data_mount": "APFS disk1 active",
+    "launchd": "userland running",
+    "metal": {
+      "submitted": 544,
+      "retired": 544
+    },
+    "gop": {
+      "offers": 244,
+      "done": 244
+    },
+    "panic": false,
+    "smmu_fault": false
+  },
+  "result": "BLOCKED_GPR",
+  "note": "Port 2 test only; no speaker graph or amplifier.",
+  "next": "test the remaining Fuxi service id or obtain the firmware APM service table; do not open speaker graph"
+}

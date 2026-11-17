@@ -1,0 +1,100 @@
+{
+  "id": "R-GPR-06",
+  "when": "2026-11-09T22:33:59+08:00",
+  "kernel_sha256": "07720336a2e610a435953b6d27641e024fac281c4e97b1a4671e748b027a978c",
+  "boot_sha256": "132948e03b6dc00df2e4058dff87d9b422b04b7a895a16c936560f747a4c0324",
+  "cdc_session": "43851b4d550ea42d",
+  "capture": "/private/tmp/fuxi-usb/run-20261109-223359",
+  "boot_args": "fuxi-adsp=2 (limit=14, recovered 24-byte header-only GET_SPF_STATE, 50/20 s)",
+  "limit": 14,
+  "stage": 13,
+  "last_error": -60,
+  "status": "recovered stable baseline; BASIC_RESULT ADSP_EFAILED",
+  "scm": {
+    "strict_success": true,
+    "stage_mask": "0x3f",
+    "last_x0": "0x0",
+    "last_x1": "0x0",
+    "last_op": "0x5",
+    "last_pas": "0x1"
+  },
+  "smp2p": {
+    "item": 443,
+    "present": true,
+    "header_valid": true,
+    "check_in": 0,
+    "entry_index": 2,
+    "entry_value": "0x6",
+    "ready": true
+  },
+  "glink": {
+    "desc_item": 478,
+    "tx_item": 479,
+    "rx_item": 480,
+    "desc_present": true,
+    "tx_present": true,
+    "rx_present": true,
+    "version_agreed": true,
+    "channel_up": true,
+    "broken": false,
+    "rx_messages": 226,
+    "tx_messages": 108,
+    "unknown_opens": 6,
+    "ladder_stage": 13
+  },
+  "gpr": {
+    "port": "0x2001",
+    "destination_port": 1,
+    "queries": 50,
+    "answers": 0,
+    "request_opcode": "0x01001021",
+    "request_token": 50,
+    "response_opcode": "0x02001005",
+    "response_token": 50,
+    "result_opcode": "0x01001021",
+    "last_status": "0x1",
+    "status_name": "ADSP_EFAILED",
+    "status_meaning": "general failure per Linux q6dsp-errno.h",
+    "payload0": "0x01001021",
+    "payload1": "0x1",
+    "token_match": true,
+    "request_matches_result": true,
+    "apm_command_header": false,
+    "spf_state": "gave_up",
+    "ready": false,
+    "note": "Recovered stable header-only query after the 40-byte APM-header image reset. Same ADSP_EFAILED response; no speaker graph."
+  },
+  "rsc": {
+    "active_tcs": 2,
+    "layout": "v3 forced after DRV2 ID read 0",
+    "vote_done": true,
+    "lcx_index": 7,
+    "lmx_index": 4
+  },
+  "qmp": {
+    "pre_state": 4,
+    "post_state": 4,
+    "order_flags": "0xf",
+    "mailbox_response": "0x0",
+    "mailbox_response_meaning": "AOP cleared/took the QMP message; not a business success code"
+  },
+  "regression": {
+    "cdc_ping": true,
+    "data_mount": "APFS disk1 active",
+    "launchd": "userland running",
+    "metal": {
+      "submitted": 16,
+      "retired": 16
+    },
+    "gop": {
+      "offers": 1,
+      "done": 1
+    },
+    "panic": false,
+    "smmu_fault": false,
+    "sample": "late capture after userland settled"
+  },
+  "result": "BLOCKED_GPR",
+  "note": "Recovered workspace and device to the last stable 24-byte query. Status 1 is ADSP_EFAILED (general failure), not ready. The 40-byte q6apm-style APM-header image is recorded as incident I-APM-HEADER-01 and is not reused.",
+  "next": "do not retry the unstable 40-byte form; determine whether Fuxi firmware implements GET_SPF_STATE at all or use a different readiness gate only after explicit approval"
+}

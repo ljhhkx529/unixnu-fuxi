@@ -1,0 +1,8 @@
+run: R-GPR-03
+cdc_ping: True
+data_mount: APFS disk1 active
+launchd: userland running; capture began after early boot
+metal: {"submitted": 66, "retired": 66}
+gop: {"offers": 21, "done": 21}
+panic: False
+smmu_fault: False

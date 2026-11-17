@@ -1,0 +1,85 @@
+{
+  "id": "R-GPR-08",
+  "when": "2026-11-09T23:14:02+08:00",
+  "kernel_sha256": "76fad7ba4a150814a6acdcb5320aa5c158a70025195853b16486ff461cbe80ef",
+  "boot_sha256": "853c5ead61fdd2a2f61fa61f05d2bb663672d9df37ecdea5e70c62f2e9ff69dc",
+  "cdc_session": "d259acb8eb88bce7",
+  "capture": "/private/tmp/fuxi-usb/run-20261109-231402",
+  "boot_args": "fuxi-adsp=2 (limit=14, graph-open code compiled but disabled)",
+  "limit": 14,
+  "stage": 13,
+  "last_error": -60,
+  "status": "CDC recovered; stable header-only GET_SPF_STATE still ADSP_EFAILED",
+  "scm": {
+    "strict_success": true,
+    "stage_mask": "0x3f",
+    "last_x0": "0x0",
+    "last_x1": "0x0",
+    "last_op": "0x5",
+    "last_pas": "0x1"
+  },
+  "smp2p": {
+    "item": 443,
+    "present": true,
+    "header_valid": true,
+    "check_in": 0,
+    "entry_index": 2,
+    "entry_value": "0x6",
+    "ready": true
+  },
+  "glink": {
+    "desc_item": 478,
+    "tx_item": 479,
+    "rx_item": 480,
+    "desc_present": true,
+    "tx_present": true,
+    "rx_present": true,
+    "version_agreed": true,
+    "channel_up": true,
+    "broken": false,
+    "rx_messages": 226,
+    "tx_messages": 108,
+    "unknown_opens": 6,
+    "ladder_stage": 13
+  },
+  "gpr": {
+    "source_port": "0x2001",
+    "destination_port": 1,
+    "port": "0x2001",
+    "queries": 50,
+    "answers": 0,
+    "request_opcode": "0x01001021",
+    "request_token": 50,
+    "response_opcode": "0x02001005",
+    "response_token": 50,
+    "result_opcode": "0x01001021",
+    "last_status": "0x1",
+    "status_name": "ADSP_EFAILED",
+    "payload0": "0x01001021",
+    "payload1": "0x1",
+    "token_match": true,
+    "request_matches_result": true,
+    "spf_state": "gave_up",
+    "ready": false,
+    "note": "Recovery image with kGraphOpenOnly=false. CDC stays alive; same ADSP_EFAILED answer."
+  },
+  "regression": {
+    "cdc_ping": true,
+    "data_mount": "APFS disk1 active",
+    "launchd": "userland running",
+    "metal": {
+      "submitted": 14,
+      "retired": 14
+    },
+    "gop": {
+      "offers": 0,
+      "done": 0
+    },
+    "panic": false,
+    "smmu_fault": false,
+    "sample": "early capture; CDC control stayed alive"
+  },
+  "result": "BLOCKED_GPR",
+  "note": "Graph-open-only code is compiled but disabled after I-GRAPH-OPEN-01 lost CDC. No graph was opened in this run.",
+  "next": "review graph-open code and add a host-side packet/CDC isolation test before re-enabling"
+}

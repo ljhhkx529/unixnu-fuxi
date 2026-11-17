@@ -1,0 +1,11 @@
+run: R-GPR-01
+item: 443
+present: True
+header_valid: True
+check_in: 0
+entry_index: 2
+entry_value: 0x6
+ready: True
+first_seen_ms: not recorded
+irq_count: not recorded
+kick_count: not recorded

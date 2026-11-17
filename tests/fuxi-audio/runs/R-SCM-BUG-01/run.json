@@ -1,0 +1,49 @@
+{
+  "id": "R-SCM-BUG-01",
+  "when": "2026-11-09T19:34:01+08:00",
+  "kernel_sha256": "b3e103da83bb50d191d8c744c6062063be818d44dcdea051a08df5c3bac99ce3",
+  "boot_sha256": "036af01d73ed024a8d1b12f857a70bab2dc2e441c3ffddcf037b7b7d1576058d",
+  "cdc_session": "9569b2330663151a",
+  "capture": "/private/tmp/fuxi-usb/run-20261109-193542",
+  "limit": 11,
+  "stage": 11,
+  "last_error": -6,
+  "status": "ready timeout",
+  "scm": {
+    "strict_success": false,
+    "last_x0": "0xcfffe5",
+    "last_x1": "0x0",
+    "last_op": "0x1",
+    "last_pas": "0x1",
+    "bug": "secureCall put a/b/c in x2/x3/x4; x2 was not pas, so PAS_INIT_IMAGE/MEM_SETUP/AUTH_AND_RESET did not receive the PAS id. Positive cookies were mistakenly treated as success.",
+    "stage_mask": "0x0"
+  },
+  "smp2p": {
+    "item": 443,
+    "present": false,
+    "header_valid": false,
+    "check_in": -1,
+    "entry_index": -1,
+    "entry_value": "0x0",
+    "ready": false,
+    "irq_count": 0,
+    "kick_count": 2
+  },
+  "regression": {
+    "cdc_ping": true,
+    "data_mount": "APFS disk1 active",
+    "launchd": "Early boot complete",
+    "metal": {
+      "submitted": 80,
+      "retired": 80
+    },
+    "gop": {
+      "offers": 28,
+      "done": 28
+    },
+    "panic": false,
+    "smmu_fault": false
+  },
+  "result": "BLOCKED_PRE_SCM_FIX",
+  "note": "Confirmed with an invalid PAS id 0xdead returning the same 0xfb9 cookie as valid ids: the cookie was not evidence. The next round fixed x2=pas and restored strict 0/0."
+}

@@ -1,0 +1,14 @@
+run: R-SCM-BUG-01
+result: BLOCKED_PRE_SCM_FIX
+stage: 11
+last_error: -6
+strict_success: False
+stage_mask: 0x0
+
+no stage table: pre-fix run
+bug: secureCall put a/b/c in x2/x3/x4; x2 was not pas, so PAS_INIT_IMAGE/MEM_SETUP/AUTH_AND_RESET did not receive the PAS id. Positive cookies were mistakenly treated as success.
+
+last_x0: 0xcfffe5
+last_x1: 0x0
+last_op: 0x1
+last_pas: 0x1

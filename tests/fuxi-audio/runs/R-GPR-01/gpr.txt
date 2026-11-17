@@ -1,0 +1,10 @@
+run: R-GPR-01
+port: 0x2001
+queries: 50
+answers: 0
+last_opcode: 0x02001005
+last_opcode_meaning: GPR_OP_BASIC_RESULT
+last_status: 0x1
+spf_state: gave_up
+ready: False
+note: The DSP answered BASIC_RESULT with status 1, not APM_SPF_STATE with status 1. The bounded probe therefore reports no SPF ready reply.

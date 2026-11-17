@@ -1,0 +1,1627 @@
+{
+  "schema_version": 1,
+  "board": "fuxi",
+  "soc": "sm8550",
+  "target": "speaker-first-sound",
+  "updated": "2026-11-10T08:46:47+08:00",
+  "how_to_read": "One object per booted image. stage/last_error are native_fuxi_adsp_stats[9]/[10]. scm is the strict six-stage mask (DTB init/mem/auth, ADSP init/mem/auth) plus the last SCM x0/x1/op/pas. smp2p is item 443. result PASS_READY means ADSP ready only; it is not speaker PASS.",
+  "runs": [
+    {
+      "id": "R-MAP-01",
+      "when": "2026-11-10T01:28:00+08:00",
+      "kernel_sha256": "f58171b6d63dac4c71856555ea4e4684dfa90b764e8f4745e2acc96b660e2b5c",
+      "boot_sha256": "97e1418b1a92a0a0f4b561c89ea88f3bf44ea5743c712feb082324b453435317",
+      "cdc_session": "52d9ce5e21fea923",
+      "capture": "/private/tmp/fuxi-usb/run-20261110-012704",
+      "boot_args": "fuxi-adsp=2 fgraph=4; one bounded low-address PCM map probe",
+      "limit": 14,
+      "stage": 13,
+      "last_error": -34,
+      "status": "Local PCM allocation physical address exceeded 32-bit DSP window; no MEM_MAP sent",
+      "scm": {
+        "strict_success": true,
+        "stage_mask": "0x3f",
+        "last_x0": "0x0",
+        "last_x1": "0x0",
+        "last_op": "0x5",
+        "last_pas": "0x1"
+      },
+      "smp2p": {
+        "item": 443,
+        "present": true,
+        "header_valid": true,
+        "check_in": 0,
+        "entry_index": 2,
+        "entry_value": "0x6",
+        "ready": true
+      },
+      "glink": {
+        "desc_item": 478,
+        "tx_item": 479,
+        "rx_item": 480,
+        "desc_present": true,
+        "tx_present": true,
+        "rx_present": true,
+        "version_agreed": true,
+        "channel_up": true,
+        "broken": false,
+        "rx_messages": 226,
+        "tx_messages": 108,
+        "unknown_opens": 6,
+        "ladder_stage": 13
+      },
+      "gpr": {
+        "note": "GET_SPF_STATE not used in this graph-only image"
+      },
+      "regression": {
+        "cdc_ping": true,
+        "data_mount": "APFS disk1 active in captured boot",
+        "launchd": "not independently checked in this capture",
+        "metal": {
+          "submitted": 77,
+          "retired": 77
+        },
+        "gop": {
+          "offers": 26,
+          "done": 26
+        },
+        "panic": false,
+        "smmu_fault": false,
+        "sample": "CDC PING session 52d9ce5e21fea923; capture had no panic/SMMU fault; no MEM_MAP sent"
+      },
+      "result": "BLOCKED",
+      "note": "DIAGSTATUS page 15 reason 26 means pa+4096 > 4 GiB. Graph control path closed; CDC PING survived. No PCM period, no amplifier operation, no sound. SCM/SMP2P details are carried from R-GRAPH-04, not remeasured individually.",
+      "next": "Reserve or allocate an owned low-DRAM PCM region; verify AP and DSP access before periods and amplifier enable.",
+      "graph": {
+        "phase": 14,
+        "open_status": 0,
+        "close_status": 0,
+        "speaker_audible": false,
+        "source_port": "0x2001",
+        "subgraph_id": "0x4005",
+        "container_id": "0x5005",
+        "module_id": "0x0700100a",
+        "module_instance": "0x6002",
+        "note": "Graph OPEN/SET_CFG/CLOSE previously passed; this image rejected the local buffer before MEM_MAP.",
+        "endpoint_config_status": 0,
+        "endpoint_format": "48000 Hz, 16-bit, stereo",
+        "stream_open_status": 0,
+        "stream_close_status": 0,
+        "stream_module_instances": [
+          "0x6101",
+          "0x6102",
+          "0x6103"
+        ],
+        "playback_config_status": 0,
+        "shmem_config_status": 0,
+        "pcm_map_attempted": false,
+        "pcm_map_handle": 0,
+        "pcm_reason": 26
+      }
+    },
+    {
+      "id": "R-GRAPH-04",
+      "when": "2026-11-10T00:55:03+08:00",
+      "kernel_sha256": "47daa5735a35fee5d8939b2c0128fc8ce287c186de3116ebcd7fddcf6f1889df",
+      "boot_sha256": "b8cfabbb024f3109b39b5243e6af2e74ade8bdecde605e2e26f3753cb7c2be2d",
+      "cdc_session": "c5ee0c93f6dbc689",
+      "capture": "/private/tmp/fuxi-usb/run-20261110-005318",
+      "boot_args": "fuxi-adsp=2 fgraph=3; muted graph and playback/shmem SET_CFG",
+      "limit": 14,
+      "stage": 13,
+      "last_error": 0,
+      "status": "Device and stream graphs plus endpoint, playback and shmem SET_CFG all returned status 0; CDC responsive",
+      "scm": {
+        "strict_success": true,
+        "stage_mask": "0x3f",
+        "last_x0": "0x0",
+        "last_x1": "0x0",
+        "last_op": "0x5",
+        "last_pas": "0x1"
+      },
+      "smp2p": {
+        "item": 443,
+        "present": true,
+        "header_valid": true,
+        "check_in": 0,
+        "entry_index": 2,
+        "entry_value": "0x6",
+        "ready": true
+      },
+      "glink": {
+        "desc_item": 478,
+        "tx_item": 479,
+        "rx_item": 480,
+        "desc_present": true,
+        "tx_present": true,
+        "rx_present": true,
+        "version_agreed": true,
+        "channel_up": true,
+        "broken": false,
+        "rx_messages": 226,
+        "tx_messages": 108,
+        "unknown_opens": 6,
+        "ladder_stage": 13
+      },
+      "gpr": {
+        "note": "GET_SPF_STATE not used in this graph-only image"
+      },
+      "regression": {
+        "cdc_ping": true,
+        "data_mount": "APFS disk1 active in captured boot",
+        "launchd": "Early boot complete",
+        "metal": {
+          "submitted": 90,
+          "retired": 90
+        },
+        "gop": {
+          "offers": 34,
+          "done": 34
+        },
+        "panic": false,
+        "smmu_fault": false,
+        "sample": "CDC PING after graph phase 6; serial capture has no panic or SMMU fault"
+      },
+      "result": "PASS_GRAPH",
+      "note": "Playback and shared-memory endpoint SET_CFG accepted. SCM/SMP2P/GLINK details carried from earlier baseline, not remeasured individually. No speaker sound.",
+      "next": "Map a real zero-filled buffer, verify a nonzero handle, then send bounded silent periods before amplifier work.",
+      "graph": {
+        "phase": 18,
+        "open_status": 0,
+        "close_status": 0,
+        "speaker_audible": false,
+        "source_port": "0x2001",
+        "subgraph_id": "0x4005",
+        "container_id": "0x5005",
+        "module_id": "0x0700100a",
+        "module_instance": "0x6002",
+        "note": "DIAGSTATUS pages 4/5/7/8/9/10/11/15 measured. No PCM buffer map, period, graph start, amp power or audio output.",
+        "endpoint_config_status": 0,
+        "endpoint_format": "48000 Hz, 16-bit, stereo",
+        "stream_open_status": 0,
+        "stream_close_status": 0,
+        "stream_module_instances": [
+          "0x6101",
+          "0x6102",
+          "0x6103"
+        ],
+        "playback_config_status": 0,
+        "shmem_config_status": 0
+      }
+    },
+    {
+      "id": "R-GRAPH-03",
+      "when": "2026-11-10T00:45:17+08:00",
+      "kernel_sha256": "1ccc93be4dc2fd52323a402a2508e0057bf032ad0855f952ff7b8140f5e74605",
+      "boot_sha256": "e148fb5f64c87d5d1d83d29eb416814ad1b83fdfb269e3f2885ae9d4a8acb7a8",
+      "cdc_session": "375b1fb415846c6b",
+      "capture": "/private/tmp/fuxi-usb/run-20261110-004403",
+      "boot_args": "fuxi-adsp=2 fgraph=2; muted device and playback stream graph OPEN/CLOSE",
+      "limit": 14,
+      "stage": 13,
+      "last_error": 0,
+      "status": "Device graph and playback stream graph OPEN/CLOSE, endpoint SET_CFG all returned status 0; CDC responsive",
+      "scm": {
+        "strict_success": true,
+        "stage_mask": "0x3f",
+        "last_x0": "0x0",
+        "last_x1": "0x0",
+        "last_op": "0x5",
+        "last_pas": "0x1"
+      },
+      "smp2p": {
+        "item": 443,
+        "present": true,
+        "header_valid": true,
+        "check_in": 0,
+        "entry_index": 2,
+        "entry_value": "0x6",
+        "ready": true
+      },
+      "glink": {
+        "desc_item": 478,
+        "tx_item": 479,
+        "rx_item": 480,
+        "desc_present": true,
+        "tx_present": true,
+        "rx_present": true,
+        "version_agreed": true,
+        "channel_up": true,
+        "broken": false,
+        "rx_messages": 226,
+        "tx_messages": 108,
+        "unknown_opens": 6,
+        "ladder_stage": 13
+      },
+      "gpr": {
+        "note": "GET_SPF_STATE not used in this graph-only image"
+      },
+      "regression": {
+        "cdc_ping": true,
+        "data_mount": "APFS disk1 active in captured boot",
+        "launchd": "Early boot complete",
+        "metal": {
+          "submitted": 87,
+          "retired": 87
+        },
+        "gop": {
+          "offers": 32,
+          "done": 32
+        },
+        "panic": false,
+        "smmu_fault": false,
+        "sample": "CDC PING after graph phase 6; serial capture has no panic or SMMU fault"
+      },
+      "result": "PASS_GRAPH",
+      "note": "Second muted graph accepted. SCM/SMP2P/GLINK details carried from the earlier baseline and not individually remeasured. No speaker sound.",
+      "next": "Configure playback converter and shared-memory module, map a zero-filled buffer, then validate bounded silent period completions.",
+      "graph": {
+        "phase": 13,
+        "open_status": 0,
+        "close_status": 0,
+        "speaker_audible": false,
+        "source_port": "0x2001",
+        "subgraph_id": "0x4005",
+        "container_id": "0x5005",
+        "module_id": "0x0700100a",
+        "module_instance": "0x6002",
+        "note": "DIAGSTATUS pages 7/8/9/10/11/15 measured. No PCM map, period, graph start, amplifier power or audio output.",
+        "endpoint_config_status": 0,
+        "endpoint_format": "48000 Hz, 16-bit, stereo",
+        "stream_open_status": 0,
+        "stream_close_status": 0,
+        "stream_module_instances": [
+          "0x6101",
+          "0x6102",
+          "0x6103"
+        ]
+      }
+    },
+    {
+      "id": "R-GRAPH-02",
+      "when": "2026-11-10T00:17:11+08:00",
+      "kernel_sha256": "dd9372145467b318cf1d70a7debc880a6e13f775dcd8af4efa4ac7caa2ad1907",
+      "boot_sha256": "608fa6a46721cc546dd798f200a6013ef7813b69a204a9086f0468e65c7703c2",
+      "cdc_session": "578e5c7e65d5ad3e",
+      "capture": "/private/tmp/fuxi-usb/run-20261110-001618",
+      "boot_args": "fuxi-adsp=2; one muted device graph OPEN/CLOSE after 70 s",
+      "limit": 14,
+      "stage": 13,
+      "last_error": 0,
+      "status": "Device graph OPEN, endpoint SET_CFG and CLOSE all returned status 0; CDC responsive",
+      "scm": {
+        "strict_success": true,
+        "stage_mask": "0x3f",
+        "last_x0": "0x0",
+        "last_x1": "0x0",
+        "last_op": "0x5",
+        "last_pas": "0x1"
+      },
+      "smp2p": {
+        "item": 443,
+        "present": true,
+        "header_valid": true,
+        "check_in": 0,
+        "entry_index": 2,
+        "entry_value": "0x6",
+        "ready": true
+      },
+      "glink": {
+        "desc_item": 478,
+        "tx_item": 479,
+        "rx_item": 480,
+        "desc_present": true,
+        "tx_present": true,
+        "rx_present": true,
+        "version_agreed": true,
+        "channel_up": true,
+        "broken": false,
+        "rx_messages": 226,
+        "tx_messages": 108,
+        "unknown_opens": 6,
+        "ladder_stage": 13
+      },
+      "gpr": {
+        "note": "GET_SPF_STATE not used in this graph-only image"
+      },
+      "regression": {
+        "cdc_ping": true,
+        "data_mount": "APFS disk1 active in captured boot",
+        "launchd": "Early boot complete",
+        "metal": {
+          "submitted": 74,
+          "retired": 74
+        },
+        "gop": {
+          "offers": 25,
+          "done": 25
+        },
+        "panic": false,
+        "smmu_fault": false,
+        "sample": "CDC PING after graph phase 6; serial capture has no panic or SMMU fault"
+      },
+      "result": "PASS_GRAPH",
+      "note": "Control-plane endpoint configuration passed. SCM/SMP2P/GLINK fields carried from R-GPR-08 baseline and not remeasured separately in this boot. No speaker sound.",
+      "next": "Verify stream graph and silent period completions, then bring both CS35L41 amplifiers to muted-ready.",
+      "graph": {
+        "phase": 6,
+        "open_status": 0,
+        "close_status": 0,
+        "speaker_audible": false,
+        "source_port": "0x2001",
+        "subgraph_id": "0x4005",
+        "container_id": "0x5005",
+        "module_id": "0x0700100a",
+        "module_instance": "0x6002",
+        "note": "DIAGSTATUS pages 7/8/9/15 measured; no PCM buffer, graph start, amp power or audio output",
+        "endpoint_config_status": 0,
+        "endpoint_format": "48000 Hz, 16-bit, stereo"
+      }
+    },
+    {
+      "id": "R-GRAPH-01",
+      "when": "2026-11-10T00:07:02+08:00",
+      "kernel_sha256": "f5d41b65194c7e6079d05fe3ab14b3f1d9072ea73fd32223154679b1a757d06a",
+      "boot_sha256": "cb1e87c15661228e5961e45a71e31b2f0c8156e65aea11251052df16129171c8",
+      "cdc_session": "d55885dc7b40c661",
+      "capture": "/private/tmp/fuxi-usb/run-20261110-000128",
+      "boot_args": "fuxi-adsp=2; one muted device graph OPEN/CLOSE after 70 s",
+      "limit": 14,
+      "stage": 13,
+      "last_error": 0,
+      "status": "Device-only APM GRAPH_OPEN and GRAPH_CLOSE matched status 0; CDC remains responsive",
+      "scm": {
+        "strict_success": true,
+        "stage_mask": "0x3f",
+        "last_x0": "0x0",
+        "last_x1": "0x0",
+        "last_op": "0x5",
+        "last_pas": "0x1"
+      },
+      "smp2p": {
+        "item": 443,
+        "present": true,
+        "header_valid": true,
+        "check_in": 0,
+        "entry_index": 2,
+        "entry_value": "0x6",
+        "ready": true
+      },
+      "glink": {
+        "desc_item": 478,
+        "tx_item": 479,
+        "rx_item": 480,
+        "desc_present": true,
+        "tx_present": true,
+        "rx_present": true,
+        "version_agreed": true,
+        "channel_up": true,
+        "broken": false,
+        "rx_messages": 226,
+        "tx_messages": 108,
+        "unknown_opens": 6,
+        "ladder_stage": 13
+      },
+      "gpr": {
+        "note": "GET_SPF_STATE not used in this graph-only image"
+      },
+      "regression": {
+        "cdc_ping": true,
+        "data_mount": "APFS disk1 active in captured boot",
+        "launchd": "Early boot complete",
+        "metal": {
+          "submitted": 76,
+          "retired": 76
+        },
+        "gop": {
+          "offers": 26,
+          "done": 26
+        },
+        "panic": false,
+        "smmu_fault": false,
+        "sample": "CDC PING after graph phase 6; serial capture has no panic or SMMU fault"
+      },
+      "result": "PASS_GRAPH",
+      "note": "SCM/SMP2P/GLINK fields inherited from R-GPR-08 baseline and were not individually remeasured in this run; graph result and regressions were measured on this boot. This is not speaker audio.",
+      "next": "Configure the endpoint in a separate bounded trial before PCM, amplifier and tone work.",
+      "graph": {
+        "phase": 6,
+        "open_status": 0,
+        "close_status": 0,
+        "speaker_audible": false,
+        "source_port": "0x2001",
+        "subgraph_id": "0x4005",
+        "container_id": "0x5005",
+        "module_id": "0x0700100a",
+        "module_instance": "0x6002",
+        "note": "DIAGSTATUS pages 7, 8 and 15 measured; amp remained muted; no PCM or graph start"
+      }
+    },
+    {
+      "id": "R-GPR-08",
+      "when": "2026-11-09T23:14:02+08:00",
+      "kernel_sha256": "76fad7ba4a150814a6acdcb5320aa5c158a70025195853b16486ff461cbe80ef",
+      "boot_sha256": "853c5ead61fdd2a2f61fa61f05d2bb663672d9df37ecdea5e70c62f2e9ff69dc",
+      "cdc_session": "d259acb8eb88bce7",
+      "capture": "/private/tmp/fuxi-usb/run-20261109-231402",
+      "boot_args": "fuxi-adsp=2 (limit=14, graph-open code compiled but disabled)",
+      "limit": 14,
+      "stage": 13,
+      "last_error": -60,
+      "status": "CDC recovered; stable header-only GET_SPF_STATE still ADSP_EFAILED",
+      "scm": {
+        "strict_success": true,
+        "stage_mask": "0x3f",
+        "last_x0": "0x0",
+        "last_x1": "0x0",
+        "last_op": "0x5",
+        "last_pas": "0x1"
+      },
+      "smp2p": {
+        "item": 443,
+        "present": true,
+        "header_valid": true,
+        "check_in": 0,
+        "entry_index": 2,
+        "entry_value": "0x6",
+        "ready": true
+      },
+      "glink": {
+        "desc_item": 478,
+        "tx_item": 479,
+        "rx_item": 480,
+        "desc_present": true,
+        "tx_present": true,
+        "rx_present": true,
+        "version_agreed": true,
+        "channel_up": true,
+        "broken": false,
+        "rx_messages": 226,
+        "tx_messages": 108,
+        "unknown_opens": 6,
+        "ladder_stage": 13
+      },
+      "gpr": {
+        "source_port": "0x2001",
+        "destination_port": 1,
+        "port": "0x2001",
+        "queries": 50,
+        "answers": 0,
+        "request_opcode": "0x01001021",
+        "request_token": 50,
+        "response_opcode": "0x02001005",
+        "response_token": 50,
+        "result_opcode": "0x01001021",
+        "last_status": "0x1",
+        "status_name": "ADSP_EFAILED",
+        "payload0": "0x01001021",
+        "payload1": "0x1",
+        "token_match": true,
+        "request_matches_result": true,
+        "spf_state": "gave_up",
+        "ready": false,
+        "note": "Recovery image with kGraphOpenOnly=false. CDC stays alive; same ADSP_EFAILED answer."
+      },
+      "regression": {
+        "cdc_ping": true,
+        "data_mount": "APFS disk1 active",
+        "launchd": "userland running",
+        "metal": {
+          "submitted": 14,
+          "retired": 14
+        },
+        "gop": {
+          "offers": 0,
+          "done": 0
+        },
+        "panic": false,
+        "smmu_fault": false,
+        "sample": "early capture; CDC control stayed alive"
+      },
+      "result": "BLOCKED_GPR",
+      "note": "Graph-open-only code is compiled but disabled after I-GRAPH-OPEN-01 lost CDC. No graph was opened in this run.",
+      "next": "review graph-open code and add a host-side packet/CDC isolation test before re-enabling"
+    },
+    {
+      "id": "R-GPR-07",
+      "when": "2026-11-09T22:49:05+08:00",
+      "kernel_sha256": "130d821c814ecce4ceaa0eb263f3dba2537d9725f97b7bd23bb3b78b25a21298",
+      "boot_sha256": "1383b4eb2284791acdb16f89b572d43d4040ecfe6ccf8564fa81c0347af17c95",
+      "cdc_session": "9145b17885781b3f",
+      "capture": "/private/tmp/fuxi-usb/run-20261109-224905",
+      "boot_args": "fuxi-adsp=2 (limit=14, GET_SPF_STATE source port 1)",
+      "limit": 14,
+      "stage": 13,
+      "last_error": -60,
+      "status": "APM source port 1 also returns BASIC_RESULT ADSP_EFAILED",
+      "scm": {
+        "strict_success": true,
+        "stage_mask": "0x3f",
+        "last_x0": "0x0",
+        "last_x1": "0x0",
+        "last_op": "0x5",
+        "last_pas": "0x1"
+      },
+      "smp2p": {
+        "item": 443,
+        "present": true,
+        "header_valid": true,
+        "check_in": 0,
+        "entry_index": 2,
+        "entry_value": "0x6",
+        "ready": true
+      },
+      "glink": {
+        "desc_item": 478,
+        "tx_item": 479,
+        "rx_item": 480,
+        "desc_present": true,
+        "tx_present": true,
+        "rx_present": true,
+        "version_agreed": true,
+        "channel_up": true,
+        "broken": false,
+        "rx_messages": 226,
+        "tx_messages": 108,
+        "unknown_opens": 6,
+        "ladder_stage": 13
+      },
+      "gpr": {
+        "source_port": 1,
+        "destination_port": 1,
+        "port": "0x1",
+        "queries": 50,
+        "answers": 0,
+        "request_opcode": "0x01001021",
+        "request_token": 50,
+        "response_opcode": "0x02001005",
+        "response_token": 50,
+        "result_opcode": "0x01001021",
+        "last_status": "0x1",
+        "status_name": "ADSP_EFAILED",
+        "payload0": "0x01001021",
+        "payload1": "0x1",
+        "token_match": true,
+        "request_matches_result": true,
+        "apm_command_header": false,
+        "spf_state": "gave_up",
+        "ready": false,
+        "note": "Linux q6apm uses GPR_APM_MODULE_IID (1) as source port; this test used it. The DSP still answers the exact request with ADSP_EFAILED, so source port 1 is not the fix."
+      },
+      "regression": {
+        "cdc_ping": true,
+        "data_mount": "APFS disk1 active",
+        "launchd": "userland running",
+        "metal": {
+          "submitted": 13,
+          "retired": 13
+        },
+        "gop": {
+          "offers": 24,
+          "done": 24
+        },
+        "panic": false,
+        "smmu_fault": false,
+        "sample": "early Metal 13/13; GOP reached 24/24; no reset during capture"
+      },
+      "result": "BLOCKED_GPR",
+      "note": "Source-port variant only; no speaker graph, no amplifier.",
+      "next": "revert GPR source to the board binding 0x2001; the remaining decision is whether GET_SPF_STATE is implemented at all or graph-open status 0 must be the gate"
+    },
+    {
+      "id": "R-GPR-06",
+      "when": "2026-11-09T22:33:59+08:00",
+      "kernel_sha256": "07720336a2e610a435953b6d27641e024fac281c4e97b1a4671e748b027a978c",
+      "boot_sha256": "132948e03b6dc00df2e4058dff87d9b422b04b7a895a16c936560f747a4c0324",
+      "cdc_session": "43851b4d550ea42d",
+      "capture": "/private/tmp/fuxi-usb/run-20261109-223359",
+      "boot_args": "fuxi-adsp=2 (limit=14, recovered 24-byte header-only GET_SPF_STATE, 50/20 s)",
+      "limit": 14,
+      "stage": 13,
+      "last_error": -60,
+      "status": "recovered stable baseline; BASIC_RESULT ADSP_EFAILED",
+      "scm": {
+        "strict_success": true,
+        "stage_mask": "0x3f",
+        "last_x0": "0x0",
+        "last_x1": "0x0",
+        "last_op": "0x5",
+        "last_pas": "0x1"
+      },
+      "smp2p": {
+        "item": 443,
+        "present": true,
+        "header_valid": true,
+        "check_in": 0,
+        "entry_index": 2,
+        "entry_value": "0x6",
+        "ready": true
+      },
+      "glink": {
+        "desc_item": 478,
+        "tx_item": 479,
+        "rx_item": 480,
+        "desc_present": true,
+        "tx_present": true,
+        "rx_present": true,
+        "version_agreed": true,
+        "channel_up": true,
+        "broken": false,
+        "rx_messages": 226,
+        "tx_messages": 108,
+        "unknown_opens": 6,
+        "ladder_stage": 13
+      },
+      "gpr": {
+        "port": "0x2001",
+        "destination_port": 1,
+        "queries": 50,
+        "answers": 0,
+        "request_opcode": "0x01001021",
+        "request_token": 50,
+        "response_opcode": "0x02001005",
+        "response_token": 50,
+        "result_opcode": "0x01001021",
+        "last_status": "0x1",
+        "status_name": "ADSP_EFAILED",
+        "status_meaning": "general failure per Linux q6dsp-errno.h",
+        "payload0": "0x01001021",
+        "payload1": "0x1",
+        "token_match": true,
+        "request_matches_result": true,
+        "apm_command_header": false,
+        "spf_state": "gave_up",
+        "ready": false,
+        "note": "Recovered stable header-only query after the 40-byte APM-header image reset. Same ADSP_EFAILED response; no speaker graph."
+      },
+      "rsc": {
+        "active_tcs": 2,
+        "layout": "v3 forced after DRV2 ID read 0",
+        "vote_done": true,
+        "lcx_index": 7,
+        "lmx_index": 4
+      },
+      "qmp": {
+        "pre_state": 4,
+        "post_state": 4,
+        "order_flags": "0xf",
+        "mailbox_response": "0x0",
+        "mailbox_response_meaning": "AOP cleared/took the QMP message; not a business success code"
+      },
+      "regression": {
+        "cdc_ping": true,
+        "data_mount": "APFS disk1 active",
+        "launchd": "userland running",
+        "metal": {
+          "submitted": 16,
+          "retired": 16
+        },
+        "gop": {
+          "offers": 1,
+          "done": 1
+        },
+        "panic": false,
+        "smmu_fault": false,
+        "sample": "late capture after userland settled"
+      },
+      "result": "BLOCKED_GPR",
+      "note": "Recovered workspace and device to the last stable 24-byte query. Status 1 is ADSP_EFAILED (general failure), not ready. The 40-byte q6apm-style APM-header image is recorded as incident I-APM-HEADER-01 and is not reused.",
+      "next": "do not retry the unstable 40-byte form; determine whether Fuxi firmware implements GET_SPF_STATE at all or use a different readiness gate only after explicit approval"
+    },
+    {
+      "id": "R-GPR-05",
+      "when": "2026-11-09T21:59:10+08:00",
+      "kernel_sha256": "219c478209516dcaacf5ce863235e893b12b929b9feb4b9d828eb73eece7595c",
+      "boot_sha256": "ff5bbf091fe1200f15c6d2b6278c1f89ac5d095fd1d0bc8a9d6297010bb0450b",
+      "cdc_session": "c2d96d046ba7811a",
+      "capture": "/private/tmp/fuxi-usb/run-20261109-215910",
+      "boot_args": "fuxi-adsp=2 (limit=14, GET_SPF_STATE to destination port 2)",
+      "limit": 14,
+      "stage": 13,
+      "last_error": -60,
+      "status": "audio_gpr port 2 also returns BASIC_RESULT status 1",
+      "scm": {
+        "strict_success": true,
+        "stage_mask": "0x3f",
+        "last_x0": "0x0",
+        "last_x1": "0x0",
+        "last_op": "0x5",
+        "last_pas": "0x1"
+      },
+      "smp2p": {
+        "item": 443,
+        "present": true,
+        "header_valid": true,
+        "check_in": 0,
+        "entry_index": 2,
+        "entry_value": "0x6",
+        "ready": true
+      },
+      "glink": {
+        "desc_item": 478,
+        "tx_item": 479,
+        "rx_item": 480,
+        "desc_present": true,
+        "tx_present": true,
+        "rx_present": true,
+        "version_agreed": true,
+        "channel_up": true,
+        "broken": false
+      },
+      "gpr": {
+        "destination_port": 2,
+        "request_destination_port": "0x2",
+        "port": "0x2001",
+        "queries": 50,
+        "answers": 0,
+        "request_opcode": "0x01001021",
+        "request_token": 50,
+        "response_opcode": "0x02001005",
+        "response_token": 50,
+        "result_opcode": "0x01001021",
+        "last_status": "0x1",
+        "payload0": "0x01001021",
+        "payload1": "0x1",
+        "token_match": true,
+        "request_matches_result": true,
+        "spf_state": "gave_up",
+        "ready": false,
+        "note": "Fuxi DTB audio_gpr reg=2 tested as the APM/SPF destination. Same BASIC_RESULT status 1; not an APM ready reply."
+      },
+      "regression": {
+        "cdc_ping": true,
+        "data_mount": "APFS disk1 active",
+        "launchd": "userland running",
+        "metal": {
+          "submitted": 544,
+          "retired": 544
+        },
+        "gop": {
+          "offers": 244,
+          "done": 244
+        },
+        "panic": false,
+        "smmu_fault": false
+      },
+      "result": "BLOCKED_GPR",
+      "note": "Port 2 test only; no speaker graph or amplifier.",
+      "next": "test the remaining Fuxi service id or obtain the firmware APM service table; do not open speaker graph"
+    },
+    {
+      "id": "R-GPR-04",
+      "when": "2026-11-09T21:54:53+08:00",
+      "kernel_sha256": "df6271bb8045b2b69a64daba8242d31af31881d6c36053494401cfe55996d263",
+      "boot_sha256": "6b9eedf32f8cd2e276a318165fc156b05cb03ea1d6ceb41ab7df20c218126b67",
+      "cdc_session": "0d74e2205982e2e0",
+      "capture": "/private/tmp/fuxi-usb/run-20261109-215453",
+      "boot_args": "fuxi-adsp=2 (limit=14, GET_SPF_STATE to destination port 3)",
+      "limit": 14,
+      "stage": 13,
+      "last_error": -60,
+      "status": "spf_core port 3 also returns BASIC_RESULT status 1",
+      "scm": {
+        "strict_success": true,
+        "stage_mask": "0x3f",
+        "last_x0": "0x0",
+        "last_x1": "0x0",
+        "last_op": "0x5",
+        "last_pas": "0x1"
+      },
+      "smp2p": {
+        "item": 443,
+        "present": true,
+        "header_valid": true,
+        "check_in": 0,
+        "entry_index": 2,
+        "entry_value": "0x6",
+        "ready": true
+      },
+      "glink": {
+        "desc_item": 478,
+        "tx_item": 479,
+        "rx_item": 480,
+        "desc_present": true,
+        "tx_present": true,
+        "rx_present": true,
+        "version_agreed": true,
+        "channel_up": true,
+        "broken": false
+      },
+      "gpr": {
+        "destination_port": 3,
+        "request_destination_port": "0x3",
+        "port": "0x2001",
+        "queries": 50,
+        "answers": 0,
+        "request_opcode": "0x01001021",
+        "request_token": 50,
+        "response_opcode": "0x02001005",
+        "response_token": 50,
+        "result_opcode": "0x01001021",
+        "last_status": "0x1",
+        "payload0": "0x01001021",
+        "payload1": "0x1",
+        "token_match": true,
+        "request_matches_result": true,
+        "spf_state": "gave_up",
+        "ready": false,
+        "note": "Fuxi DTB spf_core reg=3 tested as the APM/SPF destination. Same BASIC_RESULT status 1; not an APM ready reply."
+      },
+      "regression": {
+        "cdc_ping": true,
+        "data_mount": "APFS disk1 active",
+        "launchd": "userland running",
+        "metal": {
+          "submitted": 189,
+          "retired": 189
+        },
+        "gop": {
+          "offers": 82,
+          "done": 82
+        },
+        "panic": false,
+        "smmu_fault": false
+      },
+      "result": "BLOCKED_GPR",
+      "note": "Port 3 test only; no speaker graph or amplifier.",
+      "next": "test the remaining Fuxi service id or obtain the firmware APM service table; do not open speaker graph"
+    },
+    {
+      "id": "R-GPR-03",
+      "when": "2026-11-09T21:23:01+08:00",
+      "kernel_sha256": "2039fcfcb78ced76f37a0bb61f048d066a71390ac4bfae4cb80a462109d7f77c",
+      "boot_sha256": "af1e1b182c63925533318bfe28432f0004af138276c54799b7254ab465ea2c18",
+      "cdc_session": "82f24440a5bb5bdf",
+      "capture": "/private/tmp/fuxi-usb/run-20261109-212301",
+      "boot_args": "fuxi-adsp=2 (limit=14, stable 50-query/20-second GPR timing)",
+      "firmware_source": "modem_b first, modem_a fallback",
+      "limit": 14,
+      "stage": 13,
+      "last_error": -60,
+      "status": "gpr basic_result, no SPF ready",
+      "scm": {
+        "strict_success": true,
+        "stage_mask": "0x3f",
+        "last_x0": "0x0",
+        "last_x1": "0x0",
+        "last_op": "0x5",
+        "last_pas": "0x1",
+        "stages": [
+          {
+            "name": "DTB_INIT_IMAGE",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "DTB_MEM_SETUP",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "DTB_AUTH_AND_RESET",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "ADSP_INIT_IMAGE",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "ADSP_MEM_SETUP",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "ADSP_AUTH_AND_RESET",
+            "x0": "0x0",
+            "x1": "0x0"
+          }
+        ]
+      },
+      "smp2p": {
+        "item": 443,
+        "present": true,
+        "header_valid": true,
+        "check_in": 0,
+        "entry_index": 2,
+        "entry_value": "0x6",
+        "ready": true
+      },
+      "glink": {
+        "desc_item": 478,
+        "tx_item": 479,
+        "rx_item": 480,
+        "desc_present": true,
+        "tx_present": true,
+        "rx_present": true,
+        "desc_size": 32,
+        "tx_size": 16384,
+        "rx_size": 16384,
+        "version_agreed": true,
+        "channel_up": true,
+        "broken": false,
+        "rx_messages": 226,
+        "tx_messages": 108,
+        "unknown_opens": 6,
+        "ladder_stage": 13,
+        "size_evidence": "items 478/479/480 present; GLINK handshake succeeded"
+      },
+      "gpr": {
+        "port": "0x2001",
+        "queries": 50,
+        "answers": 0,
+        "request_opcode": "0x01001021",
+        "request_token": 50,
+        "response_opcode": "0x02001005",
+        "response_token": 50,
+        "result_opcode": "0x01001021",
+        "last_opcode": "0x02001005",
+        "last_status": "0x1",
+        "payload0": "0x01001021",
+        "payload1": "0x1",
+        "token_match": true,
+        "request_matches_result": true,
+        "spf_state": "gave_up",
+        "ready": false,
+        "raw_request_hex": "60 18 00 00 02 03 01 20 00 00 01 00 00 00 00 00 32 00 00 00 21 10 00 01",
+        "raw_reply_hex": "60 20 00 00 03 02 01 00 00 00 01 20 00 00 32 00 00 00 05 10 00 02 21 10 00 01 01 00 00 00",
+        "raw_source": "derived from the decoded header fields and the same gpr_encode/header layout; the one-shot kprintf capture was not retained, and the 100-query/60-second image reset to Fastboot",
+        "sheng_expected_ready_reply": "opcode 0x02001007 (APM_SPF_STATE), payload status 1; Fuxi returns 0x02001005 (BASIC_RESULT) payload {0x01001021,1}",
+        "note": "The query bytes match Sheng's request. The DSP's reply is a BASIC_RESULT for the exact request, with status 1; it is not the SPF_STATE ready packet. This is the remaining semantic blocker."
+      },
+      "rsc": {
+        "active_tcs": 2,
+        "layout": "v3 forced after DRV2 ID read 0",
+        "vote_done": true,
+        "lcx_index": 7,
+        "lmx_index": 4
+      },
+      "qmp": {
+        "pre_state": 4,
+        "post_state": 4,
+        "order_flags": "0xf",
+        "mailbox_response": "0x0",
+        "mailbox_response_meaning": "AOP cleared/took the QMP message; this is not a business-layer success code"
+      },
+      "regression": {
+        "cdc_ping": true,
+        "data_mount": "APFS disk1 active",
+        "launchd": "userland running; capture began after early boot",
+        "metal": {
+          "submitted": 66,
+          "retired": 66
+        },
+        "gop": {
+          "offers": 21,
+          "done": 21
+        },
+        "panic": false,
+        "smmu_fault": false,
+        "sample": "stable 50-query/20-second image; first capture 13/13 and 0/0, later 66/66 and 21/21"
+      },
+      "result": "BLOCKED_GPR",
+      "note": "Stable repeat of R-GPR-02 with raw-bytes reconstruction. Request and result opcode/token match; the DSP returns BASIC_RESULT status 1, not APM_SPF_STATE ready. No speaker graph or amplifier was started.",
+      "next": "map BASIC_RESULT status 1 to the APM state machine or find the correct APM ready transition; do not open the speaker graph"
+    },
+    {
+      "id": "R-GPR-02",
+      "when": "2026-11-09T20:55:30+08:00",
+      "kernel_sha256": "84f36ecf426f267559a4d4082b1973b63fb5bbe72703b1b7d0b89a8e03892520",
+      "boot_sha256": "a957274f0f2bf3c6688adb1a14246998d41b30659b6fc9db934f82ffcb73a9df",
+      "cdc_session": "54f10744dd315618",
+      "capture": "/private/tmp/fuxi-usb/run-20261109-205530",
+      "boot_args": "fuxi-adsp=2 (limit=14, GPR/SPF opcode validation only)",
+      "firmware_source": "modem_b first, modem_a fallback",
+      "limit": 14,
+      "stage": 13,
+      "last_error": -60,
+      "status": "gpr opcode validated, no SPF ready",
+      "scm": {
+        "strict_success": true,
+        "stage_mask": "0x3f",
+        "last_x0": "0x0",
+        "last_x1": "0x0",
+        "last_op": "0x5",
+        "last_pas": "0x1",
+        "stages": [
+          {
+            "name": "DTB_INIT_IMAGE",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "DTB_MEM_SETUP",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "DTB_AUTH_AND_RESET",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "ADSP_INIT_IMAGE",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "ADSP_MEM_SETUP",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "ADSP_AUTH_AND_RESET",
+            "x0": "0x0",
+            "x1": "0x0"
+          }
+        ]
+      },
+      "smp2p": {
+        "item": 443,
+        "present": true,
+        "header_valid": true,
+        "check_in": 0,
+        "entry_index": 2,
+        "entry_value": "0x6",
+        "ready": true
+      },
+      "glink": {
+        "desc_item": 478,
+        "tx_item": 479,
+        "rx_item": 480,
+        "desc_present": true,
+        "tx_present": true,
+        "rx_present": true,
+        "desc_size": 32,
+        "tx_size": 16384,
+        "rx_size": 16384,
+        "version_agreed": true,
+        "channel_up": true,
+        "broken": false,
+        "rx_messages": 226,
+        "tx_messages": 108,
+        "unknown_opens": 6,
+        "ladder_stage": 13,
+        "size_evidence": "items 478/479/480 present; GLINK handshake succeeded"
+      },
+      "gpr": {
+        "port": "0x2001",
+        "queries": 50,
+        "answers": 0,
+        "request_opcode": "0x01001021",
+        "request_token": 50,
+        "response_opcode": "0x02001005",
+        "response_token": 50,
+        "result_opcode": "0x01001021",
+        "last_opcode": "0x02001005",
+        "last_status": "0x1",
+        "payload0": "0x01001021",
+        "payload1": "0x1",
+        "token_match": true,
+        "request_matches_result": true,
+        "spf_state": "gave_up",
+        "ready": false,
+        "note": "The DSP's BASIC_RESULT carries result_opcode 0x01001021, exactly the GET_SPF_STATE request, with status 1 and matching token. This is not an opcode, port or token mismatch; it is the DSP's response to the query. No APM_SPF_STATE ready reply was received."
+      },
+      "rsc": {
+        "active_tcs": 2,
+        "layout": "v3 forced after DRV2 ID read 0",
+        "vote_done": true,
+        "lcx_index": 7,
+        "lmx_index": 4
+      },
+      "qmp": {
+        "pre_state": 4,
+        "post_state": 4,
+        "order_flags": "0xf",
+        "mailbox_response": "0x0",
+        "mailbox_response_meaning": "AOP cleared/took the QMP message; this is not a business-layer success code"
+      },
+      "regression": {
+        "cdc_ping": true,
+        "data_mount": "APFS disk1 active",
+        "launchd": "userland running; capture began after early boot",
+        "metal": {
+          "submitted": 67,
+          "retired": 67
+        },
+        "gop": {
+          "offers": 21,
+          "done": 21
+        },
+        "panic": false,
+        "smmu_fault": false,
+        "sample": "capture at 67/67 and 21/21; the first lines were 15/15 and 0/0"
+      },
+      "result": "BLOCKED_GPR",
+      "note": "Opcode/token/payload validation only. The query is correct; the DSP answers BASIC_RESULT status 1 instead of APM_SPF_STATE ready. No speaker graph or amplifier was started.",
+      "next": "treat BASIC_RESULT status 1 as the DSP's APM response; inspect its APM/SPF state transition or wait policy before any graph work"
+    },
+    {
+      "id": "R-GPR-01",
+      "when": "2026-11-09T20:33:41+08:00",
+      "kernel_sha256": "4b108b038a7b6aa0f4eeafe519225178d5ae36bab4f2ea07a07149d48357b606",
+      "boot_sha256": "10d1aebdd9b698a805c87207576768a4631afc52e46876b09a99db58b7eaae5c",
+      "cdc_session": "2634a444dbffe9b8",
+      "capture": "/private/tmp/fuxi-usb/run-20261109-203341",
+      "boot_args": "fuxi-adsp=2 (limit=14, GPR/SPF readiness only)",
+      "firmware_source": "modem_b first, modem_a fallback",
+      "limit": 14,
+      "stage": 13,
+      "last_error": -60,
+      "status": "gpr timeout",
+      "scm": {
+        "strict_success": true,
+        "stage_mask": "0x3f",
+        "last_x0": "0x0",
+        "last_x1": "0x0",
+        "last_op": "0x5",
+        "last_pas": "0x1",
+        "stages": [
+          {
+            "name": "DTB_INIT_IMAGE",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "DTB_MEM_SETUP",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "DTB_AUTH_AND_RESET",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "ADSP_INIT_IMAGE",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "ADSP_MEM_SETUP",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "ADSP_AUTH_AND_RESET",
+            "x0": "0x0",
+            "x1": "0x0"
+          }
+        ]
+      },
+      "smp2p": {
+        "item": 443,
+        "present": true,
+        "header_valid": true,
+        "check_in": 0,
+        "entry_index": 2,
+        "entry_value": "0x6",
+        "ready": true
+      },
+      "glink": {
+        "desc_item": 478,
+        "tx_item": 479,
+        "rx_item": 480,
+        "desc_present": true,
+        "tx_present": true,
+        "rx_present": true,
+        "desc_size": 32,
+        "tx_size": 16384,
+        "rx_size": 16384,
+        "version_agreed": true,
+        "channel_up": true,
+        "broken": false,
+        "rx_messages": 226,
+        "tx_messages": 108,
+        "unknown_opens": 6,
+        "ladder_stage": 13,
+        "size_evidence": "item 478 readback 0x20 bytes; 479/480 are 0x4000-byte FIFOs; channel handshake succeeded"
+      },
+      "gpr": {
+        "port": "0x2001",
+        "queries": 50,
+        "answers": 0,
+        "last_opcode": "0x02001005",
+        "last_opcode_meaning": "GPR_OP_BASIC_RESULT",
+        "last_status": "0x1",
+        "spf_state": "gave_up",
+        "ready": false,
+        "note": "The DSP answered BASIC_RESULT with status 1, not APM_SPF_STATE with status 1. The bounded probe therefore reports no SPF ready reply."
+      },
+      "rsc": {
+        "active_tcs": 2,
+        "layout": "v3 forced after DRV2 ID read 0",
+        "vote_done": true,
+        "lcx_index": 7,
+        "lmx_index": 4
+      },
+      "qmp": {
+        "pre_state": 4,
+        "post_state": 4,
+        "order_flags": "0xf",
+        "mailbox_response": "0x0",
+        "mailbox_response_meaning": "AOP cleared/took the QMP message; this is not a business-layer success code"
+      },
+      "regression": {
+        "cdc_ping": true,
+        "data_mount": "APFS disk1 active",
+        "launchd": "userland running; capture began after early boot",
+        "metal": {
+          "submitted": 91,
+          "retired": 91
+        },
+        "gop": {
+          "offers": 34,
+          "done": 34
+        },
+        "panic": false,
+        "smmu_fault": false,
+        "sample": "late sample; the first capture was Metal 18/18 and GOP 3/3"
+      },
+      "result": "BLOCKED_GPR",
+      "note": "GLINK and the GPR channel are healthy (tx 108, rx 226). The SPF query path sent 50 bounded queries but only saw BASIC_RESULT status 1; no APM_SPF_STATE ready reply. No speaker graph or amplifier was started.",
+      "next": "inspect the APM GET_SPF_STATE opcode/payload handling and the DSP's BASIC_RESULT status 1; do not open the speaker graph yet"
+    },
+    {
+      "id": "R-GLINK-01",
+      "when": "2026-11-09T20:22:04+08:00",
+      "kernel_sha256": "df1992448f047b13ee93b3cf15cbd678146c0a42d962b1cc8f213356590f0488",
+      "boot_sha256": "4d2f1b43706960a66b4a086c9ab4f49e25f1149aa8a06d9a836703cf08298d1b",
+      "cdc_session": "f31e6eeccd451476",
+      "capture": "/private/tmp/fuxi-usb/run-20261109-202204",
+      "boot_args": "fuxi-adsp=2 (limit=13, GLINK only)",
+      "firmware_source": "modem_b first, modem_a fallback",
+      "limit": 13,
+      "stage": 13,
+      "last_error": 0,
+      "status": "success",
+      "scm": {
+        "strict_success": true,
+        "stage_mask": "0x3f",
+        "stage_mask_meaning": "bit0 DTB_INIT_IMAGE, bit1 DTB_MEM_SETUP, bit2 DTB_AUTH_AND_RESET, bit3 ADSP_INIT_IMAGE, bit4 ADSP_MEM_SETUP, bit5 ADSP_AUTH_AND_RESET",
+        "last_x0": "0x0",
+        "last_x1": "0x0",
+        "last_op": "0x5",
+        "last_pas": "0x1",
+        "stages": [
+          {
+            "name": "DTB_INIT_IMAGE",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "DTB_MEM_SETUP",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "DTB_AUTH_AND_RESET",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "ADSP_INIT_IMAGE",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "ADSP_MEM_SETUP",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "ADSP_AUTH_AND_RESET",
+            "x0": "0x0",
+            "x1": "0x0"
+          }
+        ]
+      },
+      "smp2p": {
+        "item": 443,
+        "present": true,
+        "header_valid": true,
+        "check_in": 0,
+        "entry_index": 2,
+        "entry_value": "0x6",
+        "ready": true
+      },
+      "glink": {
+        "desc_item": 478,
+        "tx_item": 479,
+        "rx_item": 480,
+        "desc_present": true,
+        "tx_present": true,
+        "rx_present": true,
+        "desc_size": 32,
+        "tx_size": 16384,
+        "rx_size": 16384,
+        "version_agreed": true,
+        "channel_up": true,
+        "broken": false,
+        "rx_messages": 10,
+        "tx_messages": 8,
+        "unknown_opens": 4,
+        "ladder_stage": 13,
+        "size_evidence": "item 478 readback 0x20 bytes; 479/480 are 0x4000-byte FIFOs (page low 12 bits are zero); channel handshake succeeded"
+      },
+      "rsc": {
+        "active_tcs": 2,
+        "layout": "v3 forced after DRV2 ID read 0",
+        "vote_done": true,
+        "lcx_index": 7,
+        "lmx_index": 4,
+        "lcx_addr": "0x30",
+        "lmx_addr": "0x40"
+      },
+      "qmp": {
+        "pre_state": 4,
+        "post_state": 4,
+        "order_flags": "0xf",
+        "mailbox_response": "0x0",
+        "mailbox_response_meaning": "AOP cleared/took the QMP message; this is not a business-layer success code"
+      },
+      "regression": {
+        "cdc_ping": true,
+        "data_mount": "APFS disk1 active",
+        "launchd": "Early boot complete",
+        "metal": {
+          "submitted": 73,
+          "retired": 73
+        },
+        "gop": {
+          "offers": 24,
+          "done": 24
+        },
+        "panic": false,
+        "smmu_fault": false
+      },
+      "result": "PASS_GLINK",
+      "note": "GLINK only. Item 480 was created by the DSP; 478/479 were allocated by the AP. No GPR/SPF query and no speaker graph were started.",
+      "next": "advance the compile-time limit to 14 and send the bounded GPR/SPF readiness query; do not open the speaker graph"
+    },
+    {
+      "id": "R-SCM-STRICT-01",
+      "when": "2026-11-09T19:45:16+08:00",
+      "kernel_sha256": "33e076b8b161cb4b4b93e4298ff48ce59a9331c543733aa7f2696e625d6c91ef",
+      "boot_sha256": "a45a4b8d1090bbef89b810724879526728ef11b0110952a7da520d5c57692551",
+      "cdc_session": "1e1e1b6926a53273",
+      "capture": "/private/tmp/fuxi-usb/run-20261109-194509",
+      "boot_args": "fuxi-adsp=2 (limit=11, no GLINK)",
+      "firmware_source": "modem_b first, modem_a fallback",
+      "limit": 11,
+      "stage": 11,
+      "last_error": 0,
+      "status": "success",
+      "scm": {
+        "strict_success": true,
+        "stage_mask": "0x3f",
+        "stage_mask_meaning": "bit0 DTB_INIT_IMAGE, bit1 DTB_MEM_SETUP, bit2 DTB_AUTH_AND_RESET, bit3 ADSP_INIT_IMAGE, bit4 ADSP_MEM_SETUP, bit5 ADSP_AUTH_AND_RESET",
+        "last_x0": "0x0",
+        "last_x1": "0x0",
+        "last_op": "0x5",
+        "last_pas": "0x1",
+        "stages": [
+          {
+            "name": "DTB_INIT_IMAGE",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "DTB_MEM_SETUP",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "DTB_AUTH_AND_RESET",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "ADSP_INIT_IMAGE",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "ADSP_MEM_SETUP",
+            "x0": "0x0",
+            "x1": "0x0"
+          },
+          {
+            "name": "ADSP_AUTH_AND_RESET",
+            "x0": "0x0",
+            "x1": "0x0"
+          }
+        ],
+        "note": "stage_mask 0x3f is set only when each stage returned strict x0==0 && x1==0"
+      },
+      "smp2p": {
+        "item": 443,
+        "present": true,
+        "header_valid": true,
+        "check_in": 0,
+        "entry_index": 2,
+        "entry_value": "0x2",
+        "ready": true,
+        "first_seen_ms": 3594,
+        "irq_count": 6,
+        "kick_count": 4
+      },
+      "rsc": {
+        "active_tcs": 2,
+        "layout": "v3 forced after DRV2 ID read 0",
+        "vote_done": true,
+        "lcx_index": 7,
+        "lmx_index": 4,
+        "lcx_addr": "0x30",
+        "lmx_addr": "0x40"
+      },
+      "qmp": {
+        "pre_state": 4,
+        "post_state": 4,
+        "order_flags": "0xf",
+        "mailbox_response": "0x0",
+        "mailbox_response_meaning": "AOP cleared/took the QMP message; this is not a business-layer success code"
+      },
+      "regression": {
+        "cdc_ping": true,
+        "data_mount": "APFS disk1 active",
+        "launchd": "Early boot complete",
+        "metal": {
+          "submitted": 72,
+          "retired": 72
+        },
+        "gop": {
+          "offers": 24,
+          "done": 24
+        },
+        "panic": false,
+        "smmu_fault": false,
+        "note": "late capture after userland settled",
+        "sample": "late capture after userland settled; the same image showed 14/14 and 0/0 in the early capture"
+      },
+      "result": "PASS_READY",
+      "note": "The SCM bug was x2..x5 mapping: x2 was a instead of pas. With x2=pas and strict x0==0 && x1==0, all six PAS stages returned 0/0, the DSP wrote item 443, and slave-kernel value=2 became ready. GLINK and speaker were not started.",
+      "next": "advance the compile-time limit to 13 and validate GLINK/adsp_apps; do not start the speaker graph yet"
+    },
+    {
+      "id": "R-SCM-BUG-01",
+      "when": "2026-11-09T19:34:01+08:00",
+      "kernel_sha256": "b3e103da83bb50d191d8c744c6062063be818d44dcdea051a08df5c3bac99ce3",
+      "boot_sha256": "036af01d73ed024a8d1b12f857a70bab2dc2e441c3ffddcf037b7b7d1576058d",
+      "cdc_session": "9569b2330663151a",
+      "capture": "/private/tmp/fuxi-usb/run-20261109-193542",
+      "limit": 11,
+      "stage": 11,
+      "last_error": -6,
+      "status": "ready timeout",
+      "scm": {
+        "strict_success": false,
+        "last_x0": "0xcfffe5",
+        "last_x1": "0x0",
+        "last_op": "0x1",
+        "last_pas": "0x1",
+        "bug": "secureCall put a/b/c in x2/x3/x4; x2 was not pas, so PAS_INIT_IMAGE/MEM_SETUP/AUTH_AND_RESET did not receive the PAS id. Positive cookies were mistakenly treated as success.",
+        "stage_mask": "0x0"
+      },
+      "smp2p": {
+        "item": 443,
+        "present": false,
+        "header_valid": false,
+        "check_in": -1,
+        "entry_index": -1,
+        "entry_value": "0x0",
+        "ready": false,
+        "irq_count": 0,
+        "kick_count": 2
+      },
+      "regression": {
+        "cdc_ping": true,
+        "data_mount": "APFS disk1 active",
+        "launchd": "Early boot complete",
+        "metal": {
+          "submitted": 80,
+          "retired": 80
+        },
+        "gop": {
+          "offers": 28,
+          "done": 28
+        },
+        "panic": false,
+        "smmu_fault": false
+      },
+      "result": "BLOCKED_PRE_SCM_FIX",
+      "note": "Confirmed with an invalid PAS id 0xdead returning the same 0xfb9 cookie as valid ids: the cookie was not evidence. The next round fixed x2=pas and restored strict 0/0."
+    }
+  ],
+  "incidents": [
+    {
+      "id": "I-LOW-MAP-ONLY-01",
+      "when": "2026-11-10T08:46:47+08:00",
+      "kernel_sha256": "3d35f0e1d4e43ed050f965087e5145ebd274efaf4847588466f08faadff8d957",
+      "boot_sha256": "cdc90c7c2300011943a49cfef72b31a9bc270b5d7c4d3e2a9ceb2bac78d5610b",
+      "symptom": "With the proven FD and fgraph=4, only XNU mapWindow(0xD0000000, 64 KiB, WC) was added after graph configuration; no memory read or write, no APM MEM_MAP, no period or amplifier operation. Fastboot boot returned OK but CDC did not enumerate within 90 seconds and no Fastboot appeared. Mapping itself is a strong suspect, but without a stage sample the exact stop point is not proven.",
+      "last_stable": "Known-good FD fgraph=3 control: stage 13, graph phase 18, CDC PING",
+      "next": "Do not reuse 0xD0000000 fixed mapping; identify an owned DMA buffer or a verified DSP-addressable IOVA route."
+    },
+    {
+      "id": "I-LOW-MAP-CDC-01",
+      "when": "2026-11-10T02:15:14+08:00",
+      "kernel_sha256": "b5c401aa8f0bc8c989345c18e63e241a0d7a0cdeee5195461836a5df768387bb",
+      "boot_sha256": "c0f3d761ede4f6a525463c9c4fc4d98ae43599e2b9a94de68765df42f2750a5d",
+      "capture": "/private/tmp/fuxi-usb/run-20261110-021330",
+      "symptom": "Known-good FD plus opt-in fgraph=4 fixed low-DRAM PCM map: CDC serial enumerated at 38s, but control HELLO/PING timed out repeatedly and capture had no new kernel log. No map reply was observed; cannot distinguish the address access from another graph/transport stall.",
+      "last_stable": "R-GRAPH-04 and known-good-FD fgraph=3 control run",
+      "next": "Do not repeat fgraph=4. Restore known-good image; isolate mapWindow, write and MEM_MAP into separate bounded stages with a control response between them."
+    },
+    {
+      "id": "I-LOW-MAP-BOOT-01",
+      "when": "2026-11-10T01:45:00+08:00",
+      "kernel_sha256": "a8b59813aba536bbb0eb66eb654189a31cd7ef5da63af3e0cad9dcf5ed81ba8f",
+      "boot_sha256": "43e0d64047d17dd250907f9088fbf47bf3f857cd108e471ec8ddb2f6afb41879",
+      "symptom": "With the UEFI source reverted but firmware rebuilt, an opt-in XNU fixed 0xD0000000 PCM map probe image returned fastboot boot OK; no CDC after 90 seconds and no Fastboot enumeration. No stage or map result could be read, so the failure point is unknown. The fixed-map code was removed from the active source.",
+      "last_stable": "R-GRAPH-04",
+      "next": "Use the FD extracted from R-GRAPH-04 for an XNU-only boot-chain control test before attempting another PCM map."
+    },
+    {
+      "id": "I-UEFI-PCM-01",
+      "when": "2026-11-10T01:36:00+08:00",
+      "kernel_sha256": "30b68fb97d0ea6e62a8f1f0af3c522a6a6f26702bd6c6b9485a28c529e6c92f6",
+      "boot_sha256": "6c5a5494e1579b48db341b05a4a05c0d2cee9fad83ff2d6f95c5d4dd4bc93037",
+      "symptom": "With a new 64 KiB Fuxi Audio PCM reservation added to the UEFI memory map, fastboot boot returned OK but the owner reported UEFI boot hang; no CDC or Fastboot enumerated. The source reservation was reverted and the firmware rebuilt.",
+      "last_stable": "R-GRAPH-04",
+      "next": "Do not reuse this image or add a UEFI reservation for the audio path."
+    },
+    {
+      "id": "I-GRAPH-OPEN-01",
+      "when": "2026-11-09T23:08:25+08:00",
+      "kernel_sha256": "934a6f29f8a05fea77c384666a9ba3bea3830d7bd447f340bdaa5aadda4e1433",
+      "boot_sha256": "0f8806969561c92be2b495064400f8b24f543f32bb133d08cd67d29a6e6efe48",
+      "cdc_session": "31258d2a2ce7b480",
+      "capture": "/private/tmp/fuxi-usb/run-20261109-230825",
+      "symptom": "The GRAPH_OPEN-only image booted and answered one DIAGSTATUS (page 1 value 7), then CDC disappeared. No graph-open result was read. The device later enumerated in Fastboot.",
+      "raw_capture": "no graph result; the only retained sample was page 1 before the disconnect",
+      "last_stable": "R-GPR-08 (kGraphOpenOnly=false; kernel 76fad7ba..., boot 853c5ead...)",
+      "note": "The graph-open code path is disabled by default after this event. Do not re-enable it without a host-side packet/CDC isolation test.",
+      "next": "review the graph-open builder and dspReceive interception; verify packet generation and response handling off-device before another boot"
+    },
+    {
+      "id": "I-APM-HEADER-01",
+      "when": "2026-11-09T22:19:24+08:00",
+      "kernel_sha256": "fc1964211567361324beed6096c0001a0e0001fd6f48d3dd07d2f970f78a73b3",
+      "boot_sha256": "e85af631aa3ad285558df16a5b1a22e881a20054e70680fe989f913ce10b37f0",
+      "cdc_session": "f402e414f36af0cd",
+      "capture": "/private/tmp/fuxi-usb/run-20261109-221924",
+      "symptom": "CDC USB disconnected again; the device enumerated in Fastboot. Retained capture ends at Metal 105/105 and GOP 42/42; no panic line was captured.",
+      "raw_capture": "not completed: the 40-byte APM-command-header query image reset before DIAGSTATUS could be read",
+      "last_stable": "R-GPR-03 (24-byte header-only query, 50/20 s)",
+      "note": "This image changed GET_SPF_STATE to the Linux q6apm 40-byte form (24-byte GPR header + 16-byte APM command header). It reset to Fastboot. Do not reuse it as a baseline.",
+      "next": "revert to the stable 24-byte header-only query and treat ADSP_EFAILED (status 1) as the observed APM answer; do not retry the 40-byte form without a separate stability investigation"
+    },
+    {
+      "id": "I-RAW-GPR-01",
+      "when": "2026-11-09T21:11:33+08:00",
+      "kernel_sha256": "37d69eb2433b185599e29cef3bb2030a83ddeba7417101f39621ff8e411f11dd",
+      "boot_sha256": "2733228d422d334d6a0f90550a21bf796a46097f4002fd423366b0c9763567af",
+      "cdc_session": "4f958004ec71b10c",
+      "capture": "/private/tmp/fuxi-usb/run-20261109-211133",
+      "symptom": "CDC USB disconnected about 3 seconds after the collector attached; the device then enumerated in Fastboot. No panic line was retained in the capture.",
+      "raw_capture": "none: no GPRQ/GPRR hex lines were present before the disconnect",
+      "last_stable": "R-GPR-02 (kernel 84f36ecf..., boot a957274f...)",
+      "note": "The experimental image increased the GPR probe to 100 queries over 60 s and added raw kprintf. The reset occurred near the extended GPR window. Do not reuse this image as a baseline.",
+      "next": "revert to the R-GPR-02 50-query/20-second timing, log only the first request and first reply, and verify CDC stability before another raw-capture attempt"
+    }
+  ],
+  "analysis": [
+    {
+      "id": "A-GRAPH-01",
+      "when": "2026-11-09T23:05:00+08:00",
+      "kind": "graph-selection",
+      "chosen": "Xiaomi-13-tplg.bin playback subgraph / binding [path.graph]",
+      "mode": "GRAPH_OPEN only; amps muted; no PCM; no SET_CFG/map/prepare/start",
+      "reason": "only concrete Fuxi AudioReach APM graph config; q6voice graphs 224/272 are not APM",
+      "status": "designed, not executed"
+    }
+  ]
+}
