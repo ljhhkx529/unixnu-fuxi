@@ -46,16 +46,20 @@ extern int snprintf(char *str, unsigned long size, const char *format, ...);
 extern volatile int native_gpu_addon_stage, native_gpu_addon_status;
 extern volatile int native_gpu_addon2_stage, native_gpu_addon2_status;
 extern volatile int native_gpu_addon3_stage, native_gpu_addon3_status;
+/* The fourth mount of the GPU addon: the audio server plug-in over
+ * /System/Library/Audio/Plug-Ins/HAL (patches/xnu/fuxi-audio-addon-mount.patch). */
+extern volatile int native_gpu_addon4_stage, native_gpu_addon4_status;
 extern volatile int native_gpu_addon_files, native_gpu_addon_written;
 extern volatile int native_gpu_addon_same, native_gpu_addon_failed, native_gpu_addon_error;
 void fuxi_gpu_addon_report(void) {
     const unsigned char *data = 0;
     unsigned long long bytes = 0;
     int found = native_ram_block_gpu_addon(&data, &bytes);
-    printf("fuxi-gpu-addon: handover %d, bytes %llu, install %d/%d/%d err %d, mount %d/%d %d/%d %d/%d\n",
+    printf("fuxi-gpu-addon: handover %d, bytes %llu, install %d/%d/%d err %d, mount %d/%d %d/%d %d/%d %d/%d\n",
            found, bytes, native_gpu_addon_files, native_gpu_addon_written, native_gpu_addon_same,
            native_gpu_addon_error, native_gpu_addon_stage, native_gpu_addon_status,
-           native_gpu_addon2_stage, native_gpu_addon2_status, native_gpu_addon3_stage, native_gpu_addon3_status);
+           native_gpu_addon2_stage, native_gpu_addon2_status, native_gpu_addon3_stage, native_gpu_addon3_status,
+           native_gpu_addon4_stage, native_gpu_addon4_status);
 }
 
 /* The GPU power probe publishes its progress in these counters (package/FuxiGpuPowerProbe.cpp); its rows

@@ -3,6 +3,8 @@
 #define SHENG_BOOT_PROGRESS_DISPLAY_H
 #include "Font.h"
 static const uint64_t font[] = GLYPH_FONT;
+// Set by BootProgress.c from fuxi-panel-black: every painter (page, pulse line, overlays) stops writing pixels.
+static int bp_paint_off;
 struct bp_display {
   uintptr_t frame;
   unsigned bound, width, height, stride, scale;
@@ -11,7 +13,7 @@ struct bp_display {
   uint32_t colors[48][2];
 };
 static void bp_clear(struct bp_display *d) {
-  if (!d->bound) return;
+  if (bp_paint_off || !d->bound) return;
   for(unsigned y=0;y<d->height;++y) {
     if (__atomic_load_n(&d->yield_requested,__ATOMIC_ACQUIRE)) return;
     for(unsigned x=0;x<d->width;++x)
@@ -22,6 +24,7 @@ static void bp_clear(struct bp_display *d) {
 // stored, so a scrolling log or a changing counter costs the changed cells, not the whole 120-column row; a colour change
 // repaints the row.
 static void bp_line_bg(struct bp_display *d, unsigned row, const char *text, uint32_t color, uint32_t background) {
+  if (bp_paint_off) return;
   if (__atomic_load_n(&d->yield_requested,__ATOMIC_ACQUIRE)) return;
   if (!d->bound || row >= 48 || (row+1)*14*d->scale >= d->height) return;
   unsigned cols = d->width / (6*d->scale);

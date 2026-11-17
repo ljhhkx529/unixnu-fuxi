@@ -51,6 +51,9 @@ static unsigned pulse_worker_status,bind_count,bind_result=3,bind_depth;
 static uintptr_t bind_base;
 static uint64_t irq_entries,irq_entry_pc;
 static unsigned enabled, busy, started, last_draw = ~0U;
+// fuxi-panel-black=1: keep the panel dark for unattended debugging. The state machine keeps recording (and the USB/serial log still flows);
+// only the framebuffer painting stops, so no static log or diagnostic page can burn the OLED in.
+static unsigned panel_black;
 uint64_t boot_progress_epoch, boot_progress_frequency;
 static uint64_t irq_count, thread_count;
 static uint64_t last_pc, last_psr, last_sp;
@@ -202,6 +205,7 @@ static void bar(unsigned row, const char *text, uint32_t color, uint32_t backgro
   bp_line_bg(&display,row,text,color,background);
 }
 static void draw(unsigned now) {
+  if (panel_black) return;
   const struct bp_core *visible=started ? &render_snapshot : &state;
   char b[BP_COLS];
   uint64_t tcr, ttbr0, ttbr1, sctlr;
@@ -506,7 +510,7 @@ int boot_progress_prepare_scanout(void) {
     __atomic_store_n(&render_busy,0,__ATOMIC_RELEASE);return 0;
   }
   __atomic_store_n(&display.yield_requested,0,__ATOMIC_RELEASE);
-  if (!boot_progress_display_owned) {
+  if (!boot_progress_display_owned && !panel_black) {
     line(0,"DISPLAY HANDOFF: CPU scanout copy pending; diagnostic renderer yielding",0xffffff00);
     __asm__ volatile("dsb sy" ::: "memory");
   }
@@ -528,6 +532,7 @@ void boot_progress_init(void) {
   if (!boot_progress_frequency) return;
   boot_progress_epoch=ticks(); state.limit=120; state.stall=30;
   state.continuous=opt==2; enabled=opt;
+  {unsigned black=0;if (PE_parse_boot_argn("fuxi-panel-black",&black,sizeof black) && black) {panel_black=1;bp_paint_off=1;}}
   PE_parse_boot_argn("sheng-build-tag",build_tag,sizeof(build_tag));build_tag[sizeof(build_tag)-1]=0;
   if (PE_parse_boot_argn("boot-diag-resume",&resume_after,sizeof(resume_after)) && (resume_after<5 || resume_after>3600)) resume_after=0;
   boot_progress_stage("PE initialized; early native mappings");
@@ -1069,10 +1074,25 @@ static void usb_status_window(void) {
 
 static void touch_overlay_locked(void);
 static void touch_overlay(void) {
-  // sheng-banner=0 switches every on-screen diagnostic painting off once the system owns the display (the UFS log carries the same rows):
-  // the painters hold render_busy for about a million uncached stores, which a swap's scanout hand-off has to wait for.
+  // Every on-screen diagnostic painting is off by default: the live diagnostics banner (the "UniXNU live diagnostics"
+  // panel), the CDC status window in the bottom-right corner, the extension slots and the crash banner all come from
+  // here, and the UFS log carries the same rows. The painters hold render_busy for about a million uncached stores,
+  // which a swap's scanout hand-off has to wait for, so on a board that boots to the system UI they only get in the way.
+  // sheng-banner=1 turns them back on for a diagnostic boot; the default is off because the board command line has no
+  // room for the switch (DarwinBoot's 1024-byte buffer).
   static int banner_off=-1;
-  if(banner_off<0){unsigned v=1;PE_parse_boot_argn("sheng-banner",&v,sizeof(v));banner_off=v==0;}
+  if(banner_off<0){unsigned v=0;PE_parse_boot_argn("sheng-banner",&v,sizeof(v));banner_off=v!=1;}
+  if(panel_black) {
+    // fuxi-panel-black: wipe the whole scanout a few times so whatever the firmware or an early painter left behind is gone, then stop.
+    static unsigned black_clears;
+    if(black_clears<8 && display.frame && display.width && display.height && display.stride) {
+      for(unsigned y=0;y<display.height;++y)
+        for(unsigned x=0;x<display.width;++x)
+          *(volatile uint32_t *)(display.frame+(uintptr_t)y*display.stride+x*4)=0;
+      ++black_clears;
+    }
+    return;
+  }
   if(banner_off)return;
   __atomic_fetch_add(&touch_passes,1,__ATOMIC_RELAXED);
   // Same rule as the text renderer: draw only while holding render_busy, so a display handoff (which takes it before

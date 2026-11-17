@@ -538,11 +538,18 @@ void native_legacy_display_late_probe(void) {
         thread_t c = nullptr;
         if (kernel_thread_start([](void *, wait_result_t) -> void {
                 IOSleep(45000);
+                /* The GPU addon's install and its four mounts happen with the
+                 * Data mount, which is after this probe's first report, so
+                 * the state is reported again once the system is up: the
+                 * fourth pair is the audio server plug-in's mount over
+                 * /System/Library/Audio/Plug-Ins/HAL. */
+                fuxi_gpu_addon_report();
                 fuxi_display_client_report();
                 /* Repeat while a person can still be touching the panel: the touch row only moves when a contact
                  * arrives, and one report 30 s apart is not enough to catch a deliberate touch. */
                 for (int sample = 0; sample < 5; ++sample) {
                     IOSleep(30000);
+                    fuxi_gpu_addon_report();
                     fuxi_display_client_report();
                 }
                 return;
