@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""H0: the default boot path has no audio-probe caller.
+"""H0: the default boot path calls only the boot-argument-gated audio entry.
 
 The first host gate of docs/fuxi-audio-probe-debug-runbook.md. It answers one question with a search rather than an
 opinion: can anything in a default build reach native_audio_probe()?
@@ -70,8 +70,20 @@ def main() -> int:
 
     if definition == 0:
         problems.append("no definition of native_audio_probe found, so this search proves nothing")
-    for call in calls:
-        problems.append(f"call site: {call}")
+    expected = [call for call in calls if call.startswith("patches/xnu/fuxi-audio-probe.patch:")]
+    unexpected = [call for call in calls if call not in expected]
+    if len(expected) != 1:
+        problems.append(f"expected exactly one bsd_init patch call, found {len(expected)}")
+    for call in unexpected:
+        problems.append(f"unexpected call site: {call}")
+
+    runtime = ROOT / "package/FuxiAdspProbe.cpp"
+    runtime_text = runtime.read_text() if runtime.is_file() else ""
+    entry_text = PROBE.read_text()
+    if 'PE_parse_boot_argn("fuxi-adsp"' not in entry_text or "native_fuxi_adsp_probe_mode(mode)" not in entry_text:
+        problems.append("FuxiAudioProbe does not parse and pass the fuxi-adsp mode")
+    if "mode == 0" not in runtime_text:
+        problems.append("FuxiAdspProbe does not visibly reject mode zero")
 
     # The boot argument must not be in the default command line either.
     board = ROOT / "board.toml"
@@ -84,7 +96,7 @@ def main() -> int:
         problems.append("board.toml is missing, so the command line was not checked")
 
     result = "FAIL" if problems else "PASS"
-    print(f"{result} fuxi-audio-probe H0: default boot path has no audio-probe caller")
+    print(f"{result} fuxi-audio-probe H0: default boot reaches only the gated audio entry")
     for note in notes:
         print(f"  {note}")
     for problem in problems:

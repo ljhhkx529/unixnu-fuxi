@@ -47,7 +47,7 @@ def main() -> int:
     # Every check script in the tree is reachable from the report or is the record checks themselves.
     for path in sorted(glob.glob(str(ROOT / "scripts/check-*.py"))):
         name = Path(path).name
-        if name not in report and name not in named:
+        if name not in report and f"scripts/{name}" not in named:
             problems.append(f"scripts/{name} exists but nothing runs or records it")
 
     for problem in problems:

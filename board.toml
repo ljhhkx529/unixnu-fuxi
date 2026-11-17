@@ -59,6 +59,7 @@ archives = [
   "build-boot-progress.py",
   "build-boot-log.py",
   "build-fuxi-hid-input.py",
+  "build-fuxi-audio-runtime.py",
   "build-fuxi-touch.py",
   "build-fuxi-usb-debug.py",
   "component:AppleKeyStoreState",
@@ -193,6 +194,12 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                # lines under that volume (QCOM USB LOSS contention climbing), which hid the first UFS
                # error behind thousands of repeats.
                "sheng-disable-watchdogd=1", "qcom-usb-debug=1", "qcom-usb-ctl=1", "fuxi-panic-fastboot=30",
+               # Owner bring-up. The compile-time limit is 11: firmware,
+               # mapping, SMP2P, IPCC, QMP, both PAS images and the bounded
+               # SMP2P ready wait. GLINK, GPR and the speaker graph stay off
+               # until this ready evidence is accepted.
+               "fuxi-adsp=2",
+               "fgraph=6",
                # Content follows unixnu-fuxi-old one switch at a time: sheng-aks brings up Apple
                # KeyStore, which AMFI consults before it accepts the adhoc-signed System volume.
                "sheng-aks=1",
@@ -211,13 +218,34 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                # qualified part of it: the GOP framebuffer handover, the registration and PM observations,
                # the swap validation and transfer path, and the CPU-present report.
                "offline-legacy-phase=4",
+               # These six are read by the display backend itself
+               # (UniXNU drivers/GopFramebuffer/NativeLegacyDisplay.cpp), not by
+               # package/FuxiLegacyDisplayProbe.cpp: startHardware wants gop, startDisplay wants pm,
+               # registerService wants register, validateSwap wants validate, kickOnce wants transfer and
+               # retireSwap wants cpu-present. Leaving any of them out makes the display chain stop
+               # before the GPU probe is started, which leaves the GPU register window unbound and
+               # takes the kernel down on the first report that reads it.
                "offline-legacy-register=1",
                "offline-legacy-gop=1",
                "offline-legacy-pm=1",
                "offline-legacy-validate=1",
                "offline-legacy-transfer=1",
                "offline-legacy-cpu-present=1",
+               # The control-stale watchdog is off by default: a wedged host collector is not a
+               # device fault, and resetting on it turns a host-side stall into a boot loop.
+               # P3 final step: put streams 0x1001/0x1061 in SMMU pass-through.
+               "fuxi-abyp=1",
+               # P4 amplifier bring-up, one stage at a time (see docs/fuxi-audio-porting-log.md):
+               # 1 reads the clock state, 2 votes the QUP2 clocks, 3 sets the I2C pins and the
+               # amplifier resets, 4 brings the serial engine up, 5 reads the amplifiers' identity,
+               # 6 mutes them and powers them up, 7 unmutes them once the PLLs are locked.
+               "fuxi-amp=7",
+               # The command line has a 1023 byte limit (DarwinBoot's CommandLine[1024]),
+               # so the switches that are only useful while debugging are dropped here.
                "offline-legacy-unit-scale=2",
+               # fuxi-panel-black=1 is deliberately absent: it painted every swap as the blank
+               # frame (no OLED burn-in, but also no picture). With it gone the panel shows the
+               # system UI, and the diagnostic page is left to boot-progress.
                # Load the original IOMobileGraphicsFamily client support and the mobile-graphics kexts
                # out of the prelinked collection, as old does.
                "offline-mobile-graphics-load=1",
@@ -232,8 +260,17 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                # +0x7b8, so the write path is not established yet; see the note in the commit.
                "sheng-gpu-power=9",
           "sheng-gpu-zap=4",
-          "fuxi-probe-prologue=1",
           "fuxi-probe-tctrl=0x08000001",
+          # The command processor on this board cannot take the full prologue: the
+          # CP_SMMU_TABLE_UPDATE packet in it (the ring word 70940004 in the stall
+          # snapshot) leaves the CP misaligned from that point on, so every later
+          # submission reads zeros - the client IB comes back empty and the
+          # display never gets a frame. Level 1 keeps only the first packet of
+          # the prologue, which is the CP_THREAD_CONTROL the board needs, and
+          # drops the rest. Without this switch the render server stalls in
+          # native_bridge_metal_open() at marker 6a3b and SpringBoard never
+          # appears (gop offers 0).
+          "fuxi-probe-prologue=1",
           # This board's CP refuses SYNC_THREADS (fixed in the driver) and cannot switch its page table from the
           # ring, so clients are served on the kernel's own table and submissions go out without the framed
           # prologue. Together those two make every fence retire; see docs/gpu-bringup.md.

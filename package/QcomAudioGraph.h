@@ -148,6 +148,10 @@ uint32_t qcom_ar_config_hw_endpoint(uint8_t *out, uint32_t capacity, uint32_t po
 /* One converter's output format inside a stream graph. */
 uint32_t qcom_ar_config_pcm_output(uint8_t *out, uint32_t capacity, uint32_t port, uint32_t token, uint32_t apm_iid,
                                    uint32_t instance, const QcomArFormat *format, uint32_t interleaving);
+/* Configure a decoder and converter in one SET_CFG, matching the playback graph's two-module transaction. */
+uint32_t qcom_ar_config_playback_stream(uint8_t *out, uint32_t capacity, uint32_t port, uint32_t token,
+                                        uint32_t apm_iid, uint32_t decoder_iid, uint32_t converter_iid,
+                                        const QcomArFormat *format);
 /* The shared memory endpoint's own media format, addressed to that endpoint rather than to the APM. */
 uint32_t qcom_ar_config_media_format(uint8_t *out, uint32_t capacity, uint32_t port, uint32_t token, uint32_t instance,
                                      const QcomArFormat *format);
@@ -170,6 +174,18 @@ uint32_t qcom_ar_prm_clock(uint8_t *out, uint32_t capacity, uint32_t port, uint3
 uint32_t qcom_ar_prm_vote(uint8_t *out, uint32_t capacity, uint32_t port, uint32_t token, uint32_t block, int enable);
 /* What arrived: the kind of answer and the fields that carry it. */
 int qcom_ar_parse(const void *packet, uint32_t length, QcomArAnswer *answer);
+
+/* How the DSP takes a buffer address.
+ *
+ * The DSP's client hands it 32-bit IOVAs, so an address above 4 GiB is
+ * refused.  Its buffer address carries the stream's index in the top word:
+ * the physical address in the low word and the stream index (the audio
+ * stream's own number and 0xf) in bits 32:35.  An address without that
+ * top word is read as a different stream and the transfer is refused. */
+static inline uint64_t qcom_ar_dsp_address(uint64_t physical, uint16_t stream)
+{
+    return physical | ((uint64_t)(stream & 0xfu) << 32);
+}
 
 #ifdef __cplusplus
 }

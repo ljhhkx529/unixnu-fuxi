@@ -27,6 +27,8 @@ SUITES = [
     ("speaker 拓扑", "scripts/check-qcom-audio-topology-host.py", "QcomAudioTopology"),
     ("共享输出环", "scripts/check-qcom-audio-ring-host.py", "QcomAudioRing"),
     ("CS35L41 安全状态机", "scripts/check-cirrus-cs35l41-host.py", "CirrusCs35l41"),
+    ("fuxi CS35L41 程序表", "scripts/check-fuxi-cs35l41-host.py", "fuxi_cs35l41_host"),
+    ("功放上电计划（时钟/引脚）", "scripts/check-fuxi-amp-bringup-host.py", "fuxi_amp_bringup_host"),
     ("共享音频页（sheng 形状）", "scripts/check-qcom-audio-abi-host.py", "QcomAudioAbi"),
     ("GENI I2C（sheng 原样）", "scripts/check-geni-i2c-host.py", "GENI I2C"),
     ("采集统计", "scripts/check-qcom-audio-capture-host.py", "QcomAudioCapture"),
@@ -42,7 +44,7 @@ def main() -> int:
     print("| --- | --- | --- |")
     for label, script, marker in SUITES:
         result = subprocess.run([sys.executable, str(ROOT / script)], capture_output=True, text=True)
-        match = re.search(rf"PASS {marker}: (\d+) checks", result.stdout)
+        match = re.search(rf"PASS {marker}[: ] ?(\d+) checks", result.stdout)
         if result.returncode == 0 and match:
             count = int(match.group(1))
             total += count
@@ -52,6 +54,7 @@ def main() -> int:
             print(f"| {label} | `{Path(script).name}` | FAIL |")
 
     for label, script in (("绑定", "scripts/check-fuxi-audio-binding.py"),
+                          ("运行时 binding ABI", "scripts/check-fuxi-audio-runtime-binding.py"),
                           ("事实", "scripts/check-fuxi-audio-facts.py"),
                           ("记录", "scripts/check-fuxi-audio-records.py"),
                           ("探针 H0", "scripts/check-fuxi-audio-probe-h0.py"),
@@ -63,6 +66,7 @@ def main() -> int:
                           ("H6 分配差异", "scripts/check-qcom-smem-alloc-host.py"),
                           ("TCSR 编码", "scripts/check-qcom-tcsr-hwlock-host.py"),
                           ("探针 H6", "scripts/check-fuxi-audio-probe-h6.py"),
+                          ("测试结果数据库", "scripts/check-fuxi-audio-test-results.py"),
                           ("sheng 参考", "scripts/check-fuxi-audio-sheng-refs.py")):
         result = subprocess.run([sys.executable, str(ROOT / script)], capture_output=True, text=True)
         line = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else "no output"

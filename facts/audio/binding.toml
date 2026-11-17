@@ -28,6 +28,39 @@ mailbox_timeout = { value = 1000, state = "chosen", evidence = "design:docs/fuxi
 ready_timeout = { value = 2000, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#timeouts" }
 link_timeout = { value = 5000, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#timeouts" }
 
+# The SM8550 platform windows and doorbell/routing numbers the owner glue needs. The
+# values are the same-SoC Sheng predictions recorded in facts/audio/manifest.toml;
+# they stay unverified until this board's PAS/ready/GLINK evidence agrees with them.
+[adsp.platform]
+smem_base = { value = 0x81d00000, state = "unverified", evidence = "sheng.sm8550" }
+smem_size = { value = 0x200000, state = "unverified", evidence = "sheng.sm8550" }
+tcsr_mutex = { value = 0x1f43000, state = "unverified", evidence = "sheng.sm8550" }
+ipcc_base = { value = 0x408000, state = "unverified", evidence = "sheng.sm8550" }
+ipcc_spi = { value = 229, state = "unverified", evidence = "sheng.sm8550" }
+aoss_base = { value = 0xc300000, state = "unverified", evidence = "sheng.sm8550" }
+aoss_size = { value = 0x400, state = "unverified", evidence = "sheng.sm8550" }
+rsc_base = { value = 0x17a20000, state = "unverified", evidence = "sheng.sm8550" }
+rsc_size = { value = 0x10000, state = "unverified", evidence = "sheng.sm8550" }
+rsc_tcs_offset = { value = 0xd00, state = "unverified", evidence = "sheng.sm8550" }
+rsc_spi = { value = 5, state = "unverified", evidence = "sheng.sm8550" }
+cmd_db_base = { value = 0x81c60000, state = "unverified", evidence = "sheng.sm8550" }
+cmd_db_size = { value = 0x20000, state = "unverified", evidence = "sheng.sm8550" }
+remote_pid = { value = 2, state = "unverified", evidence = "sheng.sm8550" }
+smp2p_in_item = { value = 443, state = "unverified", evidence = "sheng.sm8550" }
+smp2p_out_item = { value = 429, state = "unverified", evidence = "sheng.sm8550" }
+smp2p_crash_item = { value = 423, state = "unverified", evidence = "sheng.sm8550" }
+glink_desc_item = { value = 478, state = "unverified", evidence = "sheng.sm8550" }
+glink_tx_item = { value = 479, state = "unverified", evidence = "sheng.sm8550" }
+glink_rx_item = { value = 480, state = "unverified", evidence = "sheng.sm8550" }
+glink_fifo_bytes = { value = 0x4000, state = "unverified", evidence = "sheng.sm8550" }
+pas_adsp = { value = 1, state = "unverified", evidence = "sheng.sm8550" }
+pas_dtb = { value = 36, state = "unverified", evidence = "sheng.sm8550" }
+dtb_carveout_base = { value = 0x9e980000, state = "unverified", evidence = "sheng.sm8550" }
+dtb_carveout_size = { value = 0x80000, state = "unverified", evidence = "sheng.sm8550" }
+glink_channel = { value = "adsp_apps", state = "unverified", evidence = "sheng.sm8550" }
+glink_intent_size = { value = 512, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#timeouts" }
+glink_intent_count = { value = 20, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#timeouts" }
+
 [path]
 gpr_port = { value = 0x2001, state = "unverified", evidence = "sheng.sm8550" }
 token_seed = { value = 1, state = "unverified", evidence = "sheng.sm8550" }
@@ -121,17 +154,18 @@ reg_device_id = { value = 0x00000000, state = "unverified", evidence = "linux_cs
 reg_revision = { value = 0x00000004, state = "unverified", evidence = "linux_cs35l41.revision" }
 reg_global_enables = { value = 0x00002014, state = "unverified", evidence = "linux_cs35l41.global_enables" }
 reg_block_enables = { value = 0x00002018, state = "unverified", evidence = "linux_cs35l41.block_enables" }
-reg_asp_enables = { value = 0, state = "unverified", evidence = "none" }
+reg_asp_enables = { value = 0x00004800, state = "verified", evidence = "amp_registers_measured.sp_enables_register" }
 reg_asp_ctrl = { value = 0x00004854, state = "unverified", evidence = "linux_cs35l41.asp_ctrl" }
 reg_boost_peak = { value = 0x00003808, state = "unverified", evidence = "linux_cs35l41.boost_peak" }
 reg_boost_cap = { value = 0x00003810, state = "unverified", evidence = "linux_cs35l41.boost_cap" }
+reg_frame_rx_slot = { value = 0x00004820, state = "verified", evidence = "amp_registers_measured.frame_rx_slot_register" }
 reg_pll_ctrl = { value = 0x00002C04, state = "unverified", evidence = "linux_cs35l41.pll_ctrl" }
 reg_mute = { value = 0x00002024, state = "unverified", evidence = "linux_cs35l41.mute" }
 reg_irq1_eint1 = { value = 0x00010010, state = "unverified", evidence = "linux_cs35l41.irq1_status1" }
 reg_irq1_eint2 = { value = 0x00010014, state = "unverified", evidence = "linux_cs35l41.irq1_status2" }
 reg_irq1_mask1 = { value = 0x00010110, state = "unverified", evidence = "linux_cs35l41.irq1_mask1" }
-device_id_value = { value = 0, state = "unverified", evidence = "none" }
-revision_value = { value = 0, state = "unverified", evidence = "none" }
+device_id_value = { value = 0x00035A40, state = "verified", evidence = "amp_identity.device_id" }
+revision_value = { value = 0x000000B2, state = "verified", evidence = "amp_identity.revision" }
 enable_value = { value = 1, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#amp-write-values" }
 asp_slot_value = { value = 0, state = "chosen", evidence = "design:docs/fuxi-audio-abi-choices.md#amp-write-values" }
 boost_peak_value = { value = 4000, state = "unverified", evidence = "amplifier[0].boost_peak_milliamp" }

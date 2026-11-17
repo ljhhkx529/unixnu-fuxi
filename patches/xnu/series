@@ -3,6 +3,7 @@
 zzyf-sheng-amp.patch
 fuxi-touch-probe.patch
 fuxi-keystore-probe.patch
+fuxi-audio-probe.patch
 fuxi-display-load-status.patch
 fuxi-gpu-role.patch
 zzzc-boot-log.patch

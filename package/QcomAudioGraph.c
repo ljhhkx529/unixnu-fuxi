@@ -180,6 +180,20 @@ uint32_t qcom_ar_config_pcm_output(uint8_t *out, uint32_t capacity, uint32_t por
     return finish(&w);
 }
 
+uint32_t qcom_ar_config_playback_stream(uint8_t *out, uint32_t capacity, uint32_t port, uint32_t token,
+                                        uint32_t apm_iid, uint32_t decoder_iid, uint32_t converter_iid,
+                                        const QcomArFormat *format)
+{
+    if (!out || !format || !decoder_iid || !converter_iid || decoder_iid == converter_iid) return 0;
+    W w;
+    begin(&w, out, capacity, port, apm_iid, token, QCOM_AR_OP_SET_CFG);
+    const uint32_t cmd = cmd_payload_start(&w);
+    pcm_output(&w, decoder_iid, format, QCOM_AR_INTERLEAVED);
+    pcm_output(&w, converter_iid, format, QCOM_AR_DEINTERLEAVED_UNPACKED);
+    cmd_payload_end(&w, cmd);
+    return finish(&w);
+}
+
 uint32_t qcom_ar_config_media_format(uint8_t *out, uint32_t capacity, uint32_t port, uint32_t token, uint32_t instance,
                                      const QcomArFormat *format)
 {

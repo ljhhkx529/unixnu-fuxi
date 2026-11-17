@@ -1,0 +1,16 @@
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -811,6 +811,13 @@
+ 	extern void native_keystore_probe(void);
+ 	native_keystore_probe();
+ #endif
++
++#if DEVELOPMENT || DEBUG
++	/* The Fuxi ADSP owner glue is off unless fuxi-adsp is set. Mode 1 only
++	 * inventories firmware read-only; mode 2 is the explicit runtime path. */
++	extern void native_audio_probe(void);
++	native_audio_probe();
++#endif
+ 
+ 	/* Initialize the file systems. */
+ 	bsd_init_kprintf("calling vfsinit\n");

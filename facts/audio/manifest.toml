@@ -103,6 +103,17 @@ glink_channel = "adsp_apps"
 glink_channel_source = "SM8550 architecture reference; it must be confirmed for the selected fuxi firmware before use"
 runtime_verified = false
 
+[firmware_repository]
+repository = "https://github.com/ljhhkx529/fuxi-firmware"
+revision = "8a97136d96df7f7baadcb83dcf9e30495ea61a17"
+source = "AOSPA topaz alpha-1 fuxi vendor/odm/vendor_dlkm/system_dlkm images, recorded by the repository README"
+amplifier_assets = 11
+amplifier_assets_verified = true
+adsp_pas_image = "missing"
+adsp_dtb_pas_image = "missing"
+limits = "The repository explicitly omits PAS firmware. It can supply the Fuxi CS35L41 protection/calibration inputs, but cannot boot the ADSP until adsp and adsp_dtb split images are added from the firmware/modem partition or an official fastboot package."
+runtime_verified = false
+
 [safety]
 default_amplifier_state = "reset-or-global-mute"
 allow_high_power_without_protection = false
@@ -137,6 +148,24 @@ items_absent = "429 (SMP2P out), 443 (SMP2P in), 423 (crash) and 480 (GLINK rx) 
 note = "The boot loader already allocated the GLINK descriptor and the transmit FIFO, at the size the platform documents (0x4000), but both read back all zeros on 2026-11-09 (words: 00000000 x8 each): the items exist and are empty, because the GLINK protocol has never run on this board. The probe also exercised package/QcomSmem.c against this board's table, which had only ever run against the host model."
 second_run = "2026-11-09, kernel e227629d, hex dump of items 478 and 479"
 third_run = "2026-11-09, kernel ea639b7c, partition enumerated: the APPS/ADSP partition holds exactly two uncached items, 478 (the GLINK descriptor, 32 bytes at 0x19f030) and 479 (the transmit FIFO, 16384 bytes at 0x19f060). Nothing else is allocated: the SMP2P out and in items, the crash item and the GLINK receive FIFO do not exist until the APPS side creates them, which is what a bring-up does and what a read-only probe must not. The phone stayed up after the run (the USB control channel answered a ping), so a probe run costs nothing."
+
+# The amplifier's identity, read back from the two parts on this board over I2C.  This is a device
+# measurement: the bring-up voted the QUP2 clocks, set the pins, brought the serial engine up and
+# then read the identity registers of the part at each address.  It says what the parts answer, not
+# that they can play sound - the init program leaves them powered down.
+[amp_identity]
+runtime_verified = true
+when = "2026-11-16"
+image = "fuxi-amp=5 build, boot image /tmp/fuxi-p4j.img, flashed with fastboot flash boot and rebooted"
+source = "CDC capture /tmp/fuxi-usb/run-20261116-190631/xnu-usb.log, lines 'fuxi-amp: identity rc 0 found 3' and the two 'fuxi-amp: amp N' lines"
+device_id = 0x00035A40
+revision = 0x000000B2
+revision_meaning = "MTLREVID 0xb2 is even, so the part is a CS35L41 and not a CS35L41R (Linux cs35l41.c: the chip id is chosen by the parity of MTLREVID)"
+otp_boot_done = true
+irq1_status4 = 0x00000003
+irq1_status3 = 0x20000000
+part = "both amplifiers answered the same: 0x42 (T) and 0x40 (B)"
+limits = "Identity only. The amplifier was left powered down, nothing was unmuted, no audio was played and the secondary TDM link was never exercised. A PLL lock was not observed either: IRQ1_STATUS3 read 0x20000000, whose bit 1 (the PLL lock) was not set."
 
 # The board's own device tree, decompiled from the blob the boot image is built with. This establishes where the mutex
 # block is and which lock SMEM uses; it does not establish the register encoding, which is the driver's semantics, and it
@@ -208,7 +237,7 @@ runtime_verified = false
 # in sound/soc/codecs/cs35l41-lib.c. Nothing here says what our own driver will write into them.
 [linux_cs35l41]
 source = "include/sound/cs35l41.h and sound/soc/codecs/cs35l41-lib.c @ torvalds/linux 7475ea8b58616b33c04afb976cf0fbaad9dd63fb"
-device_id = 0x00000000        # CS35L41_DEVID
+device_id = 0x00000000        # CS35L41_DEVID, the register address, not the value the part answers with
 revision = 0x00000004         # CS35L41_REVID
 global_enables = 0x00002014   # CS35L41_PWR_CTRL1, global enable is bit 0 (CS35L41_GLOBAL_EN_MASK)
 boost_peak = 0x00003808       # CS35L41_BSTCVRT_PEAK_CUR
@@ -220,7 +249,19 @@ asp_ctrl = 0x00004854         # CS35L41_ASP_CONTROL4, the only ASP control regis
 boost_cap = 0x00003810        # CS35L41_BSTCVRT_COEFF: the capacitor is configured through the boost converter's coefficients
 irq1_status1 = 0x00010010     # CS35L41_IRQ1_STATUS1: polled for pump-up and written to clear
 irq1_status2 = 0x00010014     # CS35L41_IRQ1_STATUS2: the second status word the driver reads
-unnamed = "One field remains without a register of its own: the ASP enable masks this project expected as a separate register are bits inside ASP_CONTROL4, so reg_asp_enables names something the part does not have separately. The field is kept until the code that uses it decides whether to drop it. The two EINT fields are the driver's IRQ1_STATUS1/STATUS2 under this project's older naming, and the boost capacitor is configured through BSTCVRT_COEFF rather than a register of its own."
+chip_id = 0x00035A40          # CS35L41_CHIP_ID: the value the part answers on DEVID (CS35L41R answers 0x35b40)
+frame_rx_slot = 0x00004820    # CS35L41_SP_FRAME_RX_SLOT: the register whose bits 5:0 hold the slot the amplifier plays
+frame_rx_slot_mask = 0x3F     # CS35L41_ASP_RX1_SLOT_MASK
+boost_coeff = 0x00003810      # CS35L41_BSTCVRT_COEFF: the boost inductor coefficients, K1 in the high byte and K2 in the low one
+boost_k1_k2 = 0x2424          # for 1000 nH and 15 uF the tables give K1 0x24 and K2 0x24
+boost_peak_ipk = 0x40         # the scaled peak current for 4000 mA: (4000 - 1600) / 50 + 0x10
+pll_clk_en = 0x10             # CS35L41_PLL_CLK_EN_MASK: bit 4 of CS35L41_PLL_CLK_CTRL
+pll_refclk_freq = 0x1B       # the reference clock code for the 1.536 MHz SCLK the board's secondary TDM carries
+sp_enables = 0x00004800      # CS35L41_SP_ENABLES: bit 16 is ASPRX1 and bit 17 is ASPRX2
+int1_mask_default = 0x7FFCFE3F  # CS35L41_INT1_MASK_DEFAULT, the interrupt mask the driver writes at probe time
+pll_clk_ctrl_value = 0x00000370  # CS35L41_PLL_CLK_CTRL with SCLK as the source (bits 2:0 = 0), the reference
+                                 # clock code 0x1B in bits 10:5 (0x360) and the PLL enabled (bit 4)
+unnamed = "The ASP enable masks this project expected as a separate register are bits inside SP_ENABLES (bit 16 is ASPRX1) and the slot this amplifier plays is a field of SP_FRAME_RX_SLOT, so reg_asp_enables names the slot register and the boost capacitor is configured through the BSTCVRT_COEFF coefficients rather than a register of its own. The two EINT fields are the driver's IRQ1_STATUS1/STATUS2 under this project's older naming."
 runtime_verified = false
 
 # The AudioReach protocol constants the graph has to address, from the mainline qdsp6 headers rather than from a
@@ -247,3 +288,21 @@ module_instance_start = 0x00006000
 container_instance_start = 0x00005000
 subgraph_instance_start = 0x00004000
 runtime_verified = false
+
+# The register addresses the bring-up wrote and the values it read back on this board, measured on
+# 2026-11-16 with the amplifier's init program (package/FuxiCs35l41.c).
+[amp_registers_measured]
+runtime_verified = true
+when = "2026-11-16"
+source = "CDC capture /tmp/fuxi-usb/run-20261116-190631/xnu-usb.log, the level 5 identity run"
+device_id_register = 0x00000000
+revision_register = 0x00000004
+sp_enables_register = 0x00004800
+frame_rx_slot_register = 0x00004820
+boost_coeff_register = 0x00003810
+boost_peak_register = 0x00003808
+pll_ctrl_register = 0x00002C04
+mute_register = 0x00002024
+irq1_status1_register = 0x00010010
+irq1_status3_register = 0x00010018
+irq1_mask1_register = 0x00010110
