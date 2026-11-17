@@ -339,26 +339,43 @@ uint32_t native_gpu_perf_vote[2];   // OPP and bandwidth index of the initial HF
 uint32_t native_gpu_gx[8];   // vote status, fw error, oob ack polls, gx before, gx after, gx gdscr, RBBM_STATUS, GBIF_HALT
 }
 int hfiWait(void *) {IODelay(100); return 0;}
+/* The cold-start device owns the GPU register windows. Until ShengGmuBindMmio has
+ * accepted them (or refused them), its io vtable is empty: a read through it
+ * is a call through a NULL function pointer, which faults at pc 0 with no way
+ * back. Every window access below therefore asks first. The board's display
+ * report reads the command processor's state on a timer, so it can run before
+ * the GPU probe has started, and it must not be able to take the kernel down. */
+static bool gpuWindowReady(void) {
+    return gColdDevice.io.read32 && gColdDevice.io.write32 && gColdDevice.io.cookie;
+}
 // Mode 9. GPU register access through the cold-start GPU window (dword offsets), and the GMU core window.
 uint32_t gpuRd(uint32_t reg) {
     uint32_t v = 0xdeadbeef;
+    if (!gpuWindowReady()) return v;
     gColdDevice.io.read32(gColdDevice.io.cookie, ShengGmuGpu, size_t(reg) * 4, &v);
     return v;
 }
 void gpuWr(uint32_t reg, uint32_t value) {
+    if (!gpuWindowReady()) return;
     gColdDevice.io.write32(gColdDevice.io.cookie, ShengGmuGpu, size_t(reg) * 4, value);
 }
 void gpuWr64(uint32_t reg, uint64_t value) {gpuWr(reg, uint32_t(value)); gpuWr(reg + 1, uint32_t(value >> 32));}
-void gmuWr(uint32_t dword, uint32_t value) {gColdDevice.io.write32(gColdDevice.io.cookie, ShengGmuCore, kGmuReg(dword), value);}
+void gmuWr(uint32_t dword, uint32_t value) {
+    if (!gpuWindowReady()) return;
+    gColdDevice.io.write32(gColdDevice.io.cookie, ShengGmuCore, kGmuReg(dword), value);
+}
 bool gxOn() {
     uint32_t v = 3;
+    if (!gpuWindowReady()) return false;
     gColdDevice.io.read32(gColdDevice.io.cookie, ShengGmuCore, kGxStatus, &v);
     return !(v & 3);
 }
 int ringWrite(void *, uint32_t reg, uint32_t value) {
+    if (!gpuWindowReady()) return 1;
     return gColdDevice.io.write32(gColdDevice.io.cookie, ShengGmuGpu, size_t(reg) * 4, value);
 }
 int ringRead(void *, uint32_t reg, uint32_t *value) {
+    if (!gpuWindowReady()) return 1;
     return gColdDevice.io.read32(gColdDevice.io.cookie, ShengGmuGpu, size_t(reg) * 4, value);
 }
 int ringBarrier(void *) {__asm__ volatile("dsb sy" ::: "memory"); return 0;}
@@ -1252,6 +1269,10 @@ extern "C" int (*native_adreno_dram_write32)(uint64_t, uint32_t);
  * stopped part-way through names the byte the stream died at. */
 extern "C" void native_gpu_ib_state(uint32_t *out) {
     if (!out) return;
+    /* The display report calls this on a timer, and it can run before the GPU
+     * probe has bound its register windows. Without the guard every one of the
+     * reads below is a call through a NULL function pointer. */
+    if (!gpuWindowReady()) return;
     /* A6XX-A7XX (adreno/a6xx.xml): IB1 0x0928/0x092a, IB2 0x092b/0x092d, SDS 0x092e/0x0930,
      * MRB 0x0931/0x0933, VSD 0x0934. A remaining size that stopped part-way names the byte the stream died at,
      * and which of them is live names the mechanism the CP is inside. */
@@ -1824,6 +1845,7 @@ extern volatile uint32_t native_hid_input_events[8] __attribute__((weak_import))
 }
 uint64_t gpuBusyTicks() {
     ShengGmuIo &io = gColdDevice.io;
+    if (!gpuWindowReady()) return 0;
     uint32_t hi = 0, lo = 0, hi2 = 0;
     io.read32(io.cookie, ShengGmuCore, kGmuReg(0x1f845), &hi);
     io.read32(io.cookie, ShengGmuCore, kGmuReg(0x1f844), &lo);
@@ -1848,6 +1870,7 @@ unsigned gpuLevelFor(uint64_t mhz) {
 }
 void gpuDcvsThread(void *, wait_result_t) {
     ShengGmuIo &io = gColdDevice.io;
+    if (!gpuWindowReady()) return;
     unsigned floor = bootArg("sheng-gpu-dcvs-min", 3);
     if (floor < 1) floor = 1;
     if (floor > kGpuTop) floor = kGpuTop;
@@ -1943,7 +1966,7 @@ void heartbeat() {
     char row[64];
     for (unsigned t = 0;; t += 2) {
         uint32_t info = 0;
-        gColdDevice.io.read32(gColdDevice.io.cookie, ShengGmuCore, kG2hInfo, &info);
+        if (gpuWindowReady()) gColdDevice.io.read32(gColdDevice.io.cookie, ShengGmuCore, kG2hInfo, &info);
         if (gxOn() && gpuRd(A740_CP_RB_RPTR) != gpuRd(A740_CP_RB_WPTR)) {
             // The ring is not drained: where each CP thread is (a6xx.xml A7XX: BV RB_RPTR 0xa66, IB1/IB2 base and remaining dwords
             // 0x928/0x92a and 0x92b/0x92d, BV IB1 0xa6d/0xa70), so a photograph tells which IB and how far into it the CP stopped.
@@ -2001,6 +2024,7 @@ void gpuOn() {
     printf("fuxi-gpu: gpuOn entered\n");
     char row[64];
     ShengGmuIo &io = gColdDevice.io;
+    if (!gpuWindowReady()) { printf("fuxi-gpu: gpuOn without a bound window\n"); return; }
     uint32_t *g = native_gpu_gx;
     auto rd = [&](unsigned w, uint32_t at) {uint32_t v = 0xdeadbeef; io.read32(io.cookie, w, at, &v); return v;};
     native_gpu_power_stage = 0x81;
