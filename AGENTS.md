@@ -27,6 +27,12 @@ repository. `package/TouchBoard.h`, `package/QcomRpmh.*`, `package/SmmuBypass.h`
 are unchanged copies from UniXNU-sheng `package/`, and `package/NativeHidInput.cpp` is an unchanged copy of UniXNU
 ShengHidInput (71a40e7); keep them unchanged so they can be compared with their origin.
 
+Do not run tests that prove nothing new. A check whose result is already known, a suite that needs a toolchain or a
+fixture the machine does not have, or a rebuild of something the owner has already accepted on the device costs time
+and proves nothing. When a change is only a move, a split, a pointer update or a commit, verify it by reading the
+tree and the history instead of by running it. Run a check when it is the thing being changed, when it has not been
+run before, or when the owner asks for it; say plainly which checks ran and which did not.
+
 Run from the UniXNU fork checkout:
 
 ```sh
