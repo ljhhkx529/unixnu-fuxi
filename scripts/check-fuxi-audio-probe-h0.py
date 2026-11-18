@@ -56,6 +56,15 @@ def main() -> int:
                 continue
             stripped = line.strip()
             relative = path.relative_to(ROOT)
+            # A unified diff carries three kinds of line. Only an added line becomes part of the
+            # patched file, so a context or removed line is not a call site: a patch that quotes
+            # the audio probe's own call as its context says nothing about who calls it.
+            if path.suffix == ".patch":
+                if stripped.startswith("+++") or stripped.startswith("---"):
+                    continue
+                if not stripped.startswith("+"):
+                    continue
+                stripped = stripped[1:].strip()
             # A declaration ends in ';' and a definition carries the body; anything else that names it is a call.
             if re.search(r"void\s+native_audio_probe\s*\(\s*(void)?\s*\)\s*;", stripped):
                 notes.append(f"declaration: {relative}:{lineno}")
