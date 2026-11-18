@@ -120,7 +120,16 @@ path = "the modem_a partition's FAT volume, listed by the fuxi-modem=1 probe on 
 statement = "The same partition carries the board's other remote processors' firmware: adsp.mdt with adsp_dtb.mdt, cdsp.mdt with cdsp_dtb.mdt, and ipa_fws.mdt, plus cpusys_vm.mdt and the per-feature images (cardapp.mdt, faceutils.mdt, fingerpr.mdt, mlipay.mdt, ops.mdt, soter64.mdt, and the rest)."
 proves = "That the modem partition is a shared image partition that holds every remote processor's firmware, not the modem's alone. The modem's own files are the ones named modem.mdt and modem_dtb.mdt."
 
-[design]
+[source.device_cmd_db]
+repository = "this fuxi, read on the device"
+path = "the board's AOP command database at 0x81c60000, read by the kernel's fuxi-modem=3 probe; the run's log is evidence/2026-11-19-modem-rails.log"
+kind = "board-first-hand"
+limits = "It proves which rails this board's own copy of the command database carries and at what addresses. It says nothing about what the modem asks for at run time, and reading it votes nothing."
+
+[device.cmd_db.modem_rails]
+path = "the board's AOP command database, read by the fuxi-modem=3 probe on the device"
+statement = "The command database carries cx.lvl at address 0x30000 with 10 levels, mss.lvl at address 0x30060 with 7 levels, mx.lvl at 0x30010 with 9 levels and gfx.lvl at 0x30050 with 14 levels. gpu.lvl and gmxc.lvl are not in it."
+proves = "That both of the modem's proxy power domain rails, cx.lvl and mss.lvl, are in this board's own command database, so both votes of the bring-up have a target. It also corrects the earlier inference from the sheng board, which said mss.lvl was absent."
 [intents]
 statement = "The IPCRTR channel's intent size is 4096 and the count is 8. The size follows the modem's own edge; the count is ours: it bounds how much the AP can receive before it drains."
 proves = "A design decision, not a measurement. The intent handshake absorbs a smaller grant from the modem."

@@ -1,0 +1,13 @@
+# fuxi-modem=3: the board's command database, read on the device
+# date: 2026-11-19
+# the probe reads the AOP command database at 0x81c60000 and looks the modem's rails up in it.
+# It votes nothing and writes no register: the rail votes are not part of this run.
+
+FUXI_MODEM: cx.lvl is at 30000, its highest level is index 9
+FUXI_MODEM: mss.lvl is at 30060, its highest level is index 6
+FUXI_MODEM: gpu.lvl is not in this board's command database
+FUXI_MODEM: gfx.lvl is at 30050, its highest level is index 14
+FUXI_MODEM: cx.lvl is at 30000, its highest level is index 9
+FUXI_MODEM: mx.lvl is at 30010, its highest level is index 9
+FUXI_MODEM: gmxc.lvl is not in this board's command database
+FUXI_MODEM: the command database carries 5 of the 7 names looked up

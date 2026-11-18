@@ -207,9 +207,13 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                "fuxi-adsp=2",
                # The modem's bring-up. Mode 1 only inventories the firmware partition, read only: it
                # names the modem's files and their sizes and starts nothing, so it can run on a
-               # device whose radio policy forbids anything else. Mode 2 is the runtime path, which
-               # starts the modem over PAS and is off until its steps are accepted.
-               "fuxi-modem=1",
+               # device whose radio policy forbids anything else. Mode 2 opens and parses the two
+               # images, still read only: no window is mapped and no register is touched, but the
+               # whole file path runs against the board's own files. Mode 3 reads the board's
+               # command database and looks the modem's rails up in it, still read only: no vote
+               # goes out and no register is written. Mode 4 is the runtime path, which starts the
+               # modem over PAS and is off until its steps are accepted.
+               "fuxi-modem=3",
                "fgraph=6",
                # Content follows unixnu-fuxi-old one switch at a time: sheng-aks brings up Apple
                # KeyStore, which AMFI consults before it accepts the adhoc-signed System volume.

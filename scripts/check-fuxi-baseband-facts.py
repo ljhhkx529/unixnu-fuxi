@@ -127,6 +127,22 @@ def main() -> int:
     require(binding["firmware"]["dtb_size"]["value"] == 4044,
             "the modem DTB's size changed")
 
+    # The rails, confirmed on the device on 2026-11-19: the board's own command database carries
+    # both of the modem's proxy power domain rails. An earlier inference from the sheng board said
+    # mss.lvl was absent, so this pair is pinned in both directions.
+    require(binding["rails"]["cx_in_cmd_db"]["value"] is True,
+            "the board's command database lost cx.lvl")
+    require(binding["rails"]["mss_in_cmd_db"]["value"] is True,
+            "the board's command database lost mss.lvl")
+    require(binding["rails"]["cx_address"]["value"] == 0x30000,
+            "cx.lvl moved in the board's command database")
+    require(binding["rails"]["mss_address"]["value"] == 0x30060,
+            "mss.lvl moved in the board's command database")
+    require(binding["rails"]["cx_level_count"]["value"] == 10,
+            "cx.lvl's level count changed")
+    require(binding["rails"]["mss_level_count"]["value"] == 7,
+            "mss.lvl's level count changed")
+
     # The memory the images are loaded into.
     require(binding["carveout"]["image_base"]["value"] == 0x8a800000,
             "the modem image's base moved")
