@@ -1,0 +1,117 @@
+# The fuxi binding for the Qualcomm baseband (MPSS), field by field.
+#
+# Each entry carries the value a build would use, the state of that value, and the fact it rests on.
+# state is one of:
+#   confirmed  a first-hand source states this value for this board or this SoC
+#   inferred   a first-hand source states it for another board on the same SoC, and nothing contradicts it here
+#   chosen     the value is ours to pick; the evidence is the design decision itself
+#   unverified nothing supports it yet
+# evidence is either a key in facts/baseband/manifest.toml or "none". Unlike the audio binding, a
+# confirmed value needs no device measurement: the source is the Linux kernel's own table for this
+# SoC, which is what the modem's firmware and the secure world actually implement.
+
+schema_version = 1
+board = "fuxi"
+soc = "sm8550"
+status = "source-confirmed"
+
+# The two images the secure world loads for the modem. The image is PAS id 4 and the modem's own
+# device tree blob is PAS id 0x26 (38): Linux's drivers/remoteproc/qcom_q6v5_pas.c, the
+# sm8550_mpss_resource entry.
+[pas]
+modem = { value = 4, state = "confirmed", evidence = "linux.qcom_q6v5_pas.sm8550_mpss" }
+modem_dtb = { value = 0x26, state = "confirmed", evidence = "linux.qcom_q6v5_pas.sm8550_mpss" }
+proxy_pd_names = { value = ["cx", "mss"], state = "confirmed", evidence = "linux.qcom_q6v5_pas.sm8550_mpss" }
+load_state = { value = "modem", state = "confirmed", evidence = "linux.qcom_q6v5_pas.sm8550_mpss" }
+firmware_name = { value = "modem.mdt", state = "confirmed", evidence = "linux.qcom_q6v5_pas.sm8550_mpss" }
+dtb_firmware_name = { value = "modem_dtb.mdt", state = "confirmed", evidence = "linux.qcom_q6v5_pas.sm8550_mpss" }
+
+# The memory the modem runs from. The image region and the device tree blob region are the two
+# reserved-memory nodes Linux's sm8550.dtsi declares for the modem.
+[carveout]
+image_base = { value = 0x8a800000, state = "confirmed", evidence = "linux.sm8550.dtsi.mpss_region" }
+image_size = { value = 0x10800000, state = "confirmed", evidence = "linux.sm8550.dtsi.mpss_region" }
+dtb_base = { value = 0x9b000000, state = "confirmed", evidence = "linux.sm8550.dtsi.mpss_dtb_region" }
+dtb_size = { value = 0x80000, state = "confirmed", evidence = "linux.sm8550.dtsi.mpss_dtb_region" }
+
+# The SMEM partition the modem and the AP share, and the GLINK items on it. The item ids are the
+# ones Linux uses for every GLINK edge (drivers/rpmsg/qcom_glink_smem.c): the native transport
+# descriptor 478, FIFO_0 479 and FIFO_1 480. The AP allocates the descriptor and FIFO_0; FIFO_1 is
+# the modem's.
+[smem]
+base = { value = 0x81d00000, state = "inferred", evidence = "sheng.sm8550" }
+size = { value = 0x200000, state = "inferred", evidence = "sheng.sm8550" }
+remote_pid = { value = 1, state = "confirmed", evidence = "linux.qcom_glink_smem" }
+glink_desc_item = { value = 478, state = "confirmed", evidence = "linux.qcom_glink_smem" }
+glink_tx_item = { value = 479, state = "confirmed", evidence = "linux.qcom_glink_smem" }
+glink_rx_item = { value = 480, state = "confirmed", evidence = "linux.qcom_glink_smem" }
+glink_fifo_bytes = { value = 0x4000, state = "confirmed", evidence = "linux.qcom_glink_smem" }
+
+# The channel the modem opens for QRTR, and the intent size it grants on it. The name comes from
+# the modem's own glink-edge node (qcom,modem_qrtr, channel "IPCRTR") and the size from the same
+# class of edge's intent.
+[glink]
+channel = { value = "IPCRTR", state = "confirmed", evidence = "caf.fuxi_live_dts.modem_qrtr" }
+intent_size = { value = 4096, state = "inferred", evidence = "caf.fuxi_live_dts.modem_qrtr" }
+intent_count = { value = 8, state = "chosen", evidence = "design:facts/baseband/manifest.toml#intents" }
+
+# The doorbell the modem rings, and the IPCC client it uses. The modem is IPCC client 2 (MPSS),
+# not the ADSP's 3 (LPASS): the modem's glink-edge and its SMP2P both ring on MPSS.
+[ipcc]
+client = { value = 2, state = "confirmed", evidence = "linux.qcom_ipcc" }
+glink_signal = { value = 0, state = "confirmed", evidence = "linux.qcom_ipcc" }
+smp2p_signal = { value = 2, state = "confirmed", evidence = "linux.qcom_ipcc" }
+base = { value = 0x408000, state = "inferred", evidence = "sheng.sm8550" }
+spi = { value = 229, state = "inferred", evidence = "sheng.sm8550" }
+
+# The SMP2P pair. The device tree gives them as {inbound, outbound}, so the AP writes 0x1ac and
+# reads 0x1b3. The inbound item is created by the modem, not the AP: the AP only looks for it.
+[smp2p]
+out_item = { value = 0x1ac, state = "confirmed", evidence = "caf.fuxi_live_dts.smp2p_modem" }
+in_item = { value = 0x1b3, state = "confirmed", evidence = "caf.fuxi_live_dts.smp2p_modem" }
+ready_entry = { value = "slave-kernel", state = "confirmed", evidence = "caf.fuxi_live_dts.modem_remoteproc" }
+fatal_entry = { value = "slave-kernel", state = "confirmed", evidence = "caf.fuxi_live_dts.modem_remoteproc" }
+ready_bit = { value = 0x2, state = "confirmed", evidence = "linux.sm8550.dtsi.smp2p_modem_in" }
+fatal_bit = { value = 0x1, state = "confirmed", evidence = "linux.sm8550.dtsi.smp2p_modem_in" }
+
+# The two RPMh proxy power domains the modem needs. The modem's remoteproc asks for "cx.lvl" and
+# "mss.lvl"; "cx.lvl" is in this board's command database, "mss.lvl" is not confirmed there yet.
+[rails]
+cx = { value = "cx.lvl", state = "confirmed", evidence = "linux.qcom_q6v5_pas.sm8550_mpss" }
+mss = { value = "mss.lvl", state = "confirmed", evidence = "caf.fuxi_live_dts.mss_rail" }
+cx_in_cmd_db = { value = true, state = "confirmed", evidence = "sheng.gmu_command_db" }
+mss_in_cmd_db = { value = false, state = "inferred", evidence = "sheng.gmu_command_db" }
+
+# The AOP message that releases the modem once its images are in place.
+[qmp]
+load_state_message = { value = "{class: image, res: load_state, name: modem, val: on}", state = "confirmed", evidence = "linux.qcom_q6v5_pas.sm8550_mpss" }
+base = { value = 0xc300000, state = "inferred", evidence = "sheng.sm8550" }
+size = { value = 0x400, state = "inferred", evidence = "sheng.sm8550" }
+
+# The QRTR node the AP claims. Linux leaves the node id to the endpoint registration, but its
+# local node id is 1 and the reference port uses the same.
+[qrtr]
+local_node = { value = 1, state = "confirmed", evidence = "linux.qrtr.af_qrtr" }
+control_port = { value = 0xfffffffe, state = "confirmed", evidence = "linux.qrtr.af_qrtr" }
+broadcast_node = { value = 0xffffffff, state = "confirmed", evidence = "linux.qrtr.af_qrtr" }
+proto_version = { value = 1, state = "confirmed", evidence = "linux.qrtr.af_qrtr" }
+header_bytes = { value = 32, state = "confirmed", evidence = "linux.qrtr.af_qrtr" }
+
+# The modem's own registers, where the remoteproc keeps its state.
+[remoteproc]
+base = { value = 0x04080000, state = "confirmed", evidence = "caf.fuxi_live_dts.modem_remoteproc" }
+size = { value = 0x10000, state = "confirmed", evidence = "caf.fuxi_live_dts.modem_remoteproc" }
+
+# Where the modem's firmware is on this board. The partition is a FAT volume read in place through
+# the UFS driver, read only, and the images live in its /image directory under the two names the
+# secure world asks for. The list was taken on the device by the fuxi-modem=1 probe.
+[firmware]
+partition = { value = "modem_a", state = "confirmed", evidence = "device.firmware_partition.modem_images" }
+directory = { value = "/image", state = "confirmed", evidence = "device.firmware_partition.modem_images" }
+image_file = { value = "modem.mdt", state = "confirmed", evidence = "device.firmware_partition.modem_images" }
+dtb_file = { value = "modem_dtb.mdt", state = "confirmed", evidence = "device.firmware_partition.modem_images" }
+segment_prefix = { value = "modem.b", state = "confirmed", evidence = "device.firmware_partition.modem_images" }
+segment_count = { value = 29, state = "confirmed", evidence = "device.firmware_partition.modem_images" }
+image_size = { value = 6364, state = "confirmed", evidence = "device.firmware_partition.modem_images" }
+dtb_size = { value = 4044, state = "confirmed", evidence = "device.firmware_partition.modem_images" }
+

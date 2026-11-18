@@ -27,7 +27,10 @@ lba_bytes = 4096
 include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot", "QcomGeniSpi", "FuxiFtsTouch", "VirtioMmioBlock", "RamBlock", "VerifiedRoot", "AppleKeyStoreState", "GopFramebuffer",
            # The GPU: the A740 kernel driver and the Metal plugin the render server loads. Adreno740 also
            # needs AdrenoPM4, AdrenoFirmware and ArmSmmu4K, which it pulls as dependencies.
-           "Adreno740", "AdrenoMetal"]
+           "Adreno740", "AdrenoMetal",
+           # The Qualcomm baseband bridge: the QMUX/QRTR control plane over the modem's GLINK link, and
+           # the IPA data path for the PDP interfaces.
+           "QcomBaseband"]
 
 [kernel]
 defconfig = "fuxi_defconfig"
@@ -74,6 +77,9 @@ archives = [
   "component:Adreno740",
   "build-adreno740-kits.py",
   "build-adreno740-accelerator.py",
+  # The Qualcomm baseband bridge: the QMUX/QRTR control plane over the modem's GLINK link. The archive is
+  # force-loaded so the IOKit services are published; the modem's own thread calls into it.
+  "component:QcomBaseband",
 ]
 
 # Prelink the patched kernel against the original iPadOS 17.7.11 kernelcache, as unixnu-fuxi-old does.
@@ -193,12 +199,17 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                # -enable_kprintf_spam is gone: unixnu-fuxi-old does not set it, and the console drops
                # lines under that volume (QCOM USB LOSS contention climbing), which hid the first UFS
                # error behind thousands of repeats.
-               "sheng-disable-watchdogd=1", "qcom-usb-debug=1", "qcom-usb-ctl=1", "fuxi-panic-fastboot=30",
+               "sheng-disable-watchdogd=1", "qcom-usb-debug=1", "qcom-usb-ctl=1",
                # Owner bring-up. The compile-time limit is 11: firmware,
                # mapping, SMP2P, IPCC, QMP, both PAS images and the bounded
                # SMP2P ready wait. GLINK, GPR and the speaker graph stay off
                # until this ready evidence is accepted.
                "fuxi-adsp=2",
+               # The modem's bring-up. Mode 1 only inventories the firmware partition, read only: it
+               # names the modem's files and their sizes and starts nothing, so it can run on a
+               # device whose radio policy forbids anything else. Mode 2 is the runtime path, which
+               # starts the modem over PAS and is off until its steps are accepted.
+               "fuxi-modem=1",
                "fgraph=6",
                # Content follows unixnu-fuxi-old one switch at a time: sheng-aks brings up Apple
                # KeyStore, which AMFI consults before it accepts the adhoc-signed System volume.

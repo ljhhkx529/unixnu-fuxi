@@ -1,0 +1,126 @@
+# The sources the fuxi baseband binding rests on.
+#
+# Every entry states where the value came from and what that source can and cannot prove. A source
+# that describes another board on the same SoC is marked as such: it is a prediction for this
+# board, not a measurement of it.
+
+schema_version = 1
+board = "fuxi"
+soc = "sm8550"
+status = "source-confirmed"
+
+[source.linux]
+repository = "https://github.com/torvalds/linux"
+paths = "drivers/remoteproc/qcom_q6v5_pas.c, drivers/rpmsg/qcom_glink_smem.c, net/qrtr/af_qrtr.c, include/dt-bindings/mailbox/qcom-ipcc.h, arch/arm64/boot/dts/qcom/sm8550.dtsi"
+kind = "upstream-first-hand"
+limits = "These files state the values for the SoC, not for this board. They prove what the modem's firmware and the secure world implement."
+
+[source.caf]
+repository = "the fuxi's own CAF device tree, read from the running device"
+path = "/tmp/x13/work/device-info/fuxi-live.dts"
+kind = "board-first-hand"
+limits = "It states the wiring this board's vendor tree declares. It does not prove runtime state."
+
+[source.sheng]
+repository = "UniXNU-sm8550-common"
+kind = "same-soc-inference"
+limits = "The Sheng board's values for the same SoC. A prediction for this board, not a measurement of it."
+
+[source.device_firmware_partition]
+repository = "this fuxi, read on the device"
+path = "the modem_a partition's FAT volume, listed read-only by the kernel's fuxi-modem=1 probe; the run's log is evidence/2026-11-19-modem-firmware-inventory.log"
+kind = "board-first-hand"
+limits = "It proves which files the board carries and how large each one is. It says nothing about whether the secure world accepts them, and it says nothing about the modem's runtime state."
+
+# ---- the Linux sources, one fact each ----
+
+[linux.qcom_q6v5_pas.sm8550_mpss]
+path = "drivers/remoteproc/qcom_q6v5_pas.c"
+statement = "The sm8550_mpss_resource entry: pas_id 4 for the modem image, dtb_pas_id 0x26 (38), proxy_pd_names {cx, mss}, load_state \"modem\", firmware_name \"modem.mdt\", dtb_firmware_name \"modem_dtb.mdt\", smem_host_id 1, crash_reason_smem 421, minidump_id 3, ssctl_id 0x12, auto_boot false, decrypt_shutdown true."
+proves = "The PAS ids the secure world expects, the proxy power domains' names, and the AOP load_state string."
+
+[linux.qcom_glink_smem]
+path = "drivers/rpmsg/qcom_glink_smem.c"
+statement = "SMEM_GLINK_NATIVE_XPRT_DESCRIPTOR 478, FIFO_0 479, FIFO_1 480; the descriptor is exactly 32 bytes and holds the transmit tail, transmit head, receive tail and receive head in that order; the AP allocates the descriptor and FIFO_0, and picks up FIFO_1 when the remote makes it."
+proves = "The GLINK item ids, the descriptor's word order, and which side owns which FIFO."
+
+[linux.qrtr.af_qrtr]
+path = "net/qrtr/af_qrtr.c"
+statement = "struct qrtr_hdr_v1 is 32 bytes, little endian, packed: version, type, src_node, src_port, confirm_rx, size, dst_node, dst_port. QRTR_PROTO_VER_1 is 1. The control port is 0xfffffffe and the broadcast node is 0xffffffff. A DATA packet carries the client's own local port as its source port. The name service ignores a DATA packet that arrives before our own HELLO."
+proves = "The QRTR wire format and the node and port semantics."
+
+[linux.qcom_ipcc]
+path = "include/dt-bindings/mailbox/qcom-ipcc.h"
+statement = "IPCC_CLIENT_AOP 0, IPCC_CLIENT_TZ 1, IPCC_CLIENT_MPSS 2, IPCC_CLIENT_LPASS 3, IPCC_CLIENT_SLPI 4; IPCC_MPROC_SIGNAL_GLINK_QMP 0, IPCC_MPROC_SIGNAL_SMP2P 2. A doorbell's id is client << 16 | signal."
+proves = "Which IPCC client the modem's doorbells arrive on."
+
+[linux.sm8550.dtsi.mpss_region]
+path = "arch/arm64/boot/dts/qcom/sm8550.dtsi"
+statement = "sm8550.dtsi includes qcs8550.dtsi, where mpss_mem (mpss-region@8a800000) is 0x8a800000 of 0x10800000, marked no-map."
+proves = "The memory the modem's image is loaded into."
+
+[linux.sm8550.dtsi.mpss_dtb_region]
+path = "arch/arm64/boot/dts/qcom/sm8550.dtsi"
+statement = "In the same qcs8550.dtsi, q6_mpss_dtb_mem (q6-mpss-dtb-region@9b000000) is 0x9b000000 of 0x80000, marked no-map."
+proves = "The memory the modem's own device tree blob is loaded into."
+
+[linux.sm8550.dtsi.smp2p_modem_in]
+path = "arch/arm64/boot/dts/qcom/sm8550.dtsi"
+statement = "The remoteproc_mpss node's interrupts-extended lists the modem's SMP2P entries in the order wdog, fatal, ready, handover, stop-ack, shutdown-ack, so fatal is bit 0 and ready is bit 1."
+proves = "Which SMP2P bit means the modem is up and which means it died."
+
+# ---- the board's own device tree ----
+
+[caf.fuxi_live_dts.modem_remoteproc]
+path = "/tmp/x13/work/device-info/fuxi-live.dts, the remoteproc-mss@04080000 node"
+statement = "compatible \"qcom,kalama-modem-pas\", reg 0x4080000 of 0x10000, label \"modem\", qcom,qmp 0x43, mboxes 0x44 0x02 0x00; the glink-edge gives qcom,remote-pid 0x01; the interrupts-extended entries are 0x77 0x00, 0x77 0x02, 0x77 0x01, 0x77 0x03 and 0x77 0x07, and the interrupt-names give them wdog, fatal, handover, ready, stop-ack and shutdown-ack in that order. 0x77 is the slave-kernel entry, and the second number is the bit within it: so 0x77 0x00 is fatal and 0x77 0x01 is handover."
+proves = "The modem's register block, its remote pid, and the fatal and ready bits, from this board's own tree."
+
+[caf.fuxi_live_dts.smp2p_modem]
+path = "/tmp/x13/work/device-info/fuxi-live.dts, the qcom,smp2p-modem node"
+statement = "qcom,smem = <0x1b3 0x1ac>. Linux's qcom,smp2p binding reads that pair as {inbound, outbound}."
+proves = "Which SMP2P item the AP writes and which it reads: the AP writes 0x1ac and reads 0x1b3."
+
+[caf.fuxi_live_dts.modem_qrtr]
+path = "/tmp/x13/work/device-info/fuxi-live.dts, the qcom,modem_qrtr node"
+statement = "channel \"IPCRTR\", qcom,intents 0x800 0x05 0x2000 0x03 0x4400 0x02."
+proves = "The name of the channel the modem opens for QRTR."
+
+# ---- the same-SoC inferences ----
+
+[sheng.sm8550]
+repository = "UniXNU-sm8550-common"
+statement = "The SM8550 platform windows the board's own glue already uses: the SMEM window, the IPCC block, the AOSS/QMP block, the RPMh RSC block and its TCS offset, and the command database."
+proves = "Nothing about the modem. It is where the shared SoC windows come from, on this board's behalf."
+
+[sheng.gmu_command_db]
+repository = "UniXNU-sm8550-common/kits/Sm8550Platform/ShengGmuCommandDb.c"
+statement = "The command database copy carries gfx.lvl, mx.lvl, cx.lvl and gmxc.lvl."
+proves = "That cx.lvl, one of the modem's two proxy domains, is in a command database. It says nothing about mss.lvl, which the copy does not carry."
+
+[caf.fuxi_live_dts.mss_rail]
+path = "/tmp/x13/work/device-info/fuxi-live.dts, the rpmh-regulator-msslvl node"
+statement = "The board's own device tree declares rpmh-regulator-msslvl with qcom,resource-name \"mss.lvl\", so the vendor tree has the modem's second proxy rail."
+proves = "That mss.lvl is the resource name the modem's remoteproc asks for on this board. It says nothing about whether the board's separate command database copy carries that name, which is what the probe looks up at run time."
+
+# ---- the choices that are ours ----
+
+[device.firmware_partition.modem_images]
+path = "the modem_a partition's FAT volume, listed by the fuxi-modem=1 probe on the device"
+statement = "The /image directory of the board's own modem partition holds modem.mdt (6364 bytes) and modem_dtb.mdt (4044 bytes), and the split segments modem.b00 through modem.b31 with b14 and b30 absent: b00 1076, b01 6948, b02 811476, b03 19420, b04 16700, b05 11772, b06 34896, b07 118784, b08 3391400, b09 36928, b10 16384, b11 4304784, b12 262144, b13 5210112, b15 3732744, b16 473656, b17 4096000, b18 16917448, b19 15242839, b20 6676488, b22 123136, b23 42639424, b24 42896512, b25 1349297, b26 8928, b27 409600, b28 131072, b29 11272, b31 5288. The whole /image directory holds 448 entries."
+proves = "That the board carries the modem's firmware under exactly the two names the PAS sequence looks for, and that the image is a split one whose segments are the device's own files. The gaps at b14 and b30 are the split index's own numbering, not a missing read: the listing walks the directory and reports what is there."
+
+[device.firmware_partition.modem_pr]
+path = "the modem_a partition's FAT volume, listed by the fuxi-modem=1 probe on the device"
+statement = "/image/modem_pr is a directory holding mcfg and so, two more directories, and no firmware image of its own."
+proves = "That the modem's configuration and shared-object directories exist and where they are. It says nothing about their contents, which the probe does not walk."
+
+[device.firmware_partition.other_images]
+path = "the modem_a partition's FAT volume, listed by the fuxi-modem=1 probe on the device"
+statement = "The same partition carries the board's other remote processors' firmware: adsp.mdt with adsp_dtb.mdt, cdsp.mdt with cdsp_dtb.mdt, and ipa_fws.mdt, plus cpusys_vm.mdt and the per-feature images (cardapp.mdt, faceutils.mdt, fingerpr.mdt, mlipay.mdt, ops.mdt, soter64.mdt, and the rest)."
+proves = "That the modem partition is a shared image partition that holds every remote processor's firmware, not the modem's alone. The modem's own files are the ones named modem.mdt and modem_dtb.mdt."
+
+[design]
+[intents]
+statement = "The IPCRTR channel's intent size is 4096 and the count is 8. The size follows the modem's own edge; the count is ours: it bounds how much the AP can receive before it drains."
+proves = "A design decision, not a measurement. The intent handshake absorbs a smaller grant from the modem."
