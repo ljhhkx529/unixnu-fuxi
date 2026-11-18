@@ -87,6 +87,24 @@ mss_address = { value = 0x30060, state = "confirmed", evidence = "device.cmd_db.
 cx_level_count = { value = 10, state = "confirmed", evidence = "device.cmd_db.modem_rails" }
 mss_level_count = { value = 7, state = "confirmed", evidence = "device.cmd_db.modem_rails" }
 
+# The RPMh corner the modem's two domains are voted to, and which of the three vote states
+# each one takes. Linux's sm8550_mpss_resource carries no proxy_pd_performance_states, so
+# qcom_pas_pds_enable asks for INT_MAX, and rpmhpd_set_performance_state clamps that to the
+# highest corner. The enable corner (the first non-zero level with Retention skipped) never
+# exceeds it, and the unsynced branch of rpmhpd_aggregate_corner gives the same corner, so the
+# vote is the highest corner either way. cx has a peer (cx_ao) and so is recorded in all three
+# vote states; mss has none and so in one. Only the active one reaches the wire: the wake and
+# sleep votes are cached in rpmh.c and flushed when the processor suspends.
+[vote]
+cx_corner = { value = "highest", state = "confirmed", evidence = "linux.rpmhpd.set_performance_state" }
+mss_corner = { value = "highest", state = "confirmed", evidence = "linux.rpmhpd.set_performance_state" }
+retention_level = { value = 16, state = "confirmed", evidence = "linux.rpmhpd.enable_corner" }
+cx_vote_states = { value = ["active", "wake", "sleep"], state = "confirmed", evidence = "linux.rpmhpd.aggregate_corner" }
+mss_vote_states = { value = ["active"], state = "confirmed", evidence = "linux.rpmhpd.aggregate_corner" }
+performance_state = { value = "int_max", state = "confirmed", evidence = "linux.qcom_q6v5_pas.sm8550_mpss" }
+state_synced = { value = "irrelevant", state = "confirmed", evidence = "linux.rpmhpd.aggregate_corner" }
+on_the_wire = { value = ["active"], state = "confirmed", evidence = "linux.rpmh.write_only_active" }
+
 # The AOP message that releases the modem once its images are in place.
 [qmp]
 load_state_message = { value = "{class: image, res: load_state, name: modem, val: on}", state = "confirmed", evidence = "linux.qcom_q6v5_pas.sm8550_mpss" }

@@ -143,6 +143,29 @@ def main() -> int:
     require(binding["rails"]["mss_level_count"]["value"] == 7,
             "mss.lvl's level count changed")
 
+    # The vote the bring-up sends. Linux's sm8550_mpss_resource carries no performance state
+    # for the modem's domains, so qcom_pas_pds_enable asks for INT_MAX, which
+    # rpmhpd_set_performance_state clamps to the highest corner. The enable corner never
+    # exceeds it and the unsynced branch gives the same one, so the vote is the highest
+    # corner either way. Only the active vote reaches the wire at modem start; the wake and
+    # sleep votes sit in rpmh.c's cache until the processor suspends.
+    require(binding["vote"]["cx_corner"]["value"] == "highest",
+            "cx.lvl's corner changed")
+    require(binding["vote"]["mss_corner"]["value"] == "highest",
+            "mss.lvl's corner changed")
+    require(binding["vote"]["retention_level"]["value"] == 16,
+            "the Retention level changed")
+    require(binding["vote"]["cx_vote_states"]["value"] == ["active", "wake", "sleep"],
+            "cx.lvl's vote states changed")
+    require(binding["vote"]["mss_vote_states"]["value"] == ["active"],
+            "mss.lvl's vote states changed")
+    require(binding["vote"]["performance_state"]["value"] == "int_max",
+            "the modem's performance state changed")
+    require(binding["vote"]["state_synced"]["value"] == "irrelevant",
+            "the RPMh state sync assumption changed")
+    require(binding["vote"]["on_the_wire"]["value"] == ["active"],
+            "the votes that reach the hardware changed")
+
     # The memory the images are loaded into.
     require(binding["carveout"]["image_base"]["value"] == 0x8a800000,
             "the modem image's base moved")

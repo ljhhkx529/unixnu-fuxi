@@ -36,8 +36,33 @@ limits = "It proves which files the board carries and how large each one is. It 
 
 [linux.qcom_q6v5_pas.sm8550_mpss]
 path = "drivers/remoteproc/qcom_q6v5_pas.c"
-statement = "The sm8550_mpss_resource entry: pas_id 4 for the modem image, dtb_pas_id 0x26 (38), proxy_pd_names {cx, mss}, load_state \"modem\", firmware_name \"modem.mdt\", dtb_firmware_name \"modem_dtb.mdt\", smem_host_id 1, crash_reason_smem 421, minidump_id 3, ssctl_id 0x12, auto_boot false, decrypt_shutdown true."
-proves = "The PAS ids the secure world expects, the proxy power domains' names, and the AOP load_state string."
+statement = "The sm8550_mpss_resource entry: pas_id 4 for the modem image, dtb_pas_id 0x26 (38), proxy_pd_names {cx, mss}, load_state \"modem\", firmware_name \"modem.mdt\", dtb_firmware_name \"modem_dtb.mdt\", smem_host_id 1, crash_reason_smem 421, minidump_id 3, ssctl_id 0x12, auto_boot false, decrypt_shutdown true. The entry carries no proxy_pd_performance_states."
+proves = "The PAS ids the secure world expects, the proxy power domains' names, and the AOP load_state string. The absence of proxy_pd_performance_states is what decides the vote: the modem's domains are enabled, not set to a performance corner."
+
+[linux.rpmhpd.enable_corner]
+path = "drivers/pmdomain/qcom/rpmhpd.c"
+statement = "rpmhpd_update_level_mapping reads the command database's aux data as the level list and skips the Retention level (16) when it looks for the enable corner, because most hardware will not function at Retention. The first corner with a non-zero level is the enable corner. The Retention entry keeps its position in the level list, so it still occupies an index; only its level value is ignored. If the aux data is zero padded, the padding is cut off and the level count shrinks."
+proves = "What the enable corner is, and that the level list the command database carries is the list of corners a rail can be voted to, indexed by position."
+
+[linux.rpmhpd.set_performance_state]
+path = "drivers/pmdomain/qcom/rpmhpd.c"
+statement = "rpmhpd_set_performance_state walks the level list for the first entry whose level is at least the requested one. A request above every level lands on the last entry, because the loop ends with i == level_count and the code then steps i back by one. It then stores that index in pd->corner. rpmhpd_power_on votes max(pd->corner, pd->enable_corner), and the enable corner never exceeds the highest corner."
+proves = "That the modem's two domains are voted to the highest corner. Linux's qcom_pas_pds_enable asks for INT_MAX because sm8550_mpss_resource carries no proxy_pd_performance_states, and INT_MAX lands on the last level. So the port's vote of the highest index is what Linux does."
+
+[linux.rpmhpd.aggregate_corner]
+path = "drivers/pmdomain/qcom/rpmhpd.c"
+statement = "rpmhpd_aggregate_corner sends an ACTIVE_ONLY vote for a resource with no peer, and for one with a peer it sends all three: ACTIVE_ONLY, WAKE_ONLY and SLEEP. The cx domain has the peer cx_ao and the mss domain has none. The three states are RPMH_SLEEP_STATE, RPMH_WAKE_ONLY_STATE and RPMH_ACTIVE_ONLY_STATE. When the state has not been synchronised, the corner is the highest one (level_count - 1); once it is, the corner passed in is used, and for the modem's domains that is the same highest corner. The corner sent is the index into the resource's level list."
+proves = "Which of the three vote states each of the modem's two domains takes, that the corner on the wire is the level-list index rather than the hardware level, and that the state being synchronised or not makes no difference to the modem's vote."
+
+[linux.rpmh.write_only_active]
+path = "drivers/soc/qcom/rpmh.c"
+statement = "__rpmh_write sends the request to the controller only when the state is RPMH_ACTIVE_ONLY_STATE. For the other two states it caches the value in the controller's cache: the wake value for both ACTIVE_ONLY and WAKE_ONLY, and the sleep value for SLEEP. The cache is written out by rpmh_flush, which the RSC driver calls when the last processor is about to idle and when a power domain goes down. The state also picks the TCS: ACTIVE_ONLY uses the active TCS, and falls back to the wake TCS if the RSC has no active TCS of its own."
+proves = "That at the time the modem is started, with the processor still awake, only the active vote reaches the hardware for the modem's rails. The wake and sleep votes are recorded in the cache and sent later, when the processor suspends."
+
+[linux.rpmh.cmd_db_corner]
+path = "drivers/pmdomain/qcom/rpmhpd.c"
+statement = "The command database's aux data for a resource is the list of hardware levels (vlvl), in ascending order of ARC corner: 16 Retention, 48 Minimum SVS, 128 SVS, 256 NOM, 384 TURBO, 464 Super Turbo. The corner index is the position in that list."
+proves = "That the value voted on the wire is the corner index and not the hardware level, and that the levels the command database lists for a rail are the corners it can be voted to."
 
 [linux.qcom_glink_smem]
 path = "drivers/rpmsg/qcom_glink_smem.c"
@@ -107,8 +132,8 @@ proves = "That mss.lvl is the resource name the modem's remoteproc asks for on t
 
 [device.firmware_partition.modem_images]
 path = "the modem_a partition's FAT volume, listed by the fuxi-modem=1 probe on the device"
-statement = "The /image directory of the board's own modem partition holds modem.mdt (6364 bytes) and modem_dtb.mdt (4044 bytes), and the split segments modem.b00 through modem.b31 with b14 and b30 absent: b00 1076, b01 6948, b02 811476, b03 19420, b04 16700, b05 11772, b06 34896, b07 118784, b08 3391400, b09 36928, b10 16384, b11 4304784, b12 262144, b13 5210112, b15 3732744, b16 473656, b17 4096000, b18 16917448, b19 15242839, b20 6676488, b22 123136, b23 42639424, b24 42896512, b25 1349297, b26 8928, b27 409600, b28 131072, b29 11272, b31 5288. The whole /image directory holds 448 entries."
-proves = "That the board carries the modem's firmware under exactly the two names the PAS sequence looks for, and that the image is a split one whose segments are the device's own files. The gaps at b14 and b30 are the split index's own numbering, not a missing read: the listing walks the directory and reports what is there."
+statement = "The /image directory of the board's own modem partition holds modem.mdt (6364 bytes) and modem_dtb.mdt (4044 bytes), and the split segments modem.b00 through modem.b31 with b14, b21 and b30 absent: b00 1076, b01 6948, b02 811476, b03 19420, b04 16700, b05 11772, b06 34896, b07 118784, b08 3391400, b09 36928, b10 16384, b11 4304784, b12 262144, b13 5210112, b15 3732744, b16 473656, b17 4096000, b18 16917448, b19 15242839, b20 6676488, b22 123136, b23 42639424, b24 42896512, b25 1349297, b26 8928, b27 409600, b28 131072, b29 11272, b31 5288. The whole /image directory holds 448 entries."
+proves = "That the board carries the modem's firmware under exactly the two names the PAS sequence looks for, and that the image is a split one whose segments are the device's own files. The gaps at b14, b21 and b30 are the split index's own numbering, not a missing read: the listing walks the directory and reports what is there."
 
 [device.firmware_partition.modem_pr]
 path = "the modem_a partition's FAT volume, listed by the fuxi-modem=1 probe on the device"

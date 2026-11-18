@@ -111,10 +111,10 @@ probe 自身只在 `fuxi-modem` 启动参数存在时才动作，正常开机不
 
 ## 剩余工作
 
-1. 在真机上定位 modem 固件：`modem.mdt` 与 `modem_dtb.mdt`。安全世界认的文件名已确认，文件本身还在
-   `modem_a`/`modem_b` 分区里待找。
-2. `mss.lvl` 轨：本板命令数据库副本里只有 `gfx.lvl`、`mx.lvl`、`cx.lvl`、`gmxc.lvl`，modem 第二个代理域
-   没有可投的档位。probe 会报出缺失而不是假设。
+1. ~~在真机上定位 modem 固件~~：**已完成**（2026-11-19）。`modem_a` 分区 `/image` 目录里就是
+   `modem.mdt` 与 `modem_dtb.mdt`，分段 `modem.b00`–`modem.b31` 缺 b14/b21/b30。
+2. ~~`mss.lvl` 轨是否存在~~：**已确认存在**（2026-11-19 真机读命令数据库）。`cx.lvl` 在 `0x30000`
+   10 个档，`mss.lvl` 在 `0x30060` 7 个档。之前"本板没有 mss.lvl"的说法是从 sheng 板推断的，不成立。
 3. 内核构建 → `fastboot flash boot` → 真机取 DIAGSTATUS 证据。
 4. QRTR 服务发现 → QMI `UIM`/`NAS` 只读调用 → 卡1状态与信号。
 5. `/chosen/coachz-baseband` 加进 fuxi 设备树，`disabled.plist` 复通 CommCenter。

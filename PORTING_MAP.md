@@ -27,6 +27,7 @@
 | SMEM 查表/分配 | Linux `drivers/soc/qcom/qcom_smem.c` | `unixnu-fuxi/package/QcomSmem.c` | A | |
 | MDT 解析 | Linux `drivers/soc/qcom/mdt_loader.c` | `unixnu-fuxi/package/QcomMdt.c` | A | |
 | RPMh ARC 资源 | Linux `drivers/soc/qcom/cmd_db.c` + `rpmh.c` | `unixnu-fuxi/package/QcomRpmh.c` | A | |
+| RPMh 寄存器与 TCS | Linux `drivers/soc/qcom/rpmh-rsc.c` | `unixnu-fuxi/package/QcomRpmh.c` | A | 两个 RSC 寄存器布局、TCS 的选择与触发顺序 |
 | AOSS QMP | Linux `drivers/mailbox/qcom_aoss.c` | `unixnu-fuxi/package/QcomQmp.c` | A | |
 | SMP2P | Linux `drivers/soc/qcom/smp2p.c` | `unixnu-fuxi/package/QcomSmp2p.c` | A | |
 | **QRTR 协议** | Linux `net/qrtr/af_qrtr.c` | `UniXNU/drivers/QcomBaseband/platform/fuxi/qcom_qrtr.c` | **D** | XNU 无 QRTR，按线格式重写（32 字节 `qrtr_hdr_v1`） |
@@ -40,6 +41,7 @@
 | PAS 引导 | Linux `drivers/remoteproc/qcom_q6v5_pas.c` (`qcom_pas_start`) | `unixnu-fuxi/package/FuxiModemProbe.cpp` | **C** |
 | SCM64 SiP 调用 | 本仓 `package/QcomScm.h` + ADSP 已验证实现 | `package/FuxiModemProbe.cpp` | A |
 | RPMh 投票 | 本仓 `package/QcomRpmh.h` | `package/FuxiModemProbe.cpp` | A |
+| RPMh corner 语义 | Linux `drivers/pmdomain/qcom/rpmhpd.c` | `package/FuxiModemProbe.cpp` | A（见下） |
 | ADSP PAS 模板 | 本仓 `package/FuxiAdspProbe.cpp` | `package/FuxiModemProbe.cpp` | B（换实参） |
 
 ## 实参来源
@@ -53,7 +55,7 @@
 | `pas_id = 4`（modem 镜像） | Linux `qcom_q6v5_pas.c` `sm8550_mpss_resource` |
 | `dtb_pas_id = 0x26`（modem DTB） | 同上 |
 | 固件文件名 `modem.mdt` / `modem_dtb.mdt` | Linux 同上（secure world 要什么）；**真机 2026-11-19 确认板上就是这两个名字** |
-| 分段 `modem.b00`–`modem.b31`，缺 b14、b30，共 29 段 | **真机 2026-11-19**，`modem_a` 分区 `/image` 目录清点 |
+| 分段 `modem.b00`–`modem.b31`，缺 b14、b21、b30，共 29 段 | **真机 2026-11-19**，`modem_a` 分区 `/image` 目录清点 |
 | `proxy_pd_names = {"cx","mss"}` | Linux `sm8550.dtsi` `power-domain-names` |
 | 内存洞 `0x8a800000/0x10800000` | Linux `sm8550.dtsi` `mpss_region@8a800000`；CAF live dts 同值 |
 | 内存洞 `0x9b000000/0x80000` | Linux `sm8550.dtsi` `q6_mpss_dtb_region@9b000000`；CAF live dts 同值 |
@@ -74,8 +76,44 @@ wdog、fatal、handover、ready、stop-ack、shutdown-ack，所以第二个数�
 `0x77 0x01` 是 handover，不是 ready。Linux 的 `sm8550.dtsi` 少一个 handover，因此 fatal 是 bit 0、
 ready 是 bit 1。**`package/FuxiModemProbe.cpp` 用的是 Linux 的编号（fatal 0x1、ready 0x2），是对的。**
 
-**`mss.lvl` 的缺口**：本板的命令数据库副本只有 `gfx.lvl`、`mx.lvl`、`cx.lvl`、`gmxc.lvl`。modem 的第二个
-代理域没有可投的档位，probe 运行时查不到就报出来，不假设。
+**`mss.lvl` 在本板**：2026-11-19 真机读到（`fuxi-modem=3`，只读命令数据库，不投票）。
+`cx.lvl` 在 `0x30000`，10 个档；`mss.lvl` 在 `0x30060`，7 个档。之前"只有 gfx/mx/cx/gmxc"的说法是从
+sheng 板推断的，对本板不成立。
+
+**RPMh 投票的 corner 语义**（Linux `drivers/pmdomain/qcom/rpmhpd.c` + `drivers/soc/qcom/rpmh.c`）：
+
+1. `sm8550_mpss_resource` **没有** `proxy_pd_performance_states`，所以 `qcom_pas_pds_enable` 传的
+   performance state 是 `INT_MAX`。
+2. `rpmhpd_set_performance_state` 把 `INT_MAX` 钳到 **最高档**：`level_count - 1`。
+   于是 `pd->corner` = 最高档。
+3. `rpmhpd_power_on` 投 `max(pd->corner, pd->enable_corner)`，enable corner 是**第一个非零档位**
+   （跳过 Retention），它不会比最高档大，所以**投出去的是最高档**。
+4. `state_synced` 假不改变结果：`rpmhpd_aggregate_corner` 在未同步时直接用
+   `level_count - 1`，同步后用 `to_active_sleep(pd, corner)` 也是同一个值。两种情况相同。
+5. 投到线上的是 **ARC corner 下标**：下标就是命令数据库 aux 数据里的**位置**。命令数据库给出一串
+   硬件档位（vlvl），下标 0 是 Retention（`RPMH_REGULATOR_LEVEL_RETENTION = 16`），它在下标空间里
+   **占着自己的位置**，只是它的档位值不被用来算 enable corner。
+6. `cx` 有 peer `cx_ao`，`mss` 没有 peer。Linux 因此给 `cx` 记三种态（ACTIVE_ONLY、WAKE_ONLY、
+   SLEEP），给 `mss` 只记一种。
+7. **但只有 ACTIVE_ONLY 会上线**。`__rpmh_write` 只在 state 是 `RPMH_ACTIVE_ONLY_STATE` 时调
+   `rpmh_rsc_send_data`；WAKE_ONLY 和 SLEEP 只进 `rpmh.c` 的缓存，等 CPU 进 idle 或挂起时
+   `rpmh_flush()` 才写进 WAKE/SLEEP 的 TCS。modem 启动时 AP 还醒着，那两种票还没上线。
+8. 顺序：Linux 先给 `cx` 投票、再给 `mss` 投票，各是一次独立的请求。**本仓把两条轨放在同一次
+   请求里**，命令顺序也是 cx 在前。touch 探针在真机上已经证明这台机器的 RSC 能接受一条请求里的
+   两条命令。
+
+**结论：本仓 `voteRails()` 投的就是最高档，与 Linux 一致，不需要改。**
+`qcom_rpmh_level_index(&cx, 0xffffffffu, &index)` 在档位都小于 `0xffffffff` 时返回
+`level_count - 1`，正是最高档。
+
+**尚未做的**：本仓没有 `rpmh.c` 的缓存，也没有在 idle/挂起时把 WAKE/SLEEP 票刷进 TCS 的地方。
+这不影响 modem 启动（那时那两种票还没上线），但 AP 挂起再回来之后 modem 的 `cx` 域会停在
+硬件当前记着的档位上。这属于 modem 起来以后的事。
+
+## 待查的上游源码
+
+<!-- 列出要先读上游才能定下来的问题。读完把答案写回上面的表或 facts/baseband/，然后把这一条删掉。 -->
+
 
 ## 桥接与 IPA
 

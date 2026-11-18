@@ -32,7 +32,7 @@
 
 **结论（真机，2026-11-19）**：`fuxi-modem=1` 的只读清点在设备上跑通，`modem_a` 分区的 `/image` 目录共 448 项，
 其中就有 `modem.mdt`（6364 字节）与 `modem_dtb.mdt`（4044 字节），分段是 `modem.b00` 到 `modem.b31`，
-中间缺 `b14` 与 `b30`，共 29 段。secure world 要的两个名字，就是板上有的两个名字，
+中间缺 `b14`、`b21` 与 `b30`，共 29 段。secure world 要的两个名字，就是板上有的两个名字，
 PAS 序列的文件查找没有可猜的了。同一分区还放着 `adsp.mdt`、`cdsp.mdt`、`cpusys_vm.mdt`、`ipa_fws.mdt`
 等别的处理器固件，所以查 `modem.mdt` 时不能把这个分区当成 modem 专属。
 `/image/modem_pr` 是目录，下面有 `mcfg` 与 `so` 两个子目录，本身不含固件镜像。
