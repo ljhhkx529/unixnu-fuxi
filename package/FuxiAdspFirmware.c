@@ -186,3 +186,28 @@ void fuxi_adsp_fw_close(void *handle)
     IOFreeType(fw, struct fuxi_adsp_fw);
 }
 
+int fuxi_adsp_fw_list(const char *path, unsigned index, char *name, size_t name_length, uint64_t *size,
+                      int *is_directory)
+{
+    if (!name || !name_length) return EINVAL;
+    name[0] = 0;
+    if (size) *size = 0;
+    if (is_directory) *is_directory = 0;
+    const int rc = mountPartition();
+    if (rc) return rc;
+    FatFile directory;
+    const int found = fat_open(gVolume, path && *path ? path : "/", &directory);
+    if (found) return found == FatNotFound ? ENOENT : EIO;
+    if (!directory.directory) return ENOTDIR;
+    FatEntry entry;
+    const int listed = fat_list(gVolume, &directory, index, &entry);
+    if (listed) return EIO;
+    if (!entry.name[0]) return 0;  /* the directory ended */
+    const size_t length = strlen(entry.name);
+    if (length + 1 > name_length) return ENAMETOOLONG;
+    memcpy(name, entry.name, length + 1);
+    if (size) *size = entry.size;
+    if (is_directory) *is_directory = entry.directory;
+    return 0;
+}
+

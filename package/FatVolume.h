@@ -42,10 +42,22 @@ typedef struct {
     uint8_t directory;
 } FatFile;
 
+/* One entry of a directory listing. The name is the long name when the entry has one, else the 8.3 name with
+ * its extension, in the case the directory stores it. */
+typedef struct {
+    char name[256];
+    uint32_t size;
+    uint8_t directory;
+} FatEntry;
+
 int fat_mount(FatVolume *v, uint64_t size, FatRead read, void *context);
 /* path: names separated by '/', each matched in any case against the long name, else the 8.3 name ("image/adsp.b00"). */
 int fat_open(FatVolume *v, const char *path, FatFile *file);
 int fat_read(FatVolume *v, const FatFile *file, uint64_t offset, void *to, size_t length);
+/* Lists the entries of a directory. The caller drives it: call it with entry = 0 for the first entry and keep
+ * calling until it returns FatOk with entry->name[0] empty, which means the directory ended. The volume is not
+ * modified, so a listing can be walked again from the start. */
+int fat_list(FatVolume *v, const FatFile *directory, unsigned index, FatEntry *entry);
 
 #ifdef __cplusplus
 }

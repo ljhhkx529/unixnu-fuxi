@@ -168,6 +168,90 @@ static int find(FatVolume *v, uint32_t cluster, const char *name, size_t length,
     }
 }
 
+/* The 8.3 name of an entry, as the directory stores it: the name, a dot and the extension, without the
+ * padding spaces. Empty when the entry carries no usable short name. */
+static void short_text(const uint8_t *d, char *out, size_t length)
+{
+    size_t n = 0;
+    for (unsigned i = 0; i < 8 && d[i] && d[i] != ' '; ++i) {if (n + 1 < length) out[n++] = (char)d[i];}
+    if (d[8] && d[8] != ' ') {
+        if (n + 1 < length) out[n++] = '.';
+        for (unsigned i = 8; i < 11 && d[i] && d[i] != ' '; ++i) {if (n + 1 < length) out[n++] = (char)d[i];}
+    }
+    out[n] = 0;
+}
+
+/* The long name of an entry, when the entry has one and it is well formed: the characters up to the first
+ * null, as Latin-1. Empty when the entry has no long name. */
+static void long_text(const LongName *l, const uint8_t *d, char *out, size_t length)
+{
+    out[0] = 0;
+    if (!l->valid || l->next != 1 || short_sum(d) != l->sum) return;
+    size_t n = 0;
+    for (size_t i = 0; i < (size_t)l->count * 13 && l->text[i]; ++i) {
+        if (l->text[i] > 0x7f) return;  /* not Latin-1: the caller falls back to the short name */
+        if (n + 1 < length) out[n++] = (char)l->text[i];
+    }
+    out[n] = 0;
+}
+
+/* Lists the entries of a directory. The caller drives it: entry = 0 for the first entry, and the directory
+ * ends when the call returns an entry whose name is empty. The walk is bounded like every other one here: a
+ * chain that loops or leaves the volume gives an error rather than an endless listing. */
+int fat_list(FatVolume *v, const FatFile *directory, unsigned index, FatEntry *entry)
+{
+    uint8_t chunk[512];
+    LongName l;
+    unsigned seen = 0;
+    if (!v || !directory || !entry) return FatReadError;
+    if (!directory->directory) return FatNotDirectory;
+    entry->name[0] = 0;
+    l.valid = 0;
+    const int fixed = directory->first_cluster == 0 && !v->fat32;
+    uint32_t cluster = directory->first_cluster;
+    if (directory->first_cluster == 0 && v->fat32) cluster = v->root_cluster;
+    uint64_t at = fixed ? v->root_offset : 0;
+    uint64_t left = fixed ? (uint64_t)v->root_entries * 32 : 0;
+    for (uint32_t walked = 0;;) {
+        if (!fixed) {
+            if (!valid(v, cluster) || walked++ > v->clusters) return FatDamaged;
+            at = cluster_offset(v, cluster);
+            left = v->cluster_bytes;
+        }
+        while (left) {
+            const size_t n = left < sizeof chunk ? (size_t)left : sizeof chunk;
+            const int rc = vread(v, at, chunk, n);
+            if (rc) return rc;
+            for (size_t e = 0; e + 32 <= n; e += 32) {
+                const uint8_t *d = chunk + e;
+                if (!d[0]) {entry->name[0] = 0; return FatOk;}  /* the directory ends here */
+                if (d[0] == 0xe5) {l.valid = 0; continue;}
+                if ((d[11] & 0x3f) == 0x0f) {long_part(&l, d); continue;}
+                /* the entry itself: the volume label is not listed, and neither is anything with no
+                 * attribute bits at all, which the format does not produce */
+                if (d[11] & 0x08) {l.valid = 0; continue;}
+                if (seen++ == index) {
+                    long_text(&l, d, entry->name, sizeof entry->name);
+                    if (!entry->name[0]) short_text(d, entry->name, sizeof entry->name);
+                    entry->size = le32(d + 28);
+                    entry->directory = (d[11] & 0x10) != 0;
+                    l.valid = 0;
+                    return FatOk;
+                }
+                l.valid = 0;
+            }
+            at += n;
+            left -= n;
+        }
+        if (fixed) {entry->name[0] = 0; return FatOk;}
+        uint32_t next;
+        const int rc = next_cluster(v, cluster, &next);
+        if (rc) return rc;
+        if (!valid(v, next)) {entry->name[0] = 0; return FatOk;}
+        cluster = next;
+    }
+}
+
 int fat_open(FatVolume *v, const char *path, FatFile *file)
 {
     FatFile at = {0, 0, 1};  /* the root */
