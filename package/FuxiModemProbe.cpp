@@ -38,6 +38,7 @@
 #include "QcomMdt.h"
 #include "QcomQmp.h"
 #include "QcomRpmh.h"
+#include "FuxiRpmhCorner.h"
 #include "QcomScm.h"
 #include "QcomSmem.h"
 #include "QcomSmp2p.h"
@@ -542,8 +543,16 @@ int voteRails()
     } else {
         gOwner.mss_rail_found = 1;
     }
-    if (qcom_rpmh_level_index(&cx, 0xffffffffu, &cx_index)) return -2;
-    if (gOwner.mss_rail_found && qcom_rpmh_level_index(&mss, 0xffffffffu, &mss_index)) return -2;
+    /* The corner is the highest one, which is what Linux votes: its sm8550_mpss_resource
+     * carries no performance state, so it asks for INT_MAX and rpmhpd steps back one entry
+     * from the end. The helper that says so is the one the host test pins. A rail with no
+     * levels has no corner to vote, so the vote is refused rather than sent as zero. */
+    if (!cx.level_count) return -2;
+    cx_index = fuxi_rpmh_highest_corner(&cx);
+    if (gOwner.mss_rail_found) {
+        if (!mss.level_count) return -2;
+        mss_index = fuxi_rpmh_highest_corner(&mss);
+    }
 
     gOwner.cx_index = cx_index;
     gOwner.cx_addr = cx.address;

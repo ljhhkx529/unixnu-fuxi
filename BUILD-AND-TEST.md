@@ -215,6 +215,8 @@ cd /Users/mac/Documents/deepseek-harness/default-workspace/unixnu-fuxi
 python3 scripts/check-qcom-mdt-host.py            # 固件容器解析
 python3 scripts/check-qcom-a0-host.py             # SMEM / SMP2P / GLINK
 python3 scripts/check-qcom-loader-host.py         # QMP / RPMh
+python3 scripts/check-fuxi-rpmh-corner-host.py   # RPMh 投票的 corner 规则
+python3 scripts/check-fuxi-modem-pas-host.py     # modem PAS 顺序
 python3 scripts/check-qcom-adsp-host.py           # ADSP 加载顺序
 python3 scripts/check-qcom-adsp-client-host.py    # ADSP 客户端层
 python3 scripts/check-gpr-host.py                 # GPR 报文

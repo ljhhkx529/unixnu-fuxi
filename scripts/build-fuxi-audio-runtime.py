@@ -66,6 +66,7 @@ def main():
             (cxx, KIT / "FuxiModemProbe.cpp", CXX_FLAGS + includes),
             (cxx, KIT / "FuxiAudioService.cpp", CXX_FLAGS + includes),
             (c, KIT / "FuxiAudioBinding.c", C_FLAGS + includes),
+            (c, KIT / "FuxiRpmhCorner.c", C_FLAGS + includes),
             (c, KIT / "QcomAudioAbi.c", C_FLAGS + includes),
             (c, KIT / "FuxiGraphReply.c", C_FLAGS + includes),
             (c, KIT / "FatVolume.c", C_FLAGS + includes),
