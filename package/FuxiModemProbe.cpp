@@ -940,6 +940,91 @@ int inventoryFirmware()
     return 0;
 }
 
+/* Opens both images and parses them, read only. Nothing is mapped, no register is touched and no
+ * modem is started: this proves the file path, which is the part that can be wrong on its own. The
+ * split image's segments are read out of the partition and joined, so a missing or mismatched
+ * segment shows here rather than as a failure much later in the sequence. */
+int openFirmware()
+{
+    int rc = openImage(gOwner.dtb, "modem:modem_dtb");
+    if (rc) {
+        printf("FUXI_MODEM: the modem device tree blob is not there (%d)\n", rc);
+        return rc;
+    }
+    printf("FUXI_MODEM: the device tree blob is %llu bytes in %u segments\n",
+           (unsigned long long)gOwner.dtb.size, gOwner.dtb.mdt.count);
+    rc = openImage(gOwner.modem, "modem:modem");
+    if (rc) {
+        printf("FUXI_MODEM: the modem image is not there (%d)\n", rc);
+        return rc;
+    }
+    printf("FUXI_MODEM: the modem image is %llu bytes in %u segments\n",
+           (unsigned long long)gOwner.modem.size, gOwner.modem.mdt.count);
+    /* The address range and whether the image is relocatable: these two decide the PAS sequence's
+     * memory setup step, so the image has to be read before anything is voted or loaded. */
+    printf("FUXI_MODEM: the image spans %llx to %llx, %s\n",
+           (unsigned long long)gOwner.modem.mdt.min_address,
+           (unsigned long long)gOwner.modem.mdt.max_address,
+           gOwner.modem.mdt.relocatable ? "relocatable" : "fixed");
+    /* The hash segment's index: the parse fails without it, so its presence is a fact and its
+     * place in the segment list is where the metadata comes from. */
+    printf("FUXI_MODEM: the hash is segment %d, the metadata is %llu bytes\n",
+           gOwner.modem.mdt.hash,
+           (unsigned long long)qcom_mdt_metadata_size(&gOwner.modem.mdt));
+    /* The image's segments, so a gap in the numbering is visible in the log. */
+    for (unsigned i = 0; i < gOwner.modem.mdt.count; ++i) {
+        const QcomMdtSegment &segment = gOwner.modem.mdt.segment[i];
+        printf("FUXI_MODEM:   segment %u at %llx, %llu bytes in the file, %s\n", i,
+               (unsigned long long)segment.address, (unsigned long long)segment.file_size,
+               segment.load ? "loadable" : "not loadable");
+    }
+    setStage(kStFirmware);
+    return 0;
+}
+
+/* Reads the board's command database and looks the modem's rails up in it, without voting anything.
+ * The database is a read-only window, so this touches no register and starts nothing: it answers
+ * which of the modem's two rails this board's own copy carries, which is a question about the board
+ * and not about the modem. */
+int inspectRails()
+{
+    struct CmdDbCopy {
+        uint8_t *bytes;
+        uint32_t bytes_size;
+        explicit CmdDbCopy(uint32_t size) : bytes(static_cast<uint8_t *>(IOMallocData(size))), bytes_size(size) {}
+        ~CmdDbCopy() { if (bytes) IOFreeData(bytes, bytes_size); }
+    } copy(kCmdDbSize);
+    if (!copy.bytes || !readCmdDb(copy.bytes)) {
+        printf("FUXI_MODEM: the command database could not be read\n");
+        return -2;
+    }
+    /* The rails the modem's power domains need, and the ones the audio chain already proved work
+     * on this board, so a difference between them is a fact about the board's copy. */
+    static const char *const names[] = {kCxRail, kMssRail, "gpu.lvl", "gfx.lvl", "cx.lvl", "mx.lvl", "gmxc.lvl"};
+    unsigned found = 0;
+    for (unsigned i = 0; i < sizeof names / sizeof names[0]; ++i) {
+        QcomRpmhResource resource = {};
+        if (qcom_cmd_db_find(copy.bytes, kCmdDbSize, names[i], &resource)) {
+            printf("FUXI_MODEM: %s is not in this board's command database\n", names[i]);
+            continue;
+        }
+        uint32_t index = 0;
+        const int rc = qcom_rpmh_level_index(&resource, 0xffffffffu, &index);
+        printf("FUXI_MODEM: %s is at %llx, its highest level is index %u\n", names[i],
+               (unsigned long long)resource.address, rc ? 0 : index);
+        ++found;
+    }
+    printf("FUXI_MODEM: the command database carries %u of the %u names looked up\n", found,
+           (unsigned)(sizeof names / sizeof names[0]));
+    gOwner.mss_rail_found = 0;
+    {
+        QcomRpmhResource mss = {};
+        if (!qcom_cmd_db_find(copy.bytes, kCmdDbSize, kMssRail, &mss)) gOwner.mss_rail_found = 1;
+    }
+    syncStats();
+    return 0;
+}
+
 /* The entry point the kernel patch calls, and the boot argument that turns it on. The argument mirrors the
  * ADSP's: fuxi-modem=1 starts the bring-up, 0 does nothing. */
 extern "C" void native_fuxi_modem_probe(void)
@@ -957,6 +1042,25 @@ extern "C" void native_fuxi_modem_probe(void)
      * register, so it can be run on a device whose radio policy forbids anything else. */
     if (mode == 1) {
         (void)inventoryFirmware();
+        return;
+    }
+    /* Mode 2 opens and parses the images, still read only: no window is mapped and no register is
+     * touched, but the whole file path is exercised against the board's own files. */
+    if (mode == 2) {
+        (void)openFirmware();
+        return;
+    }
+    /* Mode 3 reads the board's command database and looks the modem's rails up in it, still read
+     * only: no vote goes out and no register is written, so it answers which rails this board
+     * carries without touching the power rails at all. */
+    if (mode == 3) {
+        (void)inspectRails();
+        return;
+    }
+    /* Mode 4 and up start the modem: they vote rails, load the images over PAS and let the
+     * modem's firmware run. The radio stays off until a later step says otherwise. */
+    if (mode < 4) {
+        printf("FUXI_MODEM: the mode %u does nothing\n", mode);
         return;
     }
     thread_t thread;

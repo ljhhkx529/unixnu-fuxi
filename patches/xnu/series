@@ -4,6 +4,9 @@ zzyf-sheng-amp.patch
 fuxi-touch-probe.patch
 fuxi-keystore-probe.patch
 fuxi-audio-probe.patch
+# The modem owner glue: the Qualcomm MPSS bring-up (PAS load, SMP2P, IPCC, GLINK). It is off unless
+# the fuxi-modem boot argument is set, so it costs the normal boot nothing.
+fuxi-modem-probe.patch
 # The audio server plug-in's mount over /System/Library/Audio/Plug-Ins/HAL (the fourth bindfs mount of the
 # GPU addon, next to the Metal plugin's): the owner's FuxiAudio.driver sits next to the system's own HAL
 # drivers.  It needs the addon mount patch above, so it comes after it.

@@ -29,13 +29,24 @@ static void le64(uint8_t *p, uint64_t v) {le32(p, (uint32_t)v); le32(p + 4, (uin
 
 static uint8_t image[IMAGE_BYTES];
 
-static void phdr(unsigned i, uint32_t type, uint32_t flags, uint64_t offset, uint64_t address, uint64_t filesz,
-                 uint64_t memsz)
+/* A second buffer, large enough for the fuxi modem's 32 program headers: 0x40 of ELF header plus
+ * 32 headers of 56 bytes each. */
+#define FUXI_HEADERS (PHOFF + PHENT * 32u)        /* 0x740 */
+static uint8_t fuxi_image[FUXI_HEADERS];
+
+static void phdr_in(uint8_t *base, unsigned i, uint32_t type, uint32_t flags, uint64_t offset,
+                    uint64_t address, uint64_t filesz, uint64_t memsz)
 {
-    uint8_t *p = image + PHOFF + i * PHENT;
+    uint8_t *p = base + PHOFF + i * PHENT;
     le32(p + 0, type); le32(p + 4, flags);
     le64(p + 8, offset); le64(p + 16, address); le64(p + 24, address);
     le64(p + 32, filesz); le64(p + 40, memsz); le64(p + 48, 0x1000);
+}
+
+static void phdr(unsigned i, uint32_t type, uint32_t flags, uint64_t offset, uint64_t address, uint64_t filesz,
+                 uint64_t memsz)
+{
+    phdr_in(image, i, type, flags, offset, address, filesz, memsz);
 }
 
 static void build(uint32_t hash_flags, uint32_t load_flags, uint64_t second_offset)
@@ -170,11 +181,83 @@ static void test_split(void)
     check(qcom_mdt_split(&split, image, HEADERS) == QcomMdtNotElf, "split headers with a bad magic are refused");
 }
 
+/* A program header with no file size: the piece file for it does not exist on the device. The
+ * fuxi's modem image has three of these, at piece 14, 21 and 30, so the numbering of the files on
+ * the partition has holes in it and the reader must not treat a hole as the next file.
+ *
+ * The layout here has the pieces at rising file offsets, like the modem image's, so that the hole
+ * sits between two pieces that both carry bytes. */
+#define HOLE_HEADERS (PHOFF + PHENT * 4u)
+static uint8_t hole_image[HOLE_HEADERS];
+
+static void test_split_holes(void)
+{
+    QcomMdtSplit split;
+    memset(hole_image, 0, sizeof hole_image);
+    hole_image[0] = 0x7f; hole_image[1] = 'E'; hole_image[2] = 'L'; hole_image[3] = 'F';
+    hole_image[4] = 2; hole_image[5] = 1;
+    le64(hole_image + 32, PHOFF);
+    le16(hole_image + 54, PHENT);
+    le16(hole_image + 56, 4);
+    /* piece 0 holds the headers, piece 2 has no bytes at all, piece 3 carries the hash. */
+    phdr_in(hole_image, 0, 0, 0, 0, 0, HOLE_HEADERS, 0);
+    phdr_in(hole_image, 1, 1, 0, HOLE_HEADERS, 0x1000, 0x100, 0x100);
+    phdr_in(hole_image, 2, 1, 0, 0x220, 0x2000, 0, 0x100);
+    phdr_in(hole_image, 3, 0, QCOM_MDT_TYPE_HASH, 0x240, 0x3000, 0x20, 0x20);
+    check(qcom_mdt_split(&split, hole_image, HOLE_HEADERS) == QcomMdtOk, "a layout with an empty piece reads");
+    check(split.count == 4, "the empty piece still counts as a program header");
+    check(split.piece[2].size == 0, "the empty piece has no bytes");
+    check(split.piece[2].offset == 0x220, "the empty piece keeps its place");
+    check(split.piece[1].size == 0x100 && split.piece[3].size == 0x20,
+          "the pieces around the hole keep their sizes");
+    check(split.size == 0x260u, "the joined size is the furthest piece end, and the empty piece does not move it");
+
+    /* A read over the hole must skip it: the bytes come from the piece after it and the hole
+     * itself reads as zero, rather than the reader taking the next file for the hole. The joined
+     * image ends at 0x260, so the range from 0x220 reaches the end in 0x40 bytes. */
+    uint8_t got[0x40];
+    check(qcom_mdt_split_read(&split, piece_read, 0, 0x220, got, sizeof got) == QcomMdtOk,
+          "a range over the empty piece reads");
+    check(got[0] == 0, "the empty piece reads as zero");
+    check(got[0x20] == (uint8_t)(3u * 16u), "the bytes after the empty piece come from the next piece");
+    /* A read of the hole alone is all zeros. */
+    check(qcom_mdt_split_read(&split, piece_read, 0, 0x220, got, 0x20) == QcomMdtOk,
+          "the hole alone reads");
+    for (unsigned i = 0; i < 0x20; ++i) check(got[i] == 0, "every byte of the hole is zero");
+}
+
+/* The fuxi's modem image, as the device reported it: 32 program headers, the file pieces missing at
+ * 14, 21 and 30. The number of the pieces is what the partition's file names follow. */
+static void test_fuxi_modem_layout(void)
+{
+    QcomMdtSplit split;
+    memset(fuxi_image, 0, sizeof fuxi_image);
+    fuxi_image[0] = 0x7f; fuxi_image[1] = 'E'; fuxi_image[2] = 'L'; fuxi_image[3] = 'F';
+    fuxi_image[4] = 2; fuxi_image[5] = 1;
+    le64(fuxi_image + 32, PHOFF);
+    le16(fuxi_image + 54, PHENT);
+    le16(fuxi_image + 56, 32);            /* 32 program headers, as the device reported */
+    for (unsigned i = 0; i < 32; ++i) {
+        const uint64_t address = 0x8a800000ull + (uint64_t)i * 0x2000;
+        const uint64_t bytes = (i == 14 || i == 21 || i == 30) ? 0 : 0x100;
+        phdr_in(fuxi_image, i, i ? 1 : 0, 0, i ? 0x200 * i : 0, address,
+                i ? bytes : FUXI_HEADERS, i ? bytes : 0);
+    }
+    check(qcom_mdt_split(&split, fuxi_image, FUXI_HEADERS) == QcomMdtOk, "the fuxi's modem layout reads");
+    check(split.count == 32, "the modem image has 32 program headers");
+    check(split.piece[14].size == 0 && split.piece[21].size == 0 && split.piece[30].size == 0,
+          "the three pieces the partition does not carry are empty");
+    check(split.piece[13].size == 0x100 && split.piece[15].size == 0x100,
+          "the pieces around the holes keep their sizes");
+}
+
 int main(void)
 {
     test_parse();
     test_refusals();
     test_split();
+    test_split_holes();
+    test_fuxi_modem_layout();
     printf("PASS QcomMdt: %d checks\n", checks);
     return failed ? 1 : 0;
 }

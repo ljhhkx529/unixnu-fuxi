@@ -56,4 +56,4 @@ CONFIG_XNU_NATIVE_USB_DEBUG=y
 # bsd_init calls native_touch_probe() (patches/xnu/fuxi-touch-probe.patch); scripts/build-fuxi-touch.py builds it. The
 # HID digitizer (scripts/build-fuxi-hid-input.py) is force-loaded: its objects carry the absolute IOHIDDevice bindings and
 # the metaclass registration that kits/fuxi/FuxiHidProbe.cpp runs after IOHIDFamily is loaded.
-CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/fuxi-touch/libFuxiTouch.a -Wl,-force_load,{tree}/build/fuxi-audio-runtime/libFuxiAudioRuntime.a -Wl,-force_load,{tree}/build/sheng-hid-input/libShengHidInput.a {tree}/build/boot-log/libBootLog.a -Wl,-force_load,{tree}/.cache/fuxi-qud-build/libQcomXnuUsbDebug.a -Wl,-force_load,{tree}/build/fuxi-keystore/libFuxiKeyStore.a"
+CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/fuxi-touch/libFuxiTouch.a -Wl,-force_load,{tree}/build/fuxi-audio-runtime/libFuxiAudioRuntime.a -Wl,-force_load,{tree}/build/sheng-hid-input/libShengHidInput.a {tree}/build/boot-log/libBootLog.a -Wl,-force_load,{tree}/.cache/fuxi-qud-build/libQcomXnuUsbDebug.a -Wl,-force_load,{tree}/build/fuxi-keystore/libFuxiKeyStore.a -Wl,-force_load,{tree}/build/qcom-baseband/libQcomBaseband.a"

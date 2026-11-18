@@ -63,6 +63,7 @@ def main():
     bsd = record(OBJ / "bsd/DEVELOPMENT/imageboot.o.json")
     includes = ["-I", KIT, "-I", OUT, "-I", ROOT / ".cache/xnu-work/osfmk"]
     jobs = [(cxx, KIT / "FuxiAdspProbe.cpp", CXX_FLAGS + includes),
+            (cxx, KIT / "FuxiModemProbe.cpp", CXX_FLAGS + includes),
             (cxx, KIT / "FuxiAudioService.cpp", CXX_FLAGS + includes),
             (c, KIT / "FuxiAudioBinding.c", C_FLAGS + includes),
             (c, KIT / "QcomAudioAbi.c", C_FLAGS + includes),
