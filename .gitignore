@@ -9,6 +9,10 @@ ref_src/
 /build/
 __pycache__/
 
+# The hook's own bookkeeping and the local hook wiring stay out of the repository.
+.claude/hooks/state.json
+.claude/settings.local.json
+
 # UniXNU device repository
 /local.toml
 /out/

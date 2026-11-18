@@ -10,7 +10,7 @@ import subprocess
 
 # G1.3 candidate: the first three fixed, non-hardware steps only.  Descriptor,
 # mapping, MMIO and SMEM-write operations remain compile-time unimplemented.
-QUD_REVISION = 'fba19d40f2a87c5805804d80c81bc3edadf88a8f'
+QUD_REVISION = '125f359e4b1ad691854870e1bbdd47a630689c12'
 XNU_REVISION = 'd8b80295118ef25ac3a784134bcf95cd8e88109f'
 PROFILE = 'darwin23-fuxi'
 
@@ -192,15 +192,16 @@ static void diag_checkpoint(unsigned int checkpoint)
     source = replace_once(source, "    native.gcc_va = ml_io_map((vm_offset_t)QUSB_GCC_BASE, GCC_BYTES);\n    diag_checkpoint(QCOM_USB_DEBUG_DIAG_MAP_USB);\n    native.usb_va = ml_io_map((vm_offset_t)QUSB_DWC3_BASE, USB_BYTES);\n    diag_checkpoint(QCOM_USB_DEBUG_DIAG_MAP_SMMU);\n    native.smmu_va = ml_io_map((vm_offset_t)QUSB_SMMU_BASE, QUSB_SMMU_BYTES);\n", "    /* acquire() masks IRQ/FIQ for the whole bring-up, but ml_io_map can block in the VM layer and a\n     * thread whose wakeup IPI can never be taken never resumes. Map with interrupts enabled and\n     * trace each mapping so a stall names the exact range. */\n    fuxi_usb_probe_step(300u);\n    __asm__ volatile(\"msr daifclr, #3\" ::: \"memory\");\n    native.gcc_va = ml_io_map((vm_offset_t)QUSB_GCC_BASE, GCC_BYTES);\n    fuxi_usb_probe_step(301u);\n    diag_checkpoint(QCOM_USB_DEBUG_DIAG_MAP_USB);\n    native.usb_va = ml_io_map((vm_offset_t)QUSB_DWC3_BASE, USB_BYTES);\n    fuxi_usb_probe_step(302u);\n    diag_checkpoint(QCOM_USB_DEBUG_DIAG_MAP_SMMU);\n    native.smmu_va = ml_io_map((vm_offset_t)QUSB_SMMU_BASE, QUSB_SMMU_BYTES);\n    __asm__ volatile(\"msr daifset, #3\" ::: \"memory\");\n    fuxi_usb_probe_step(303u);\n")
     path.write_text(source)
     # The probe trace calls back into the device adapter, so the archive's XNU-import allowlist has to
-    # accept it (the call sits in diag_checkpoint, which the patch above adds).
+    # accept it (the call sits in diag_checkpoint, which the patch above adds). The modem's diagnostics
+    # are in the module's own allowlist already, so only the adapter's own symbols are added here.
     path = output / 'scripts/build.py'
     source = path.read_text()
     source = replace_once(source,
         "'_bzero', '_memcpy', '_memset', '_qcom_reset_request',\n"
-        "                   '_fuxi_audio_diag_run', '_fuxi_audio_diag_resources'}",
+        "                   '_fuxi_audio_diag_run', '_fuxi_audio_diag_resources', '_fuxi_modem_diag_resources'}",
         "'_bzero', '_memcpy', '_memset', '_qcom_reset_request',\n"
-        "                   '_fuxi_audio_diag_run', '_fuxi_audio_diag_resources', '_fuxi_usb_probe_step',"
-        " '_qcom_reset_prepare_bootloader', '_qcom_reset_to_bootloader'}")
+        "                   '_fuxi_audio_diag_run', '_fuxi_audio_diag_resources', '_fuxi_modem_diag_resources',"
+        " '_fuxi_usb_probe_step', '_qcom_reset_prepare_bootloader', '_qcom_reset_to_bootloader'}")
     # Every refusal and every entry is traced: a bring-up that returns before its first logical probe
     # (a refused acquire, an already-set usb_busy) would otherwise leave no evidence at all.
     path.write_text(source)

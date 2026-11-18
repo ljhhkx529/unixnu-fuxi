@@ -36,7 +36,7 @@ fuxi-adsp=2 fgraph=5 ... fuxi-panel-black=1 ... fuxi-cdc-stale=0
 
 ---
 
-## P3 固定低 DRAM buffer（代码完成，待真机验证）
+## P3 固定低 DRAM buffer（真机 PASS）
 
 ### 问题
 `probeOwnedPcmSmmu()` 原用 `IOBufferMemoryDescriptor::inTaskWithPhysicalMask` 运行时分配，
