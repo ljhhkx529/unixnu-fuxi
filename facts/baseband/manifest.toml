@@ -181,6 +181,11 @@ path = "the board's AOP command database at 0x81c60000, read by the kernel's fux
 kind = "board-first-hand"
 limits = "It proves which rails this board's own copy of the command database carries and at what addresses. It says nothing about what the modem asks for at run time, and reading it votes nothing."
 
+[device.modem.runtime_first_boot]
+path = "the device run recorded in evidence/2026-11-19-modem-runtime-first-boot.md"
+statement = "The modem's runtime path (fuxi-adsp=1 fuxi-modem=4) reached stage 3, the rails vote, and the vote completed on the forced major-3 RSC layout. The modem's stepIpcc attached the IPCC line 261 and the RSC line 37 without an exclusive-access failure, because the ADSP's runtime was off. The secure world then refused the modem device tree blob's metadata on the first PAS call, INIT_IMAGE, with 0xFFCFFFBB. No segment was written and the SMP2P ready and fatal bits stayed clear."
+proves = "That the RSC layout rule and the interrupt-line ownership both hold on this board. It does not prove the modem's PAS ids at run time: the DTB's INIT_IMAGE was refused before any segment was loaded, so PAS id 0x26 and the image carveout are still unproven at run time, and the reason for the refusal is not yet known."
+
 [device.cmd_db.modem_rails]
 path = "the board's AOP command database, read by the fuxi-modem=3 probe on the device"
 statement = "The command database carries cx.lvl at address 0x30000 with 10 levels, mss.lvl at address 0x30060 with 7 levels, mx.lvl at 0x30010 with 9 levels and gfx.lvl at 0x30050 with 14 levels. gpu.lvl and gmxc.lvl are not in it."

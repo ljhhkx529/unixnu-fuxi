@@ -1,6 +1,6 @@
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
-@@ -813,6 +813,13 @@
+@@ -813,6 +813,14 @@
  	extern void native_audio_probe(void);
  	native_audio_probe();
  #endif

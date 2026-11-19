@@ -185,3 +185,17 @@ IPCC client 2。这些都已从一手出处确认来源，但没有跑过真机�
 已经在真机证明的（2026-11-19）：固件文件名 `modem.mdt` 与 `modem_dtb.mdt` 以及分段布局，
 `modem_a` 分区的 `/image` 目录由内核的 `fuxi-modem=1` 只读清点列出，
 证据 `evidence/2026-11-19-modem-firmware-inventory.log`。
+
+**运行时路径第一次跑通到第 3 阶段**（2026-11-19，`fuxi-adsp=1 fuxi-modem=4`，
+证据 `evidence/2026-11-19-modem-runtime-first-boot.md`）：
+
+| 事实 | 怎么证的 |
+| --- | --- |
+| RSC 强制 major 3 布局在真机上是对的 | 阶段 3（rails-voted）是第一个需要投票完成的阶段，投票在强制 major-3 的布局上写出并完成 |
+| ADSP 关掉之后 modem 能独占中断线 | `stepIpcc` attach 了 IPCC 261 与 RSC 37，没有 `kIOReturnExclusiveAccess` |
+| DTB 的 INIT_IMAGE 被 secure world 拒绝 | `scm 4291821499/0` = `0xFFCFFFBB`，探针发布的低半是 4027（0xFBB） |
+| 没有动 RF、没有写分段 | `loaded_segments=0`，SMP2P 的 ready 与 fatal 位都是 0 |
+
+调用形状与 ADSP 已验证的那次相同：同一条命令、同一个参数描述符（两个参数，第二个读写）、
+同样的参数顺序，metadata 缓冲区也在高 DRAM 的连续段里。两次 bring-up 的差别只有 PAS id
+（DTB 是 0x26）和镜像本身。当前探针在第一次拒绝处就停下，不说 secure world 觉得哪个参数不对。

@@ -113,12 +113,12 @@ size = { value = 0x400, state = "inferred", evidence = "sheng.sm8550" }
 
 # The RSC window and the TCS the modem's vote goes out on.
 [rsc]
-base = { value = 0x17a20000, state = "confirmed", evidence = "caf.fuxi_live_dts.apps_rsc_drv2" }
-size = { value = 0x10000, state = "confirmed", evidence = "caf.fuxi_live_dts.apps_rsc_drv2" }
-tcs_offset = { value = 0xd00, state = "confirmed", evidence = "caf.fuxi_live_dts.apps_rsc_drv2" }
+base = { value = 0x17a20000, state = "confirmed", evidence = "caf.fuxi_live_dts.apps_rsc" }
+size = { value = 0x10000, state = "confirmed", evidence = "caf.fuxi_live_dts.apps_rsc" }
+tcs_offset = { value = 0xd00, state = "confirmed", evidence = "caf.fuxi_live_dts.apps_rsc" }
 spi = { value = 5, state = "confirmed", evidence = "caf.fuxi_live_dts.apps_rsc" }
 tcs_stride = { value = 672, state = "confirmed", evidence = "linux.rpmh_rsc.tcs_offset" }
-active_tcs_count = { value = 3, state = "confirmed", evidence = "caf.fuxi_live_dts.apps_rsc_tcs_config" }
+active_tcs_count = { value = 3, state = "confirmed", evidence = "caf.fuxi_live_dts.apps_rsc" }
 # The DRV2 id register reads zero on this board, so the layout cannot be taken from it. SM8550's
 # RSC is the major-3 layout and the ADSP's forced choice completed its vote on the device.
 major_version = { value = 3, state = "confirmed", evidence = "device.adsp.rsc_forced_v3" }
