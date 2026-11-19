@@ -34,6 +34,7 @@
 
 #include "FuxiModemPas.h"
 #include "FuxiModemScm.h"
+#include "FuxiModemAssign.h"
 #include "FuxiAdspFirmware.h"
 #include "QcomGlink.h"
 #include "QcomMdt.h"
@@ -175,6 +176,8 @@ struct Owner {
 
     uint32_t scm_x0, scm_x1, scm_op, scm_pas;
     uint32_t dtb_auth_cookie, modem_auth_cookie;
+    uint32_t assign_x0;      /* what the secure world said about the memory assign */
+    uint32_t assign_x1;
     uint32_t loaded_segments;
     uint32_t smp2p_ready, smp2p_fatal, smp2p_handover;
     uint32_t qmp_response;
@@ -207,6 +210,11 @@ void syncStats()
     native_fuxi_modem_stats[13] = static_cast<int32_t>(gOwner.pas_supported[1]);
     native_fuxi_modem_stats[14] = static_cast<int32_t>(gOwner.pas_support_x0[0]);
     native_fuxi_modem_stats[15] = static_cast<int32_t>(gOwner.pas_support_x0[1]);
+    /* The assign's answer rides in the entries-listed and directories-found slots, which only the
+       read-only inventory modes use. The runtime path never fills them, and the assign is what the
+       runtime path needs to report. */
+    native_fuxi_modem_stats[10] = static_cast<int32_t>(gOwner.assign_x0);
+    native_fuxi_modem_stats[11] = static_cast<int32_t>(gOwner.assign_x1);
 }
 
 void setStage(uint32_t stage)
@@ -222,24 +230,26 @@ struct ScmResult {
     uint64_t x1;
 };
 
-/* One SMC64 call to the peripheral authentication service. The arguments go in as the service's convention says:
- * x0 the function id, x1 the argument-type word, x2 the PAS id and x3..x5 the call's own arguments. */
-ScmResult secureCall(uint32_t command, uint32_t arginfo, uint32_t pas, uint64_t a, uint64_t b, uint64_t c)
+/* One SMC64 call. The six register values go in as the service's convention says: x0 the function id,
+   x1 the argument-type word, and x2..x5 the call's own arguments. The quirk's session register is x6,
+   so a call that wants to be resumed carries it there, and x7 is unused. */
+ScmResult smcCall(uint32_t svc, uint32_t command, uint32_t arginfo,
+                   uint64_t x2, uint64_t x3, uint64_t x4, uint64_t x5)
 {
     ScmResult result = {-1, 0};
     unsigned resumes = 0;
     for (unsigned busy = 0; busy < 20; ++busy) {
-        uint64_t function = qcom_scm_fn(QCOM_SCM_SVC_PIL, command), session = 0;
+        uint64_t function = qcom_scm_fn(svc, command), session = 0;
         for (;;) {
             register uint64_t x0 __asm__("x0") = function;
             register uint64_t x1 __asm__("x1") = arginfo;
-            register uint64_t x2 __asm__("x2") = pas;
-            register uint64_t x3 __asm__("x3") = a;
-            register uint64_t x4 __asm__("x4") = b;
-            register uint64_t x5 __asm__("x5") = c;
+            register uint64_t r2 __asm__("x2") = x2;
+            register uint64_t r3 __asm__("x3") = x3;
+            register uint64_t r4 __asm__("x4") = x4;
+            register uint64_t r5 __asm__("x5") = x5;
             register uint64_t x6 __asm__("x6") = session;
             register uint64_t x7 __asm__("x7") = 0;
-            __asm__ volatile("smc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3), "+r"(x4), "+r"(x5), "+r"(x6), "+r"(x7)
+            __asm__ volatile("smc #0" : "+r"(x0), "+r"(x1), "+r"(r2), "+r"(r3), "+r"(r4), "+r"(r5), "+r"(x6), "+r"(x7)
                              :: "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
             result = {static_cast<int64_t>(x0), x1};
             if (static_cast<int64_t>(x0) != QCOM_SCM_INTERRUPTED || ++resumes > 100000) break;
@@ -252,9 +262,16 @@ ScmResult secureCall(uint32_t command, uint32_t arginfo, uint32_t pas, uint64_t 
     gOwner.scm_x0 = static_cast<uint32_t>(result.x0);
     gOwner.scm_x1 = static_cast<uint32_t>(result.x1);
     gOwner.scm_op = command;
-    gOwner.scm_pas = pas;
+    gOwner.scm_pas = static_cast<uint32_t>(x2);
     syncStats();
     return result;
+}
+
+/* One SMC64 call to the peripheral authentication service. Its convention puts the PAS id in x2 and
+   the call's own arguments in x3..x5. */
+ScmResult secureCall(uint32_t command, uint32_t arginfo, uint32_t pas, uint64_t a, uint64_t b, uint64_t c)
+{
+    return smcCall(QCOM_SCM_SVC_PIL, command, arginfo, pas, a, b, c);
 }
 
 void cleanToPoc(const void *start, size_t length)
@@ -446,29 +463,70 @@ void releaseImage(Image &image)
     }
 }
 
+/* The page the metadata lives in. Linux wants the metadata's buffer to be physically contiguous, page
+ * aligned and not cacheable (drivers/firmware/qcom/qcom_scm.c, qcom_scm_pas_init_image), so the buffer
+ * is a whole page and the page is mapped without a cache. */
+constexpr uint64_t kMetadataPageBytes = 4096;
+
+/* A page of memory the secure world can read: physically contiguous and page aligned.
+   The caller fills it and cleans it to the point of coherency before the call.
+
+   The page is not mapped without a cache. Upstream's own allocation is dma_alloc_coherent, which on
+   ARM64 is cacheable but coherent, and it cleans nothing: the coherence is the DMA API's job. The
+   port's equivalent of that coherence is the cleanToPoc the caller does. The uncacheable mapping
+   (kIOMapInhibitCache, which becomes MAP_MEM_IO and VM_WIMG_IO) was tried on the device on
+   2026-11-20 and the modem's thread never got past the allocation, so it is not used. */
+IOBufferMemoryDescriptor *allocSecurePage()
+{
+    IOBufferMemoryDescriptor *buffer = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+        kernel_task, static_cast<IOOptionBits>(kIODirectionInOut) |
+                         static_cast<IOOptionBits>(kIOMemoryPhysicallyContiguous),
+        kMetadataPageBytes, 0xfffffffffffff000ull);
+    if (!buffer || buffer->prepare() != kIOReturnSuccess) {
+        if (buffer) buffer->release();
+        return nullptr;
+    }
+    uint8_t *va = static_cast<uint8_t *>(buffer->getBytesNoCopy());
+    if (!va) {
+        buffer->release();
+        return nullptr;
+    }
+    bzero(va, static_cast<size_t>(kMetadataPageBytes));
+    return buffer;
+}
+
 /* Hands the metadata to the secure world and, for a relocatable image, tells it where the image will live.
  * The metadata buffer has to be in memory the secure world can read, so it is a physically contiguous
  * allocation cleaned to the point of coherency before the call. */
 /* Tells the secure world where the metadata lives and, for a relocatable image, where the image will live.
    It stops short of the reset on purpose: Linux's qcom_mdt_pas_load does the metadata and the segment load
    and leaves "authentication of the segments done by a separate call", so the reset belongs after the
-   segments are in the carveout, not before. The caller does that call. */
+   segments are in the carveout, not before. The caller does that call.
+
+   The metadata lives in a whole page, and the page is not cacheable. Linux says why
+   (drivers/firmware/qcom/qcom_scm.c, qcom_scm_pas_init_image): "During the scm call memory protection
+   will be enabled for the meta data blob, so make sure it's physically contiguous, 4K aligned and
+   non-cachable to avoid XPU violations." The port's own memory map makes the region a reserved,
+   uncacheable one, and the metadata's own page has to be uncacheable for the same reason. */
 int authenticateHeader(Image &image, uint32_t pas, uint64_t base)
 {
     const uint64_t bytes = qcom_mdt_metadata_size(&image.mdt);
     if (!bytes) return -5;
-    image.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-        kernel_task, static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryPhysicallyContiguous),
-        bytes, 0xfffffffffffff000ull);
-    if (!image.meta || image.meta->prepare() != kIOReturnSuccess) return -12;
+    /* The whole page, so the buffer is page-aligned and the rest of the page is zero. */
+    image.meta = allocSecurePage();
+    if (!image.meta) return -12;
     uint8_t *va = static_cast<uint8_t *>(image.meta->getBytesNoCopy());
     if (!va) return -5;
+    /* The page is zeroed first, so the part of the page the metadata does not reach is zero. */
+    bzero(va, static_cast<size_t>(kMetadataPageBytes));
     /* The metadata is the ELF header followed by the hash segment, both taken out of the .mdt file:
      * that is the form the secure world authenticates (Linux drivers/soc/qcom/mdt_loader.c,
      * qcom_mdt_read_metadata). The joined image of the .bNN pieces has the hash at another offset in
      * another file, and the two are not the same bytes. */
     if (buildMetadata(image, va, bytes)) return -5;
-    cleanToPoc(va, static_cast<size_t>(bytes));
+    /* The whole page is cleaned, not just the metadata, because the page is what the secure world is
+     * given. */
+    cleanToPoc(va, static_cast<size_t>(kMetadataPageBytes));
     const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
     /* The secure world reads this metadata buffer. Its address and size are what it looks at, so
      * they are printed: a refusal that is not about the pas id is most likely about them. */
@@ -476,6 +534,7 @@ int authenticateHeader(Image &image, uint32_t pas, uint64_t base)
            static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(phys),
            image.mdt.hash, image.mdt.relocatable ? "relocatable" : "fixed",
            image.mdt.mdt_size ? "mdt file" : "joined image");
+    if (phys & 0xfffull) printf("FUXI_MODEM: the metadata's address is not page aligned\n");
 
     unsigned steps[FuxiModemPasStepCount];
     const unsigned count = fuxi_modem_pas_header_steps(image.mdt.relocatable ? 1 : 0, steps, FuxiModemPasStepCount);
@@ -491,6 +550,8 @@ int authenticateHeader(Image &image, uint32_t pas, uint64_t base)
             result = secureCall(command, arginfo, pas, 0, 0, 0);
         if (steps[i] == FuxiModemPasInitImage) image.init_x0 = static_cast<uint32_t>(result.x0);
         if (steps[i] == FuxiModemPasMemSetup) image.mem_x0 = static_cast<uint32_t>(result.x0);
+        printf("FUXI_MODEM: pas %u step %u answers %u/%u\n", pas, steps[i],
+               static_cast<uint32_t>(result.x0), static_cast<uint32_t>(result.x1));
         if (!fuxi_modem_scm_ok(result.x0, result.x1)) return -1;
     }
     return 0;
@@ -759,6 +820,79 @@ int stepRails()
     return 0;
 }
 
+/* The memory-ownership step: the modem's DSM region is handed from the hypervisor's own owner to the
+ * modem's MSA before the modem is started at all.
+ *
+ * This is the one structural difference between the ADSP's path and the modem's, and the ADSP's path
+ * does not have it: Linux drivers/remoteproc/qcom_q6v5_pas.c, sm8550_mpss_resource, carries
+ * region_assign_idx 2, region_assign_count 1 and region_assign_vmid QCOM_SCM_VMID_MSS_MSA, while the
+ * ADSP's entry carries no region_assign_idx. Linux runs it in the probe, after the memory regions are
+ * resolved and before any PAS call, so that is where it goes here too.
+ *
+ * The call is the memory-protection service, not the peripheral authentication service, and it takes
+ * seven arguments. Seven arguments do not fit in SMC64's registers the way the PAS calls do, so
+ * upstream's transport (drivers/firmware/qcom/qcom_scm-smc.c) puts the first three in x2..x4 and the
+ * rest in a separate block whose address is what x5 carries. */
+int stepAssign()
+{
+    printf("FUXI_MODEM: the assign starts\n");
+    const unsigned src_count = 1, dest_count = 1;
+    const uint64_t block_bytes = fuxi_modem_assign_block_size(src_count, dest_count);
+    const uint64_t ext_bytes = FUXI_MODEM_ASSIGN_EXT_SIZE;
+
+    /* One allocation holds both blocks: the assignment's own block and the external arguments. They
+     * are separate because the secure world reads the external block by address, and the assignment
+     * block's parts have to start on 64-byte boundaries. */
+    const uint64_t total = block_bytes + ext_bytes;
+    if (total > kMetadataPageBytes) return -5;
+    IOBufferMemoryDescriptor *buffer = allocSecurePage();
+    if (!buffer) return -12;
+    uint8_t *va = static_cast<uint8_t *>(buffer->getBytesNoCopy());
+    if (!va) {
+        buffer->release();
+        return -5;
+    }
+    printf("FUXI_MODEM: the assign has its page\n");
+
+    const uint64_t base = buffer->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+    uint8_t *block = va;
+    uint8_t *ext = va + block_bytes;
+
+    /* The memory-to-map record: the region's address and its size. It is the second part of the
+     * assignment block, and the secure world is given its address. */
+    const uint64_t map_offset = fuxi_modem_assign_mem_map_offset(src_count);
+    const uint64_t mem_to_map_phys = base + map_offset;
+    const uint64_t dest_offset = fuxi_modem_assign_perm_offset(src_count, dest_count);
+    const uint64_t dest_phys = base + dest_offset;
+    const uint64_t src_size = (uint64_t)src_count * FUXI_MODEM_ASSIGN_SRC_ENTRY;
+    const uint64_t dest_size = (uint64_t)dest_count * FUXI_MODEM_ASSIGN_PERM_SIZE;
+
+    fuxi_modem_assign_write_block(block, FUXI_MODEM_DSM_BASE, FUXI_MODEM_DSM_SIZE,
+                                  FUXI_MODEM_VMID_HLOS, FUXI_MODEM_VMID_MSS_MSA, FUXI_MODEM_PERM_RW);
+    fuxi_modem_assign_write_ext(ext, src_size, dest_phys, dest_size);
+    printf("FUXI_MODEM: the assign has written its blocks\n");
+    cleanToPoc(va, static_cast<size_t>(total));
+    printf("FUXI_MODEM: the assign has cleaned its page\n");
+
+    printf("FUXI_MODEM: the assign hands %llx of %llu bytes from vmid %u to vmid %u, the block is at %llx\n",
+           static_cast<unsigned long long>(FUXI_MODEM_DSM_BASE),
+           static_cast<unsigned long long>(FUXI_MODEM_DSM_SIZE),
+           FUXI_MODEM_VMID_HLOS, FUXI_MODEM_VMID_MSS_MSA, static_cast<unsigned long long>(base));
+
+    const uint64_t ext_phys = base + block_bytes;
+    const ScmResult result = smcCall(FUXI_MODEM_MP_SVC, FUXI_MODEM_MP_ASSIGN, fuxi_modem_assign_arginfo(),
+                                     mem_to_map_phys, FUXI_MODEM_ASSIGN_MEM_MAP_SIZE, base, ext_phys);
+    gOwner.assign_x0 = gOwner.scm_x0;
+    gOwner.assign_x1 = gOwner.scm_x1;
+    buffer->release();
+    printf("FUXI_MODEM: the assign's answer is %u/%u\n", gOwner.scm_x0, gOwner.scm_x1);
+    if (!fuxi_modem_scm_ok(result.x0, result.x1)) {
+        printf("FUXI_MODEM: the assign was refused (scm %u/%u)\n", gOwner.scm_x0, gOwner.scm_x1);
+        return -3;
+    }
+    return 0;
+}
+
 /* The device tree blob first, then the modem image, as Linux does. */
 int stepPas()
 {
@@ -772,6 +906,8 @@ int stepPas()
         const ScmResult auth = secureCall(fuxi_modem_pas_command(fuxi_modem_pas_reset_step),
                                            fuxi_modem_pas_arginfo(fuxi_modem_pas_reset_step),
                                            fuxi_modem_pas_id(FuxiModemPasImageDtb), 0, 0, 0);
+        printf("FUXI_MODEM: pas %u step %u answers %u/%u\n", fuxi_modem_pas_id(FuxiModemPasImageDtb),
+               fuxi_modem_pas_reset_step, static_cast<uint32_t>(auth.x0), static_cast<uint32_t>(auth.x1));
         if (!fuxi_modem_scm_ok(auth.x0, auth.x1)) rc = -3;
         else gOwner.dtb_auth_cookie = gOwner.scm_x0;
     }
@@ -782,8 +918,12 @@ int stepPas()
     }
     gOwner.dtb.reset = true;
     setStage(kStDtb);
-    /* The metadata and the file are not needed once the blob was accepted. */
-    releaseImage(gOwner.dtb);
+    /* The metadata is not released here. Linux keeps both metadata buffers until the modem has come
+     * up (drivers/remoteproc/qcom_q6v5_pas.c, qcom_pas_start: qcom_pas_metadata_release is after
+     * qcom_q6v5_wait_for_start), because the secure world turns on memory protection for that page
+     * during the call and the page has to stay put until the call is done with it. Releasing it
+     * right after the authentication would hand the page back while the secure world may still be
+     * reading it. */
 
     rc = authenticateHeader(gOwner.modem, fuxi_modem_pas_id(FuxiModemPasImageModem), kModemCarveoutBase);
     if (!rc) rc = loadSegments(gOwner.modem, kModemCarveoutBase, kModemCarveoutSize);
@@ -1743,6 +1883,13 @@ void ownerThread(void *, wait_result_t)
     if (rc) goto failed;
     rc = stepMap();
     if (rc) goto failed;
+    /* The memory assign comes before the rails and before any PAS call. Linux runs it in the probe,
+     * right after the memory regions are resolved and before the clocks, so the modem's memory already
+     * belongs to the modem when the secure world is asked to authenticate it. A refusal here does not
+     * stop the bring-up: the rest of the sequence still runs, and whether the blob is then accepted
+     * is the fact this round is after. */
+    rc = stepAssign();
+    if (rc) printf("FUXI_MODEM: the assign did not succeed (%d), the sequence continues\n", rc);
     rc = stepRails();
     if (rc) goto failed;
     rc = stepPasIds();
@@ -1757,6 +1904,11 @@ void ownerThread(void *, wait_result_t)
     if (rc) goto failed;
     rc = waitReady();
     if (rc) goto failed;
+    /* The modem is up, so the secure world is done with the metadata pages and both of them can go
+     * back to the allocator. Linux does this at the same point (qcom_pas_start, after
+     * qcom_q6v5_wait_for_start). */
+    releaseImage(gOwner.modem);
+    releaseImage(gOwner.dtb);
     rc = stepGlink();
     if (rc) goto failed;
     rc = stepAdapter();
@@ -1766,6 +1918,10 @@ void ownerThread(void *, wait_result_t)
     return;
 
 failed:
+    /* The metadata pages go back to the allocator whether the bring-up succeeded or not: the secure
+     * world is not reading them once the call that handed them over has returned. */
+    releaseImage(gOwner.modem);
+    releaseImage(gOwner.dtb);
     gOwner.last_error = rc;
     printf("FUXI_MODEM: the bring-up stopped at stage %u (%d)\n", gOwner.stage, rc);
     syncStats();

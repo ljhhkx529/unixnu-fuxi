@@ -150,6 +150,23 @@ INIT_IMAGE → MEM_SETUP → 搬分段 → AUTH_AND_RESET，**两个镜像各走
 | `qcom_q6v5_wait_for_start()` | `stepQmp()` 前的等待 | AOP 握手 |
 | `qcom_pas_metadata_release()` | `releaseImage()` | metadata 在认证后才释放 |
 
+**DTB 那一步到底搬不搬分段（2026-11-20 在上游 7.4-rc3 里核对过）**：
+上游的 DTB **也搬分段**。`qcom_pas_load`（`qcom_q6v5_pas.c:280`）对 DTB 调的是
+`qcom_mdt_pas_load(pas->dtb_pas_ctx, ...)`，而 `qcom_mdt_pas_load`（`mdt_loader.c:486`）
+在 `__qcom_mdt_pas_init`（INIT_IMAGE + MEM_SETUP）之后**继续调 `qcom_mdt_load_no_init`**，
+那个函数就是把可加载分段 `memcpy` 进 carveout（分裂的 `.bNN` 走 `mdt_load_split_segment`）。
+所以上游一个 image 的完整顺序是 **INIT_IMAGE →（MEM_SETUP，仅可重定位）→ 搬分段 →
+AUTH_AND_RESET**，DTB 与主镜像同形。
+**本仓的 `stepPas()` 本来就是这个顺序**，因此"DTB 改成上游顺序"这条改动**不需要做**；
+真正与上游不一致的是 **metadata 的释放时机**：上游把两块 metadata 都留到
+`qcom_q6v5_wait_for_start()` 之后才放（`qcom_pas_start` 的 379-381 行），因为 SCM 调用期间
+安全世界会为那块页开内存保护；本仓原先在 DTB 认证完就放掉了它，2026-11-20 起改为
+等 modem 起来之后两块一起放。
+
+> 分析文档 `secure-world-拒绝分析-0xFFCFFFBB.md` 的 §2.2 与 §3.1 说"上游的 DTB 不走
+> `qcom_mdt_load_no_init`，分段不进 carveout"——**这是错的**，上游搬。若照它改，方向反而
+> 背离上游。该文档 §7 说 region assign 的参数块"需要安全内存"——**也是错的**，见上文。
+
 **metadata 的来源是 `.mdt` 文件，不是拼起来的镜像**（Linux
 `drivers/soc/qcom/mdt_loader.c` `qcom_mdt_read_metadata`：先 `memcpy(data, fw->data, ehdr_size)`
 把 ELF 头抄进缓冲区，再按 `ehdr_size + hash_size == fw->size` 这个**打包分支**把 hash 段
@@ -229,22 +246,68 @@ coherent 区可退；打开这两项后 modem 跑起来了（主线树 `/tmp/x13
 
 | 上游的做法 | 本仓 | 为什么要紧 |
 | --- | --- | --- |
-| `qcom_pas_assign_memory_region()`：把设备树里第 3 块保留内存（`mpss_dsm_mem@0xd4d00000`，`0x3300000`，DSM 区）从 HLOS（vmid 3）交给 modem 的 MSA（vmid 0xF），**在任何 PAS 调用之前** | 没有 | 这是 **modem 独有**的：ADSP 的 `sm8550_adsp_resource` 没有 `region_assign_idx`。所以"ADSP 接受、modem 拒绝"不能用 ADSP 的成功来论证这一步可省 |
+| `qcom_pas_assign_memory_region()`：把设备树里第 3 块保留内存（`mpss_dsm_mem@0xd4d00000`，`0x3300000`，DSM 区）从 HLOS（vmid 3）交给 modem 的 MSA（vmid 0xF），**在任何 PAS 调用之前** | **已做**（`package/FuxiModemAssign.h` + `stepAssign()`，2026-11-20） | 这是 **modem 独有**的：ADSP 的 `sm8550_adsp_resource` 没有 `region_assign_idx`。所以"ADSP 接受、modem 拒绝"不能用 ADSP 的成功来论证这一步可省 |
 | 每个 PAS 调用前后的 `qcom_scm_clk_enable()`（SCM 的 core/iface 时钟）与 `qcom_scm_bw_enable()`（总线带宽） | 没有 | 调用本身在 2026-11-19 真机上成功过（ADSP 接受），说明这一步不是 modem 被拒的原因，但它仍是上游的规矩 |
 
-内存归属那一步不能照抄：上游把参数块放在 SCM 的 secure memory pool 里
-（`qcom_tzmem_alloc`，由 TrustZone 内存分配器供给，平台支持时还走 SHM bridge），
-不是普通可缓存的分配。上游对 TZ mem 的支持还要走 `drivers/firmware/qcom/qcom_tzmem.c`
-和 `qcom_scm_shm_bridge_*`，超出本轮的四文件范围，**未实现**。
+**region assign 的形状（2026-11-20 在上游 7.4-rc3 里逐行读出来的，`package/FuxiModemAssign.h` 是它的逐字实现）**：
+
+- 调用走的是**内存保护服务**（svc `0x0c`）的 assign 命令（cmd `0x16`），不是 PAS 服务。
+- **七个参数**（`__qcom_scm_assign_mem` 的 `desc.args[]`）：
+  `args[0]=mem_to_map 的物理地址`、`args[1]=16`、`args[2]=参数块的物理地址`、
+  `args[3]=src 的大小(4)`、`args[4]=dest 的物理地址`、`args[5]=dest 的大小(24)`、`args[6]=0`。
+- **参数类型的字**是 `QCOM_SCM_ARGS(7, RO, VAL, RO, VAL, RO, VAL, VAL)` = **0x1117**
+  （计数在 bits 3:0，参数 i 的类型在 bits 5+2i:4+2i，`VAL=0`、`RO=1`）。
+  本仓 `QcomScm.h` 的 `qcom_scm_args` 只编码 3 个类型，所以这个字单独算在 `FuxiModemAssign.h` 里。
+- **七个参数怎么进寄存器**（`qcom_scm-smc.c`）：`x0` 是函数 id、`x1` 是类型字，
+  `desc.args[0..3]` 进 `x2..x5`。**参数多于四个时**，`desc.args[3..9]` 被复制成 7 个 64 位
+  小端值放进一块内存，**这块内存的物理地址覆盖 x5**（x5 原本的 `args[3]` 被冲掉）。
+  所以本调用是 `x2=mem_to_map 地址`、`x3=16`、`x4=参数块地址`、`x5=外接参数块地址`，
+  外接块里依次是 `src 大小`、`dest 地址`、`dest 大小`、`0`、`0`、`0`、`0`。
+  quirk 的会话寄存器是 x6，所以外接块的地址**不能**放 x6——上游放 x5，本仓也一样。
+- **参数块的三段**（`qcom_scm_assign_mem`）：
+  源 owner 表（每个 4 字节 vmid）在 0；`mem_map_info`（`le64 mem_addr` + `le64 mem_size`，共 16 字节）
+  在 `ALIGN(src_sz,64)`=64；`current_perm_info`（`le32 vmid` + `le32 perm` + `le64 ctx` +
+  `le32 ctx_size` + `le32 unused`，共 24 字节）在 `ALIGN(16,64)+ALIGN(4,64)`=128。
+  整块 `ALIGN(src,64)+ALIGN(16,64)+ALIGN(24,64)` = **192 字节**。
+- **本板的取值**：源 vmid 3（HLOS）、目的 vmid 0xF（MSS_MSA）、权限 0x6（读 0x4 + 写 0x2）、
+  区域 `0xd4d00000`/`0x3300000`。`sm8550_mpss_resource` **没有** `region_assign_shared`，
+  所以目的 owner **只有一个**（ADSP 那边根本没有 `region_assign_idx`）。
+
+**参数块不需要"安全内存"**——这一点纠正了此前分析文档的说法。上游把它放在 SCM 的
+tzmem 池里（`qcom_tzmem_alloc`），但 `qcom_tzmem_pool_add_memory`（`qcom_tzmem.c:207`）
+底层就是 `dma_alloc_coherent`，而 `qcom_tzmem_init_area` 只有在
+`CONFIG_QCOM_TZMEM_MODE_SHMBRIDGE` 打开时才做事（该选项默认关，fuxi 参考内核配置里也是关的）。
+所以一块普通的物理连续分配就是上游在这块板上实际用的东西。
+
+**真机结果（2026-11-20，证据 `evidence/2026-11-20-modem-region-assign.md`）：
+assign 被安全世界接受了，但拒绝没有变。** 日志：
+
+```
+FUXI_MODEM: the assign hands d4d00000 of 53477376 bytes from vmid 3 to vmid 15, the block is at 8d53f5000
+FUXI_MODEM: the assign's answer is 0/0
+FUXI_MODEM: the pas 38 step 0 answers 4291821499/0
+FUXI_MODEM: the modem device tree blob was refused (scm 4291821499/0)
+```
+
+`scm 0/0` 就是**接受**：DSM 区（`0xd4d00000`/`0x3300000`）按上游 `sm8550_mpss_resource`
+的要求，从 HLOS（vmid 3）交给了 modem 的 MSA（vmid 0xF），读写权限。
+**所以 region assign 不是拒绝的理由**——分析文档第 1 项的假设被真机否掉了。
+DTB 的 INIT_IMAGE 仍然回 `0xFFCFFFBB`，与 2026-11-19 完全一样。
 
 **metadata 缓冲区的缓存属性**：上游用 `dma_alloc_coherent` 分配它，
 `qcom_scm_pas_init_image` 的注释写明它必须"physically contiguous, 4K aligned and
-**non-cachable** to avoid XPU violations"。本仓用 `IOBufferMemoryDescriptor::
-inTaskWithPhysicalMask` 分配，是**可缓存**的映射，但在 SCM 调用前用 `dc civac`
-把整段清到 PoC（`cleanToPoc`），所以安全世界读到的字节是新的。
-`IOBufferMemoryDescriptor` 的构造函数没有暴露不可缓存的选项，要补这一条需要另找 API，
-**本轮未做**。ADSP 的 blob 用同一个分配方式被接受，所以这不是 modem blob 被拒的原因，
-但它仍是上游的规矩。
+**non-cachable** to avoid XPU violations"。本仓 2026-11-20 起改成**整页**分配
+（`allocSecurePage()`：4096 字节、物理连续、页内其余清零、`cleanToPoc` 整页），
+与上游的规矩同形。
+
+**但"整页分配"不等于"映射成不可缓存"——这一点是 2026-11-20 真机测出来的。**
+第一版照字面做了 `kIOMapInhibitCache`，**modem 的线程卡死在里面**：分配函数本身没返回，
+连 `stepAssign()` 的第一行 `printf` 都没到。它变成 `MAP_MEM_IO`（`iomd_mem_types[]`），
+`vmProtForCacheMode` 还要额外给 `VM_PROT_WRITE`（VM 改缓存属性需要写权限）。
+上游自己的 `dma_alloc_coherent` 在 ARM64 上是**可缓存但一致**的，它不要求不可缓存的映射，
+也不做任何清缓存——一致��是 DMA API 的职责；本仓里与之等价的是调用者那次 `cleanToPoc`。
+所以现在**整页 + 物理连续 + 页对齐 + 页内清零 + `cleanToPoc` 全部保留**，
+但**不再强制不可缓存的映射**。改完这一步，线程就过了分配，assign 被安全世界接受（0/0）。
 
 **ADSP 与 modem 争同一条中断线和同一个 TCS**（2026-11-19）：两边的 bring-up 都要
 
@@ -270,7 +333,10 @@ ADSP 的运行时重新打开之前，modem 和 ADSP 必须共用一个主控。
 
 <!-- 列出要先读上游才能定下来的问题。读完把答案写回上面的表或 facts/baseband/，然后把这一条删掉。 -->
 
-（本节为空。）
+无。region assign 的参数块结构、七���参数的逐个含义、七参数怎么进 SMC64 的寄存器、
+以及 DTB 那一步搬不搬分段，这四个问题已在 2026-11-20 全部读完上游并写回上面的表
+（`package/FuxiModemAssign.h` 是它的逐字实现，`evidence/2026-11-20-modem-region-assign.md`
+是它的真机结果）。
 
 
 ## 桥接与 IPA
