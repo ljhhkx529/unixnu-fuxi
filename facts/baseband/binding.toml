@@ -26,6 +26,22 @@ load_state = { value = "modem", state = "confirmed", evidence = "linux.qcom_q6v5
 firmware_name = { value = "modem.mdt", state = "confirmed", evidence = "linux.qcom_q6v5_pas.sm8550_mpss" }
 dtb_firmware_name = { value = "modem_dtb.mdt", state = "confirmed", evidence = "linux.qcom_q6v5_pas.sm8550_mpss" }
 
+# What the secure world answered on the device about the two ids, and what it refused.
+# The support query accepts both ids, and it refuses the modem's blob under every id it accepts,
+# so the refusal is in the blob rather than in the id.
+[pas_runtime]
+supported_by_secure_world = { value = true, state = "confirmed", evidence = "device.modem.pas_accepted_ids" }
+accepted_ids = { value = [1, 4, 9, 12, 13, 14, 15, 18, 19, 20, 21, 23, 26, 27, 28, 33, 34, 35, 36, 37, 38], state = "confirmed", evidence = "device.modem.pas_accepted_ids" }
+refused_code = { value = 0xFFCFFFBB, state = "confirmed", evidence = "device.modem.pas_matrix" }
+unknown_id_code = { value = 0xFFCFFFE5, state = "confirmed", evidence = "device.modem.pas_matrix" }
+known_but_refused_code = { value = 0xFFCFFFC0, state = "confirmed", evidence = "device.modem.pas_matrix" }
+call_shape_verified = { value = "the ADSP's blob is accepted by the same call", state = "confirmed", evidence = "device.modem.pas_matrix" }
+# Neither of the board's two modem builds is accepted, so the slot is not the reason.
+both_slots_refused = { value = true, state = "confirmed", evidence = "device.modem.slot_pas" }
+# The one structural thing the two refused blobs share and the accepted one does not: the modem's
+# device tree blob is a fixed image, the ADSP's is relocatable.
+refused_blobs_are_fixed = { value = true, state = "confirmed", evidence = "device.modem.slot_pas" }
+
 # The memory the modem runs from. The image region and the device tree blob region are the two
 # reserved-memory nodes Linux's sm8550.dtsi declares for the modem.
 [carveout]
@@ -156,8 +172,16 @@ size = { value = 0x10000, state = "confirmed", evidence = "caf.fuxi_live_dts.mod
 # Where the modem's firmware is on this board. The partition is a FAT volume read in place through
 # the UFS driver, read only, and the images live in its /image directory under the two names the
 # secure world asks for. The list was taken on the device by the fuxi-modem=1 probe.
+#
+# Both slots carry the firmware. The slot survey of 2026-11-19 mounted modem_a and modem_b on their
+# own and each holds modem.mdt and modem_dtb.mdt with the same sizes; they are two distinct
+# partitions (modem_a at block 5126, modem_b at block 283283, 114688 blocks each, LUN 4) and their
+# blobs differ in 95 bytes inside the hash segment, so they are two different builds. The reader's
+# default path takes modem_b first.
 [firmware]
-partition = { value = "modem_a", state = "confirmed", evidence = "device.firmware_partition.modem_images" }
+partition = { value = "modem_b", state = "confirmed", evidence = "device.modem.slot_survey" }
+both_slots_carry_firmware = { value = true, state = "confirmed", evidence = "device.modem.slot_survey" }
+slot_blobs_differ = { value = true, state = "confirmed", evidence = "device.modem.slot_survey" }
 directory = { value = "/image", state = "confirmed", evidence = "device.firmware_partition.modem_images" }
 image_file = { value = "modem.mdt", state = "confirmed", evidence = "device.firmware_partition.modem_images" }
 dtb_file = { value = "modem_dtb.mdt", state = "confirmed", evidence = "device.firmware_partition.modem_images" }

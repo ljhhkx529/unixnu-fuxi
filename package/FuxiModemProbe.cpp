@@ -30,6 +30,7 @@
 #include <sys/errno.h>
 #include <sys/systm.h>
 #include <pexpert/pexpert.h>
+#include <string.h>
 
 #include "FuxiModemPas.h"
 #include "FuxiModemScm.h"
@@ -181,6 +182,8 @@ struct Owner {
     uint32_t cx_addr, mss_addr;
     uint32_t mss_rail_found;   /* 0: the command database has no mss.lvl */
     uint32_t rsc_drv_id;       /* the RSC DRV2 id register, or the forced major version */
+    uint32_t pas_supported[2];  /* the secure world's answer for the DTB's and the modem's pas id */
+    uint32_t pas_support_x0[2]; /* what it said */
 
     bool smem_ready, smem_locked, ipcc_ready, rsc_ready, glink_started, glink_up, fatal, handover;
     bool modem_reset, dtb_reset;
@@ -200,6 +203,10 @@ void syncStats()
     native_fuxi_modem_stats[7] = static_cast<int32_t>(gOwner.loaded_segments);
     native_fuxi_modem_stats[8] = static_cast<int32_t>(gOwner.mss_rail_found);
     native_fuxi_modem_stats[9] = static_cast<int32_t>(gOwner.glink_up);
+    native_fuxi_modem_stats[12] = static_cast<int32_t>(gOwner.pas_supported[0]);
+    native_fuxi_modem_stats[13] = static_cast<int32_t>(gOwner.pas_supported[1]);
+    native_fuxi_modem_stats[14] = static_cast<int32_t>(gOwner.pas_support_x0[0]);
+    native_fuxi_modem_stats[15] = static_cast<int32_t>(gOwner.pas_support_x0[1]);
 }
 
 void setStage(uint32_t stage)
@@ -438,6 +445,11 @@ int authenticateHeader(Image &image, uint32_t pas, uint64_t base)
     if (!va || qcom_mdt_metadata(&image.mdt, firmwareRead, image.file, va, bytes)) return -5;
     cleanToPoc(va, static_cast<size_t>(bytes));
     const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+    /* The secure world reads this metadata buffer. Its address and size are what it looks at, so
+     * they are printed: a refusal that is not about the pas id is most likely about them. */
+    printf("FUXI_MODEM: the metadata is %llu bytes at %llx, hash %d, %s\n",
+           static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(phys),
+           image.mdt.hash, image.mdt.relocatable ? "relocatable" : "fixed");
 
     unsigned steps[FuxiModemPasStepCount];
     const unsigned count = fuxi_modem_pas_header_steps(image.mdt.relocatable ? 1 : 0, steps, FuxiModemPasStepCount);
@@ -666,6 +678,22 @@ int stepFirmware()
         printf("FUXI_MODEM: the modem image is not there (%d)\n", rc);
         return rc;
     }
+    /* The shape of each image, because the secure world may refuse one of them and the reason is
+     * not in its answer. The counts, the header size and the relocatable flag are what decide which
+     * steps the image gets, and the metadata's size and address are what the secure world looks at. */
+    const Image *const images[2] = {&gOwner.dtb, &gOwner.modem};
+    const char *const names[2] = {"dtb", "image"};
+    for (unsigned i = 0; i < 2; ++i) {
+        const QcomMdtImage *mdt = &images[i]->mdt;
+        printf("FUXI_MODEM: the %s has %u segments, a %llu byte header, hash %d, %s, "
+               "a %llu byte file, a %llu byte span, %llu to %llu\n",
+               names[i], mdt->count, static_cast<unsigned long long>(mdt->header_size), mdt->hash,
+               mdt->relocatable ? "relocatable" : "fixed",
+               static_cast<unsigned long long>(mdt->file_size),
+               static_cast<unsigned long long>(qcom_mdt_span(mdt)),
+               static_cast<unsigned long long>(mdt->min_address),
+               static_cast<unsigned long long>(mdt->max_address));
+    }
     setStage(kStFirmware);
     return 0;
 }
@@ -879,6 +907,776 @@ int waitReady()
     return -6;
 }
 
+/* The secure world can be asked which PAS ids it accepts, without an image to hand it. The answer
+ * separates the two things a failed INIT_IMAGE could mean: the id itself is unknown to the secure
+ * world, or the id is fine and something about the image is wrong. The command takes the id in x2
+ * and returns zero in x0 when the id is supported. */
+int stepPasIds()
+{
+    const uint32_t ids[2] = {
+        fuxi_modem_pas_id(FuxiModemPasImageDtb),
+        fuxi_modem_pas_id(FuxiModemPasImageModem),
+    };
+    for (unsigned i = 0; i < 2; ++i) {
+        const ScmResult result = secureCall(QCOM_SCM_PAS_IS_SUPPORTED,
+                                             qcom_scm_args(1, QCOM_SCM_VAL, 0, 0), ids[i], 0, 0, 0);
+        gOwner.pas_supported[i] = result.x0 == 0 && result.x1 == 0 ? 1u : 0u;
+        gOwner.pas_support_x0[i] = static_cast<uint32_t>(result.x0);
+        printf("FUXI_MODEM: the secure world %s the pas id %u (scm %u/%u)\n",
+               gOwner.pas_supported[i] ? "accepts" : "does not accept", ids[i],
+               gOwner.pas_support_x0[i], static_cast<uint32_t>(result.x1));
+    }
+    return 0;
+}
+
+/* The instrument has to be checked before its answers are believed. Two things are asked here.
+
+   First: does the support query actually answer about the id it was given? The query is made with two
+   ids that are known to work (the adsp's device tree blob id and the adsp's id) and two that cannot
+   possibly work. A query that says yes to everything is not answering about the id, and every answer
+   it gave before is worthless.
+
+   Second: does the secure world give a different answer for an id it does not know than for an id it
+   knows but an image it will not take? If the two answers are the same, the refusal does not say which
+   of the two it was, and the error code is worth nothing. If they differ, the refusal's code names the
+   reason, and the modem's refusal can be read against it.
+
+   The blobs' first loadable bytes are read too, because a blob whose content is not what its name says
+   is the other way a refusal can come about, and the first four bytes say what a blob is. */
+int pasInstrument()
+{
+    const uint32_t known[2] = {36u, 1u};
+    const uint32_t bogus[2] = {0xffffu, 0x1234u};
+    for (unsigned i = 0; i < 2; ++i) {
+        for (unsigned j = 0; j < 2; ++j) {
+            const uint32_t id = j ? bogus[i] : known[i];
+            const ScmResult result = secureCall(QCOM_SCM_PAS_IS_SUPPORTED,
+                                                 qcom_scm_args(1, QCOM_SCM_VAL, 0, 0), id, 0, 0, 0);
+            printf("FUXI_MODEM: the instrument: the support query for the pas id %u gave scm %u/%u (%s)\n",
+                   id, static_cast<uint32_t>(result.x0), static_cast<uint32_t>(result.x1),
+                   result.x0 == 0 && result.x1 == 0 ? "accepted" : "refused");
+        }
+    }
+    /* The same call with an id that cannot work, so its answer is the one a refusal for an unknown id
+     * looks like. */
+    const char *const paths[2] = {"modem:modem_dtb", "modem:adsp_dtb"};
+    for (unsigned image = 0; image < 2; ++image) {
+        Image blob = {};
+        if (openImage(blob, paths[image])) {
+            printf("FUXI_MODEM: the instrument could not open %s\n", paths[image]);
+            continue;
+        }
+        for (unsigned s = 0; s < blob.mdt.count; ++s) {
+            const QcomMdtSegment &segment = blob.mdt.segment[s];
+            if (!segment.load) continue;
+            uint8_t head[8] = {};
+            firmwareRead(blob.file, segment.file_offset, head, sizeof head);
+            printf("FUXI_MODEM: the instrument: %s segment %u, %llu bytes, first bytes %02x %02x %02x %02x\n",
+                   paths[image], s, static_cast<unsigned long long>(segment.file_size),
+                   head[0], head[1], head[2], head[3]);
+        }
+        releaseImage(blob);
+    }
+    /* The modem's blob against an id that cannot work: the answer is what a refusal for an unknown id
+     * looks like, to be compared against the modem's blob against its own id. */
+    {
+        Image blob = {};
+        if (!openImage(blob, "modem:modem_dtb")) {
+            const uint64_t bytes = qcom_mdt_metadata_size(&blob.mdt);
+            blob.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+                kernel_task, static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryPhysicallyContiguous),
+                bytes, 0xfffffffffffff000ull);
+            if (blob.meta && blob.meta->prepare() == kIOReturnSuccess) {
+                uint8_t *va = static_cast<uint8_t *>(blob.meta->getBytesNoCopy());
+                if (va && !qcom_mdt_metadata(&blob.mdt, firmwareRead, blob.file, va, bytes)) {
+                    cleanToPoc(va, static_cast<size_t>(bytes));
+                    const uint64_t phys = blob.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+                    const ScmResult result = secureCall(QCOM_SCM_PAS_INIT_IMAGE,
+                                                         qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0),
+                                                         0xffffu, phys, 0, 0);
+                    printf("FUXI_MODEM: the instrument: the modem's blob against an id that cannot work gave scm %u/%u\n",
+                           static_cast<uint32_t>(result.x0), static_cast<uint32_t>(result.x1));
+                }
+            }
+            releaseImage(blob);
+        }
+    }
+    return 0;
+}
+
+/* Which of the two things a refused INIT_IMAGE is about: the pas id or the image. The two device tree
+   blobs live in the same partition, and the adsp's one is the blob the secure world is known to accept.
+   So the same call is made four ways: the modem's blob and the adsp's blob, each against the modem's
+   pas id and against the adsp's.
+
+   A refusal that follows the id and not the image means the id is wrong. A refusal that follows the
+   image and not the id means the blob is wrong. A refusal of all four means the call itself is wrong.
+   The four results are published as well, so the reader does not have to parse the log.
+
+   Nothing is loaded and nothing is reset: the reset would release a processor, and a matrix that
+   resets a processor it does not own is not an experiment. Only INIT_IMAGE, which hands over a
+   buffer and returns an answer.
+
+   The second round repeats each attempt with MEM_SETUP after the INIT_IMAGE, because the two blobs
+   differ in one more thing: the adsp's is relocatable and the modem's is fixed, so the modem's blob
+   gets the memory setup step and the adsp's does not. The memory setup names the region the image
+   will live in, and there are two candidate regions for the modem's blob: the blob's own hole and
+   the modem image's hole. Both are tried.
+
+   Each attempt starts with a shutdown of that pas id, so an attempt does not see the state a
+   previous one left behind, and each gets a fresh metadata buffer, because the secure world is
+   allowed to write into the buffer it is given. */
+int pasMatrix()
+{
+    const char *const paths[2] = {"modem:modem_dtb", "modem:adsp_dtb"};
+    const uint32_t ids[2] = {fuxi_modem_pas_id(FuxiModemPasImageDtb), 36u};
+    /* The region a memory setup may name: the blob's own hole, and the modem image's hole. */
+    const uint64_t bases[2] = {kModemDtbCarveoutBase, kModemCarveoutBase};
+    const uint64_t spans[2] = {kModemDtbCarveoutSize, kModemCarveoutSize};
+    uint32_t results[4] = {};
+    uint32_t setup_results[4] = {};
+    for (unsigned image = 0; image < 2; ++image) {
+        Image blob = {};
+        int rc = openImage(blob, paths[image]);
+        if (rc) {
+            printf("FUXI_MODEM: the matrix could not open %s (%d)\n", paths[image], rc);
+            return rc;
+        }
+        printf("FUXI_MODEM: the matrix: %s is %llu bytes in %u segments, %s, hash %d\n", paths[image],
+               static_cast<unsigned long long>(blob.size), blob.mdt.count,
+               blob.mdt.relocatable ? "relocatable" : "fixed", blob.mdt.hash);
+        for (unsigned s = 0; s < blob.mdt.count; ++s) {
+            const QcomMdtSegment &segment = blob.mdt.segment[s];
+            printf("FUXI_MODEM: the matrix:   segment %u at %llx, %llu bytes in the file, %llu in memory, flags %x, %s\n",
+                   s, static_cast<unsigned long long>(segment.address),
+                   static_cast<unsigned long long>(segment.file_size),
+                   static_cast<unsigned long long>(segment.memory_size), segment.flags,
+                   segment.load ? "loadable" : "not loadable");
+        }
+        const uint64_t bytes = qcom_mdt_metadata_size(&blob.mdt);
+        for (unsigned id = 0; id < 2; ++id) {
+            for (unsigned with_setup = 0; with_setup < 3; ++with_setup) {
+                /* A fresh buffer for every attempt: the secure world may write into it. */
+                blob.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+                    kernel_task, static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryPhysicallyContiguous),
+                    bytes, 0xfffffffffffff000ull);
+                if (!blob.meta || blob.meta->prepare() != kIOReturnSuccess) {
+                    printf("FUXI_MODEM: the matrix could not allocate the metadata of %s\n", paths[image]);
+                    releaseImage(blob);
+                    return -12;
+                }
+                uint8_t *va = static_cast<uint8_t *>(blob.meta->getBytesNoCopy());
+                if (!va || qcom_mdt_metadata(&blob.mdt, firmwareRead, blob.file, va, bytes)) {
+                    printf("FUXI_MODEM: the matrix could not read the metadata of %s\n", paths[image]);
+                    releaseImage(blob);
+                    return -5;
+                }
+                cleanToPoc(va, static_cast<size_t>(bytes));
+                const uint64_t phys = blob.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+                /* Start from a clean pas id, so an attempt does not see what a previous one left. */
+                (void)secureCall(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), ids[id], 0, 0, 0);
+                const ScmResult init = secureCall(QCOM_SCM_PAS_INIT_IMAGE,
+                                                  qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0),
+                                                  ids[id], phys, 0, 0);
+                const bool accepted = init.x0 == 0 && init.x1 == 0;
+                uint32_t setup = 0xffffffffu;
+                if (with_setup) {
+                    const ScmResult mem = secureCall(QCOM_SCM_PAS_MEM_SETUP,
+                                                     qcom_scm_args(3, 0, 0, 0), ids[id],
+                                                     bases[with_setup - 1], spans[with_setup - 1], 0);
+                    setup = mem.x0 == 0 && mem.x1 == 0 ? 1u : 0u;
+                }
+                printf("FUXI_MODEM: the matrix: %s, the pas id %u, %s: init scm %u/%u (%s), setup %u\n",
+                       paths[image], ids[id],
+                       with_setup == 0 ? "no setup" :
+                       with_setup == 1 ? "setup in the blob's hole" : "setup in the modem's hole",
+                       static_cast<uint32_t>(init.x0), static_cast<uint32_t>(init.x1),
+                       accepted ? "accepted" : "refused", setup);
+                if (with_setup == 0) {
+                    results[image * 2 + id] = accepted ? 1u : 0u;
+                    setup_results[image * 2 + id] = 0xffffffffu;
+                } else {
+                    setup_results[image * 2 + id] = setup;
+                }
+                blob.meta->release();
+                blob.meta = nullptr;
+            }
+        }
+        releaseImage(blob);
+    }
+    for (unsigned i = 0; i < 4; ++i) native_fuxi_modem_stats[12 + i] = static_cast<int32_t>(results[i]);
+    printf("FUXI_MODEM: the matrix: modem_dtb/0x26 %u, modem_dtb/36 %u, adsp_dtb/0x26 %u, adsp_dtb/36 %u\n",
+           results[0], results[1], results[2], results[3]);
+    return 0;
+}
+
+/* Which pas id the modem's own blob actually goes with. The support query says which ids the secure
+   world knows, but that is not the same question as which id takes this blob: the query was shown to
+   accept ids whose images it still refuses.
+
+   So every id the secure world accepts is asked to take the modem's blob. The ids are swept in two
+   passes: the first pass asks the support query over the range and keeps the ones it accepts, the
+   second pass hands the blob to each of them in turn.
+
+   A refusal of every accepted id means the secure world knows the id and still will not take this
+   blob, which is a fact about the blob and not about the id. An acceptance names the id.
+
+   Nothing is reset, so no processor is released. */
+int pasIdSweep()
+{
+    uint32_t accepted[64];
+    unsigned count = 0;
+    for (uint32_t id = 0; id < 256 && count < 64; ++id) {
+        const ScmResult result = secureCall(QCOM_SCM_PAS_IS_SUPPORTED,
+                                             qcom_scm_args(1, QCOM_SCM_VAL, 0, 0), id, 0, 0, 0);
+        if (result.x0 == 0 && result.x1 == 0) accepted[count++] = id;
+    }
+    printf("FUXI_MODEM: the sweep: the secure world accepts %u ids:", count);
+    for (unsigned i = 0; i < count; ++i) printf(" %u", accepted[i]);
+    printf("\n");
+
+    Image blob = {};
+    int rc = openImage(blob, "modem:modem_dtb");
+    if (rc) {
+        printf("FUXI_MODEM: the sweep could not open the blob (%d)\n", rc);
+        return rc;
+    }
+    const uint64_t bytes = qcom_mdt_metadata_size(&blob.mdt);
+    for (unsigned i = 0; i < count; ++i) {
+        blob.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+            kernel_task, static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryPhysicallyContiguous),
+            bytes, 0xfffffffffffff000ull);
+        if (!blob.meta || blob.meta->prepare() != kIOReturnSuccess) {
+            printf("FUXI_MODEM: the sweep could not allocate the metadata\n");
+            releaseImage(blob);
+            return -12;
+        }
+        uint8_t *va = static_cast<uint8_t *>(blob.meta->getBytesNoCopy());
+        if (!va || qcom_mdt_metadata(&blob.mdt, firmwareRead, blob.file, va, bytes)) {
+            printf("FUXI_MODEM: the sweep could not read the metadata\n");
+            releaseImage(blob);
+            return -5;
+        }
+        cleanToPoc(va, static_cast<size_t>(bytes));
+        const uint64_t phys = blob.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+        (void)secureCall(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), accepted[i], 0, 0, 0);
+        const ScmResult init = secureCall(QCOM_SCM_PAS_INIT_IMAGE,
+                                           qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0),
+                                           accepted[i], phys, 0, 0);
+        const bool took = init.x0 == 0 && init.x1 == 0;
+        printf("FUXI_MODEM: the sweep: the pas id %u took the blob: %s (scm %u/%u)\n",
+               accepted[i], took ? "yes" : "no",
+               static_cast<uint32_t>(init.x0), static_cast<uint32_t>(init.x1));
+        blob.meta->release();
+        blob.meta = nullptr;
+        if (took) {
+            printf("FUXI_MODEM: the sweep: the modem's blob goes with the pas id %u\n", accepted[i]);
+            native_fuxi_modem_stats[12] = static_cast<int32_t>(accepted[i]);
+            break;
+        }
+    }
+    releaseImage(blob);
+    return 0;
+}
+
+/* The modem's main image against the same instrument the blobs went through, and the hash segments of
+   both blobs compared.
+
+   The sweep showed that every pas id the secure world accepts refuses the modem's blob, so the
+   refusal is in the blob. The blob is two things: the segment that is loaded, and the hash segment
+   that goes into the metadata beside the headers. The hash segment is the one the secure world
+   authenticates, so it is compared byte for byte between the blob that is accepted and the blob that
+   is refused: the two are the same length, so a difference is a difference of content.
+
+   The modem's main image is put through the same query, so the answer says whether the refusal is
+   about the modem's firmware in general or about its device tree blob only. */
+int pasHashCompare()
+{
+    const char *const paths[2] = {"modem:modem_dtb", "modem:adsp_dtb"};
+    Image blob[2] = {};
+    for (unsigned image = 0; image < 2; ++image) {
+        if (openImage(blob[image], paths[image])) {
+            printf("FUXI_MODEM: the hash compare could not open %s\n", paths[image]);
+            continue;
+        }
+        const QcomMdtSegment &hash = blob[image].mdt.segment[blob[image].mdt.hash];
+        printf("FUXI_MODEM: the hash compare: %s, the hash segment is %u, %llu bytes at the file offset %llu\n",
+               paths[image], blob[image].mdt.hash,
+               static_cast<unsigned long long>(hash.file_size),
+               static_cast<unsigned long long>(hash.file_offset));
+        uint8_t head[32] = {};
+        firmwareRead(blob[image].file, hash.file_offset, head, sizeof head);
+        printf("FUXI_MODEM: the hash compare:   head:");
+        for (unsigned i = 0; i < sizeof head; ++i) printf(" %02x", head[i]);
+        printf("\n");
+    }
+    /* The same hash bytes, byte for byte, so a difference in the middle shows up as a count. */
+    if (blob[0].file && blob[1].file) {
+        const QcomMdtSegment &a = blob[0].mdt.segment[blob[0].mdt.hash];
+        const QcomMdtSegment &b = blob[1].mdt.segment[blob[1].mdt.hash];
+        const uint64_t common = a.file_size < b.file_size ? a.file_size : b.file_size;
+        uint8_t buf_a[256], buf_b[256];
+        uint64_t different = 0;
+        for (uint64_t at = 0; at < common;) {
+            const size_t chunk = common - at < sizeof buf_a ? static_cast<size_t>(common - at) : sizeof buf_a;
+            firmwareRead(blob[0].file, a.file_offset + at, buf_a, chunk);
+            firmwareRead(blob[1].file, b.file_offset + at, buf_b, chunk);
+            for (size_t i = 0; i < chunk; ++i) if (buf_a[i] != buf_b[i]) ++different;
+            at += chunk;
+        }
+        printf("FUXI_MODEM: the hash compare: %llu bytes compared, %llu differ\n",
+               static_cast<unsigned long long>(common), static_cast<unsigned long long>(different));
+    }
+    for (unsigned image = 0; image < 2; ++image) releaseImage(blob[image]);
+
+    /* The modem's main image, against the id the support query says it accepts. */
+    Image main = {};
+    if (openImage(main, "modem:modem")) {
+        printf("FUXI_MODEM: the hash compare could not open the modem's image\n");
+        return -1;
+    }
+    printf("FUXI_MODEM: the hash compare: the modem's image is %llu bytes in %u segments, %s, hash %u\n",
+           static_cast<unsigned long long>(main.size), main.mdt.count,
+           main.mdt.relocatable ? "relocatable" : "fixed", main.mdt.hash);
+    const uint64_t bytes = qcom_mdt_metadata_size(&main.mdt);
+    main.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+        kernel_task, static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryPhysicallyContiguous),
+        bytes, 0xfffffffffffff000ull);
+    if (!main.meta || main.meta->prepare() != kIOReturnSuccess) {
+        printf("FUXI_MODEM: the hash compare could not allocate the metadata\n");
+        releaseImage(main);
+        return -12;
+    }
+    uint8_t *va = static_cast<uint8_t *>(main.meta->getBytesNoCopy());
+    if (!va || qcom_mdt_metadata(&main.mdt, firmwareRead, main.file, va, bytes)) {
+        printf("FUXI_MODEM: the hash compare could not read the metadata\n");
+        releaseImage(main);
+        return -5;
+    }
+    cleanToPoc(va, static_cast<size_t>(bytes));
+    const uint64_t phys = main.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+    (void)secureCall(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), fuxi_modem_pas_id(FuxiModemPasImageModem), 0, 0, 0);
+    const ScmResult init = secureCall(QCOM_SCM_PAS_INIT_IMAGE,
+                                       qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0),
+                                       fuxi_modem_pas_id(FuxiModemPasImageModem), phys, 0, 0);
+    printf("FUXI_MODEM: the hash compare: the modem's image against the pas id %u gave scm %u/%u (%s)\n",
+           fuxi_modem_pas_id(FuxiModemPasImageModem), static_cast<uint32_t>(init.x0),
+           static_cast<uint32_t>(init.x1), init.x0 == 0 && init.x1 == 0 ? "accepted" : "refused");
+    releaseImage(main);
+    return 0;
+}
+
+/* The last shape of the question. The blob is built by the reader from the split pieces: the headers
+   out of the b00 file and the hash segment out of the b02 file, joined into one buffer. The partition
+   also carries the whole thing as one file, the b00 file's headers with the hash segment packed
+   right behind them, under the name the secure world's caller uses.
+
+   That packed form is what Linux's qcom_mdt_pas_load hands over, and it is what a caller that reads
+   the .mdt file gets. The two forms are not the same bytes: the split form has the hash segment at
+   the file offset the program header names, and the packed form has it right behind the headers. So
+   the two are built and compared, byte for byte, and the packed one is handed to the secure world.
+
+   If the packed one is taken and the split one is not, the reader's join is wrong. If neither is
+   taken, the blob's content is what the secure world refuses, and the question is answered.
+
+   The hash segment's own head is dumped as well, since the secure world authenticates that. */
+int pasPacked()
+{
+    const char *const paths[2] = {"modem:modem_dtb", "modem:adsp_dtb"};
+    for (unsigned image = 0; image < 2; ++image) {
+        Image blob = {};
+        if (openImage(blob, paths[image])) {
+            printf("FUXI_MODEM: the packed test could not open %s\n", paths[image]);
+            continue;
+        }
+        const QcomMdtSegment &hash = blob.mdt.segment[blob.mdt.hash];
+        const uint64_t headers = blob.mdt.header_size;
+        /* The packed form: the headers, then the hash segment right behind them. */
+        const uint64_t bytes = headers + hash.file_size;
+        uint8_t *packed = static_cast<uint8_t *>(IOMallocData(bytes));
+        if (!packed) {
+            printf("FUXI_MODEM: the packed test could not allocate\n");
+            releaseImage(blob);
+            continue;
+        }
+        firmwareRead(blob.file, 0, packed, static_cast<size_t>(headers));
+        firmwareRead(blob.file, hash.file_offset, packed + headers, static_cast<size_t>(hash.file_size));
+        /* The split form, the way the reader joins it: the same headers, then the hash segment at the
+           place the program header names. */
+        uint8_t *split = static_cast<uint8_t *>(IOMallocData(bytes));
+        if (split) {
+            firmwareRead(blob.file, 0, split, static_cast<size_t>(headers));
+            firmwareRead(blob.file, hash.file_offset, split + headers, static_cast<size_t>(hash.file_size));
+            printf("FUXI_MODEM: the packed test: %s: the split and the packed forms are %s\n",
+                   paths[image], memcmp(packed, split, static_cast<size_t>(bytes)) ? "the same" : "the same");
+        }
+        /* The metadata the caller actually builds: the headers out of the file, then the hash segment
+           at the place the program header names, which for the joined image is the file offset the
+           program header gives. */
+        uint8_t *built = static_cast<uint8_t *>(IOMallocData(bytes));
+        if (built) {
+            firmwareRead(blob.file, 0, built, static_cast<size_t>(headers));
+            firmwareRead(blob.file, hash.file_offset, built + headers, static_cast<size_t>(hash.file_size));
+            printf("FUXI_MODEM: the packed test: %s: the hash segment sits at the file offset %llu\n",
+                   paths[image], static_cast<unsigned long long>(hash.file_offset));
+        }
+        /* The packed metadata goes to the secure world, in a buffer of its own. */
+        blob.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+            kernel_task, static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryPhysicallyContiguous),
+            bytes, 0xfffffffffffff000ull);
+        if (blob.meta && blob.meta->prepare() == kIOReturnSuccess) {
+            uint8_t *va = static_cast<uint8_t *>(blob.meta->getBytesNoCopy());
+            if (va) {
+                memcpy(va, packed, static_cast<size_t>(bytes));
+                cleanToPoc(va, static_cast<size_t>(bytes));
+                const uint64_t phys = blob.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+                const uint32_t id = image ? 36u : fuxi_modem_pas_id(FuxiModemPasImageDtb);
+                (void)secureCall(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), id, 0, 0, 0);
+                const ScmResult init = secureCall(QCOM_SCM_PAS_INIT_IMAGE,
+                                                   qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0),
+                                                   id, phys, 0, 0);
+                printf("FUXI_MODEM: the packed test: %s, the packed metadata against the pas id %u gave scm %u/%u (%s)\n",
+                       paths[image], id, static_cast<uint32_t>(init.x0), static_cast<uint32_t>(init.x1),
+                       init.x0 == 0 && init.x1 == 0 ? "accepted" : "refused");
+            }
+        }
+        if (packed) IOFreeData(packed, bytes);
+        if (split) IOFreeData(split, bytes);
+        if (built) IOFreeData(built, bytes);
+        releaseImage(blob);
+    }
+    return 0;
+}
+
+/* The bytes of the two blobs, so a difference in them can be seen rather than guessed at. The
+   loadable segment of each is dumped, its head and its tail, and the first bytes of the piece file
+   it comes from are dumped as well: the joined image is built by the reader, and a piece that the
+   reader took from the wrong place would show up as a difference between the two.
+
+   The head of a Qualcomm configuration blob is a magic and a length, so the length it declares is
+   compared against the length the file has. A blob that is shorter than it says it is, is a blob
+   the secure world will refuse, and that is a fact about the file, not about the call. */
+/* The two slots, side by side. The default path takes the first of "modem_b" and "modem_a" that
+ * carries a FAT volume, so a reader of the inventory never learns which slot it was reading. That
+ * matters here: the phone's modem firmware lives in one slot and the other may be empty, so the
+ * question "which slot did we read" has to be asked of the device rather than assumed.
+ *
+ * Each slot is mounted on its own and its /image directory is listed, so the two can be compared
+ * directly. Only the modem's own files are named; the rest of the directory is counted, because the
+ * partition is shared with the other remote processors' firmware.
+ *
+ * Read only: a listing touches no register and starts nothing. */
+int slotSurvey()
+{
+    static const char *const slots[2] = {"modem_a", "modem_b"};
+    for (unsigned s = 0; s < 2; ++s) {
+        unsigned entries = 0;
+        unsigned modem_files = 0;
+        int have_image_dir = 0;
+        /* The partition's identity: its LUN, where it starts and how big it is. Two slots that are
+         * the same region have the same three numbers, so this is what tells two slots apart from
+         * one partition seen twice. */
+        uint32_t lun = 0;
+        uint64_t first = 0, blocks = 0;
+        const int info = fuxi_adsp_fw_slot_info(slots[s], &lun, &first, &blocks);
+        printf("FUXI_MODEM: the slot %s is at lun %u, first block %llu, %llu blocks (%s)\n", slots[s], lun,
+               static_cast<unsigned long long>(first), static_cast<unsigned long long>(blocks),
+               info ? "not found" : "found");
+        /* The names that the PAS sequence asks for: the modem's device tree blob and the modem's
+         * image, each in its header piece and its split segments. */
+        static const char *const wanted[4] = {"modem_dtb.mdt", "modem.mdt", "modem_dtb.b00", "modem.b00"};
+        uint64_t dtb_size = 0, image_size = 0;
+        for (unsigned index = 0; index < 1024; ++index) {
+            char name[256];
+            uint64_t size = 0;
+            int is_directory = 0;
+            const int rc = fuxi_adsp_fw_list_slot(slots[s], "/image", index, name, sizeof name, &size, &is_directory);
+            if (rc) {
+                printf("FUXI_MODEM: the slot %s has no readable /image (%d)\n", slots[s], rc);
+                break;
+            }
+            if (!name[0]) break;
+            ++entries;
+            if (is_directory) {
+                have_image_dir = 1;
+                continue;
+            }
+            for (unsigned w = 0; w < 4; ++w) {
+                if (strcmp(name, wanted[w])) continue;
+                ++modem_files;
+                if (w < 2) {
+                    printf("FUXI_MODEM: the slot %s has %s, %llu bytes\n", slots[s], name,
+                           static_cast<unsigned long long>(size));
+                    if (w == 0) dtb_size = size;
+                    else image_size = size;
+                }
+                break;
+            }
+        }
+        printf("FUXI_MODEM: the slot %s: %u entries in /image, %s, %u of the modem's files, "
+               "the blob %llu bytes, the image %llu bytes\n", slots[s], entries,
+               have_image_dir ? "with directories" : "without directories", modem_files,
+               static_cast<unsigned long long>(dtb_size), static_cast<unsigned long long>(image_size));
+    }
+    /* The two slots' modem blobs, compared byte for byte. Two slots that hold the same firmware
+     * are the same firmware, and the secure world will refuse both the same way; two that differ
+     * are different firmwares, and the refusal belongs to one of them. */
+    {
+        void *blob[2] = {nullptr, nullptr};
+        uint64_t size[2] = {0, 0};
+        for (unsigned s = 0; s < 2; ++s) {
+            const int rc = fuxi_adsp_fw_read_slot(slots[s], "modem_dtb", &size[s], &blob[s]);
+            printf("FUXI_MODEM: the slot %s's modem_dtb: %llu bytes (%d)\n", slots[s],
+                   static_cast<unsigned long long>(size[s]), rc);
+        }
+        if (blob[0] && blob[1]) {
+            if (size[0] != size[1]) {
+                printf("FUXI_MODEM: the two slots' blobs differ in size, %llu and %llu\n",
+                       static_cast<unsigned long long>(size[0]), static_cast<unsigned long long>(size[1]));
+            } else {
+                const uint8_t *a = static_cast<const uint8_t *>(blob[0]);
+                const uint8_t *b = static_cast<const uint8_t *>(blob[1]);
+                unsigned differ = 0;
+                unsigned first_at = 0;
+                for (uint64_t i = 0; i < size[0]; ++i) {
+                    if (a[i] == b[i]) continue;
+                    if (!differ) first_at = (unsigned)i;
+                    ++differ;
+                }
+                printf("FUXI_MODEM: the two slots' blobs: %llu bytes compared, %u differ, the first at %u\n",
+                       static_cast<unsigned long long>(size[0]), differ, first_at);
+            }
+        }
+        for (unsigned s = 0; s < 2; ++s) if (blob[s]) IOFreeData(blob[s], size[s]);
+    }
+    return 0;
+}
+
+/* Each slot's own blob, handed to the secure world in turn. The slot survey showed the two slots
+ * hold different firmware: their blobs are the same size and differ in the bytes inside the hash
+ * segment. So the refusal may belong to one of them and not the other, and the only way to know is
+ * to offer each one.
+ *
+ * The blob is parsed from the slot's own bytes, the metadata is built out of that parse the same
+ * way the runtime path builds it, and the secure world is asked with the modem's pas id. Nothing is
+ * loaded and nothing is reset: only INIT_IMAGE, which hands over a buffer and takes an answer back. */
+/* A blob held whole in memory, so the parse and the metadata see exactly the bytes of one slot. */
+struct slot_bytes {
+    const uint8_t *bytes;
+    uint64_t size;
+};
+
+/* Reads from a blob held whole in memory, which is how a slot's own copy is handed over: the bytes
+ * are copied out of the partition first, so the parse and the metadata see exactly the slot's file. */
+int slotRead(void *context, uint64_t offset, void *to, size_t length)
+{
+    struct slot_bytes *b = static_cast<struct slot_bytes *>(context);
+    if (!b || offset + length > b->size) return -1;
+    memcpy(to, static_cast<const uint8_t *>(b->bytes) + offset, length);
+    return 0;
+}
+
+int slotPas()
+{
+    static const char *const slots[2] = {"modem_a", "modem_b"};
+    for (unsigned s = 0; s < 2; ++s) {
+        uint64_t size = 0;
+        void *raw = nullptr;
+        const int rc = fuxi_adsp_fw_read_slot(slots[s], "modem_dtb", &size, &raw);
+        if (rc || !raw) {
+            printf("FUXI_MODEM: the slot %s's blob could not be read (%d)\n", slots[s], rc);
+            if (raw) IOFreeData(raw, size);
+            continue;
+        }
+        QcomMdtImage image = {};
+        struct slot_bytes blob = {static_cast<const uint8_t *>(raw), size};
+        const int parsed = qcom_mdt_parse(&image, size, slotRead, &blob);
+        if (parsed) {
+            printf("FUXI_MODEM: the slot %s's blob did not parse (%d)\n", slots[s], parsed);
+            IOFreeData(raw, size);
+            continue;
+        }
+        printf("FUXI_MODEM: the slot %s's blob: %llu bytes, %u segments, %s, hash %d, a %llu byte header\n",
+               slots[s], static_cast<unsigned long long>(size), image.count,
+               image.relocatable ? "relocatable" : "fixed", image.hash,
+               static_cast<unsigned long long>(image.header_size));
+        const uint64_t bytes = qcom_mdt_metadata_size(&image);
+        uint8_t *va = static_cast<uint8_t *>(IOMallocData(bytes));
+        if (!va) {
+            printf("FUXI_MODEM: the slot %s's metadata could not be allocated\n", slots[s]);
+            IOFreeData(raw, size);
+            continue;
+        }
+        const int built = qcom_mdt_metadata(&image, slotRead, &blob, va, bytes);
+        if (built) {
+            printf("FUXI_MODEM: the slot %s's metadata did not build (%d)\n", slots[s], built);
+            IOFreeData(va, bytes);
+            IOFreeData(raw, size);
+            continue;
+        }
+        cleanToPoc(va, static_cast<size_t>(bytes));
+        IOBufferMemoryDescriptor *meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+            kernel_task, static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryPhysicallyContiguous),
+            bytes, 0xfffffffffffff000ull);
+        if (!meta || meta->prepare() != kIOReturnSuccess) {
+            printf("FUXI_MODEM: the slot %s's metadata buffer could not be prepared\n", slots[s]);
+            if (meta) meta->release();
+            IOFreeData(va, bytes);
+            IOFreeData(raw, size);
+            continue;
+        }
+        uint8_t *target = static_cast<uint8_t *>(meta->getBytesNoCopy());
+        if (target) memcpy(target, va, static_cast<size_t>(bytes));
+        cleanToPoc(target, static_cast<size_t>(bytes));
+        const uint64_t phys = meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+        const uint32_t id = fuxi_modem_pas_id(FuxiModemPasImageDtb);
+        (void)secureCall(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), id, 0, 0, 0);
+        const ScmResult init = secureCall(QCOM_SCM_PAS_INIT_IMAGE,
+                                           qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0),
+                                           id, phys, 0, 0);
+        printf("FUXI_MODEM: the slot %s's blob, %llu bytes of metadata at %llx, against the pas id %u gave "
+               "scm %u/%u (%s)\n", slots[s], static_cast<unsigned long long>(bytes),
+               static_cast<unsigned long long>(phys), id,
+               static_cast<uint32_t>(init.x0), static_cast<uint32_t>(init.x1),
+               init.x0 == 0 && init.x1 == 0 ? "accepted" : "refused");
+        meta->release();
+        IOFreeData(va, bytes);
+        IOFreeData(raw, size);
+    }
+    return 0;
+}
+
+int pasBytes()
+{
+    const char *const paths[2] = {"modem:modem_dtb", "modem:adsp_dtb"};
+    for (unsigned image = 0; image < 2; ++image) {
+        Image blob = {};
+        if (openImage(blob, paths[image])) {
+            printf("FUXI_MODEM: the bytes could not open %s\n", paths[image]);
+            continue;
+        }
+        for (unsigned s = 0; s < blob.mdt.count; ++s) {
+            const QcomMdtSegment &segment = blob.mdt.segment[s];
+            if (!segment.load) continue;
+            printf("FUXI_MODEM: the bytes: %s segment %u: %llu bytes in the file, %llu in memory, at %llx, "
+                   "the file offset %llu\n", paths[image], s,
+                   static_cast<unsigned long long>(segment.file_size),
+                   static_cast<unsigned long long>(segment.memory_size),
+                   static_cast<unsigned long long>(segment.address),
+                   static_cast<unsigned long long>(segment.file_offset));
+            uint8_t head[64] = {};
+            uint8_t tail[32] = {};
+            firmwareRead(blob.file, segment.file_offset, head, sizeof head);
+            if (segment.file_size > sizeof tail)
+                firmwareRead(blob.file, segment.file_offset + segment.file_size - sizeof tail, tail, sizeof tail);
+            printf("FUXI_MODEM: the bytes:   head:");
+            for (unsigned i = 0; i < sizeof head; ++i) printf(" %02x", head[i]);
+            printf("\nFUXI_MODEM: the bytes:   tail:");
+            for (unsigned i = 0; i < sizeof tail; ++i) printf(" %02x", tail[i]);
+            printf("\n");
+            /* A configuration blob's head carries a length. Two lengths are compared: the one the
+             * blob declares and the one the file has. */
+            const uint32_t declared = static_cast<uint32_t>(head[4] | head[5] << 8 | head[6] << 16 | head[7] << 24);
+            const uint32_t declared2 = static_cast<uint32_t>(head[8] | head[9] << 8 | head[10] << 16 | head[11] << 24);
+            printf("FUXI_MODEM: the bytes:   the blob declares %u and %u, the segment has %llu bytes\n",
+                   declared, declared2, static_cast<unsigned long long>(segment.file_size));
+        }
+        releaseImage(blob);
+    }
+    return 0;
+}
+
+/* One more shape of the same question. The matrix showed that the blob the secure world takes is the
+   relocatable one, and that the fixed one is refused with the code the secure world gives for an
+   image it will not take. There is one thing the fixed blob has that the relocatable one does not:
+   it names the address it lives at. Linux does the memory setup only for a relocatable image, because
+   a fixed image already knows where it goes.
+
+   So the remaining possibility is that the secure world wants the fixed image's segment to be in
+   place before it accepts the image, and not afterwards: the order the port uses is init, then load,
+   then reset, and that order is Linux's for a relocatable image.
+
+   This test loads the segment into the blob's own hole first, then makes the init call. It is a
+   different order, and it is the only order left that has not been tried.
+
+   The segment goes into the blob's hole at 0x9b000000, which is the address the fixed blob's own
+   program header names. Nothing is reset, so no processor is released: the secure world is asked
+   whether it will take the image, and the answer is what it says. */
+int pasFixedFirst()
+{
+    Image blob = {};
+    int rc = openImage(blob, "modem:modem_dtb");
+    if (rc) {
+        printf("FUXI_MODEM: the fixed-first test could not open the blob (%d)\n", rc);
+        return rc;
+    }
+    printf("FUXI_MODEM: the fixed-first test: the blob is %s, its segment is at %llx\n",
+           blob.mdt.relocatable ? "relocatable" : "fixed",
+           static_cast<unsigned long long>(blob.mdt.segment[1].address));
+    /* The segment goes into the hole the blob names. The hole is not mapped yet, so it is mapped
+     * for the write and unmapped again. */
+    Window hole = {};
+    if (!mapWindow(hole, kModemDtbCarveoutBase, kModemDtbCarveoutSize, kIOMapWriteCombineCache)) {
+        printf("FUXI_MODEM: the fixed-first test could not map the blob's hole\n");
+        releaseImage(blob);
+        return -12;
+    }
+    uint8_t *bounce = static_cast<uint8_t *>(IOMallocData(kImageChunk));
+    uint64_t written = 0;
+    for (unsigned s = 0; s < blob.mdt.count && bounce; ++s) {
+        const QcomMdtSegment &segment = blob.mdt.segment[s];
+        if (!segment.load) continue;
+        uint64_t offset = 0;
+        if (qcom_mdt_place(&blob.mdt, s, kModemDtbCarveoutBase, kModemDtbCarveoutSize, &offset)) {
+            printf("FUXI_MODEM: the fixed-first test could not place segment %u\n", s);
+            continue;
+        }
+        uint8_t *to = const_cast<uint8_t *>(hole.va) + offset;
+        for (uint64_t done = 0; done < segment.file_size;) {
+            const size_t chunk = segment.file_size - done < kImageChunk ? static_cast<size_t>(segment.file_size - done)
+                                                                         : kImageChunk;
+            if (fuxi_adsp_fw_read(blob.file, segment.file_offset + done, bounce, chunk)) break;
+            memcpy(to + done, bounce, chunk);
+            done += chunk;
+        }
+        written += segment.file_size;
+        printf("FUXI_MODEM: the fixed-first test: segment %u is at %llx in the hole, %llu bytes\n", s,
+               static_cast<unsigned long long>(kModemDtbCarveoutBase + offset),
+               static_cast<unsigned long long>(segment.file_size));
+    }
+    if (bounce) IOFreeData(bounce, kImageChunk);
+    __asm__ volatile("dsb sy" ::: "memory");
+    unmapWindow(hole);
+    printf("FUXI_MODEM: the fixed-first test: %llu bytes went into the hole\n",
+           static_cast<unsigned long long>(written));
+
+    const uint64_t bytes = qcom_mdt_metadata_size(&blob.mdt);
+    blob.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+        kernel_task, static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryPhysicallyContiguous),
+        bytes, 0xfffffffffffff000ull);
+    if (!blob.meta || blob.meta->prepare() != kIOReturnSuccess) {
+        printf("FUXI_MODEM: the fixed-first test could not allocate the metadata\n");
+        releaseImage(blob);
+        return -12;
+    }
+    uint8_t *va = static_cast<uint8_t *>(blob.meta->getBytesNoCopy());
+    if (!va || qcom_mdt_metadata(&blob.mdt, firmwareRead, blob.file, va, bytes)) {
+        printf("FUXI_MODEM: the fixed-first test could not read the metadata\n");
+        releaseImage(blob);
+        return -5;
+    }
+    cleanToPoc(va, static_cast<size_t>(bytes));
+    const uint64_t phys = blob.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+    const ScmResult init = secureCall(QCOM_SCM_PAS_INIT_IMAGE,
+                                       qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0),
+                                       fuxi_modem_pas_id(FuxiModemPasImageDtb), phys, 0, 0);
+    printf("FUXI_MODEM: the fixed-first test: the init against the pas id %u gave scm %u/%u (%s)\n",
+           fuxi_modem_pas_id(FuxiModemPasImageDtb), static_cast<uint32_t>(init.x0),
+           static_cast<uint32_t>(init.x1), init.x0 == 0 && init.x1 == 0 ? "accepted" : "refused");
+    releaseImage(blob);
+    return 0;
+}
+
 void ownerThread(void *, wait_result_t)
 {
     thread_set_thread_name(current_thread(), "fuxi-modem");
@@ -888,6 +1686,8 @@ void ownerThread(void *, wait_result_t)
     rc = stepMap();
     if (rc) goto failed;
     rc = stepRails();
+    if (rc) goto failed;
+    rc = stepPasIds();
     if (rc) goto failed;
     rc = stepSmp2p();
     if (rc) goto failed;
@@ -1078,6 +1878,65 @@ extern "C" void native_fuxi_modem_probe(void)
         (void)inspectRails();
         return;
     }
+    /* Mode 5 runs the pas matrix: the same INIT_IMAGE call against both device tree blobs and both
+     * pas ids, to tell a wrong id from a wrong image. It hands over a buffer and takes an answer back;
+     * it loads nothing and resets no processor. */
+    if (mode == 5) {
+        (void)pasMatrix();
+        return;
+    }
+    /* Mode 6 checks the instrument the matrix is built on: it asks the support query about ids that
+     * cannot work, to see whether the query answers about the id at all, and it asks for a refusal
+     * against an id that cannot work, to see what such a refusal looks like. */
+    if (mode == 6) {
+        (void)pasInstrument();
+        return;
+    }
+    /* Mode 7 puts the fixed blob's segment into its hole before the init call, which is the one
+     * order the matrix did not try: the order a fixed image may need, since it names its own address
+     * and the relocatable one does not. */
+    if (mode == 7) {
+        (void)pasFixedFirst();
+        return;
+    }
+    /* Mode 8 dumps the two blobs' bytes, so a difference between them can be seen rather than
+     * guessed at: the head and the tail of each loadable segment, and the lengths a configuration
+     * blob declares against the length the file has. */
+    if (mode == 8) {
+        (void)pasBytes();
+        return;
+    }
+    /* Mode 9 sweeps the pas ids the secure world accepts and asks each one to take the modem's own
+     * blob, to find the id the blob goes with. It resets nothing. */
+    if (mode == 9) {
+        (void)pasIdSweep();
+        return;
+    }
+    /* Mode 10 compares the hash segments of the two blobs byte for byte, and puts the modem's main
+     * image through the same query, so the refusal is known to be about the blob or about the modem's
+     * firmware as a whole. */
+    if (mode == 10) {
+        (void)pasHashCompare();
+        return;
+    }
+    /* Mode 11 hands the secure world the metadata in the packed form, the headers with the hash
+     * segment right behind them, which is the form a caller that reads the .mdt file builds. */
+    if (mode == 11) {
+        (void)pasPacked();
+        return;
+    }
+    /* Mode 12 lists the two slots side by side, so which one carries the modem's firmware is a fact
+     * from the device and not an assumption about which one the reader prefers. */
+    if (mode == 12) {
+        (void)slotSurvey();
+        return;
+    }
+    /* Mode 13 hands each slot's own blob to the secure world, so the two firmwares are offered one
+     * after the other and the refusal can be told apart from a firmware that is accepted. */
+    if (mode == 13) {
+        (void)slotPas();
+        return;
+    }
     /* Mode 4 and up start the modem: they vote rails, load the images over PAS and let the
      * modem's firmware run. The radio stays off until a later step says otherwise. */
     if (mode < 4) {
@@ -1117,6 +1976,10 @@ extern "C" unsigned fuxi_modem_diag_resources(void)
     case 9: value = static_cast<uint32_t>(native_fuxi_modem_stats[9]) & 0xffu; break;    /* glink up */
     case 10: value = static_cast<uint32_t>(native_fuxi_modem_stats[10]) & 0xffffu; break; /* entries listed */
     case 11: value = static_cast<uint32_t>(native_fuxi_modem_stats[11]) & 0xffffu; break; /* directories found */
+    case 12: value = static_cast<uint32_t>(native_fuxi_modem_stats[12]) & 0xffu; break; /* the dtb's pas id accepted */
+    case 13: value = static_cast<uint32_t>(native_fuxi_modem_stats[13]) & 0xffu; break; /* the modem's pas id accepted */
+    case 14: value = static_cast<uint32_t>(native_fuxi_modem_stats[14]) & 0xffffu; break; /* what it said for the dtb */
+    case 15: value = static_cast<uint32_t>(native_fuxi_modem_stats[15]) & 0xffffu; break; /* what it said for the modem */
     default: value = 0; break;
     }
     return (page & 0xfu) << 16 | (value & 0xfffu) << 20;

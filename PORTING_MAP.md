@@ -55,7 +55,7 @@
 | `pas_id = 4`（modem 镜像） | Linux `qcom_q6v5_pas.c` `sm8550_mpss_resource` |
 | `dtb_pas_id = 0x26`（modem DTB） | 同上 |
 | 固件文件名 `modem.mdt` / `modem_dtb.mdt` | Linux 同上（secure world 要什么）；**真机 2026-11-19 确认板上就是这两个名字** |
-| 分段 `modem.b00`–`modem.b31`，缺 b14、b21、b30，共 29 段 | **真机 2026-11-19**，`modem_a` 分区 `/image` 目录清点 |
+| 分段 `modem.b00`–`modem.b31`，缺 b14、b21、b30，共 29 段 | **真机 2026-11-19**，固件分区 `/image` 目录清点；两个槽都存固件且构建不同 |
 | `proxy_pd_names = {"cx","mss"}` | Linux `sm8550.dtsi` `power-domain-names` |
 | 内存洞 `0x8a800000/0x10800000` | Linux `sm8550.dtsi` `mpss_region@8a800000`；CAF live dts 同值 |
 | 内存洞 `0x9b000000/0x80000` | Linux `sm8550.dtsi` `q6_mpss_dtb_region@9b000000`；CAF live dts 同值 |
@@ -183,7 +183,7 @@ ADSP 的运行时重新打开之前，modem 和 ADSP 必须共用一个主控。
 IPCC client 2。这些都已从一手出处确认来源，但没有跑过真机。
 
 已经在真机证明的（2026-11-19）：固件文件名 `modem.mdt` 与 `modem_dtb.mdt` 以及分段布局，
-`modem_a` 分区的 `/image` 目录由内核的 `fuxi-modem=1` 只读清点列出，
+固件分区的 `/image` 目录由内核的 `fuxi-modem=1` 只读清点列出（`fuxi-modem=12` 的槽清点证明两个槽都存固件，
 证据 `evidence/2026-11-19-modem-firmware-inventory.log`。
 
 **运行时路径第一次跑通到第 3 阶段**（2026-11-19，`fuxi-adsp=1 fuxi-modem=4`，
@@ -199,3 +199,84 @@ IPCC client 2。这些都已从一手出处确认来源，但没有跑过真机�
 调用形状与 ADSP 已验证的那次相同：同一条命令、同一个参数描述符（两个参数，第二个读写）、
 同样的参数顺序，metadata 缓冲区也在高 DRAM 的连续段里。两次 bring-up 的差别只有 PAS id
 （DTB 是 0x26）和镜像本身。当前探针在第一次拒绝处就停下，不说 secure world 觉得哪个参数不对。
+
+**拒绝的��因已经定位在镜像内容上，不在调用上**（2026-11-19 第二次真机，PAS 矩阵，
+`fuxi-modem=5`，证据 `evidence/2026-11-19-modem-pas-matrix.md`）：
+
+| 组合 | INIT_IMAGE |
+| --- | --- |
+| `adsp_dtb` + PAS 36（ADSP 的那一对） | **0/0 接受** |
+| `adsp_dtb` + PAS 38 | 0xFFCFFFBB 拒绝 |
+| `modem_dtb` + PAS 38（modem 的那一对） | 0xFFCFFFBB 拒绝 |
+| `modem_dtb` + PAS 36 | 0xFFCFFFBB 拒绝 |
+
+四组用的是**同一条调用**：同一个命令、同一个参数描述符、同一个 4044 字节的 metadata 缓冲区、
+相邻的物理地址（0x8d0b1e000 与 0x8d0b1f000）。其中一组被接受，所以调用形状、命令常量、参数顺序、
+缓冲区大小与对齐、metadata 的拼装方式全都是对的。拒绝只跟着镜像走。
+
+**仪器先被验证过，才用它下的结论**（`fuxi-modem=6`）：
+
+| 查询 | 结果 |
+| --- | --- |
+| 支持查询，PAS 36 | 0/0 |
+| 支持查询，PAS 1 | 0/0 |
+| 支持查询，PAS 0xffff | 0xFFCFFFC0 |
+| 支持查询，PAS 0x1234 | 0xFFCFFFC0 |
+| INIT_IMAGE，modem 的 blob，PAS 0xffff | 0xFFCFFFE5 |
+| INIT_IMAGE，modem 的 blob，PAS 38 | 0xFFCFFFBB |
+
+支持查询确实在回答"这个 id 认不认识"，不是有问必答。secure world 至少给三种不同的错误码：
+不知道的 id（0xFFCFFFE5）、认识但不接受的 id（0xFFCFFFC0）、拒绝的镜像（0xFFCFFFBB）。
+
+**扫遍全部被接受的 id**（`fuxi-modem=9`）：secure world 接受 21 个 id
+（1 4 9 12 13 14 15 18 19 20 21 23 26 27 28 33 34 35 36 37 38），
+**每一个都拒绝 modem 的 blob**，错误码都是同一个 0xFFCFFFBB。所以没有任何 id 能收这个 blob，
+问题一定在 blob 本身。
+
+**两条还没排除的路径都试过了**：
+
+| 试的东西 | 结果 |
+| --- | --- |
+| 把 blob 的分段先搬进它自己的洞（0x9b000000）再 INIT_IMAGE（`fuxi-modem=7`） | 仍然 0xFFCFFFBB |
+| 把 metadata 换成紧凑形式（头后面直接跟 hash 段，`fuxi-modem=11`） | 仍然 0xFFCFFFBB；紧凑形式与分片形式逐字节相同 |
+
+**两个 blob 本身都是完好的**：modem 的 512 字节段声明 452+60=512，adsp 的 8376 字节段声明
+8316+60=8376，都自洽；头都是 `43 46 47 4c`（CFGL）。modem 的 blob 是 **fixed**（段地址 0x9b000000），
+adsp 的是 **relocatable**。hash 段两��都是 3896 字节，其中 193 字节不同——这是不同的固件，
+本来就该不同。
+
+**结论**：modem 的 DTB blob 在这台机器上不被 secure world 接受，而 adsp 的 blob 被接受。
+modem 的**主镜像**（149 MB，32 段，PAS 4）同样被拒，错误码同一个 0xFFCFFFBB。
+**这不是本仓代码的问题**——本仓的 PAS 调用形状已经被 ADSP 那组（adsp_dtb + 36）证明是对的。
+
+**槽位清点**（2026-11-19 第三次真机，`fuxi-modem=12`，
+证据 `evidence/2026-11-19-modem-slot-survey.md`）：
+
+| 槽 | LUN | 首块 | 块数 | `/image` 条目 | `modem.mdt` | `modem_dtb.mdt` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `modem_a` | 4 | 5126 | 114688 | 443 | 6364 | 4044 |
+| `modem_b` | 4 | 283283 | 114688 | 443 | 6364 | 4044 |
+
+两个槽是**同一 LUN 上两个不同的分区**（GPT 名字匹配是全等的），**两个槽都有基带固件**，
+而且**两个槽的固件不一样**：两个 `modem_dtb` blob 都是 7992 字节，逐字节比较有 **95 字节不同**，
+第一处在偏移 4533——落在 hash 段里（头 148 字节，hash 段 4096 到 7992）。所以两个槽是**两个不同的构建**。
+
+**这条线索变了**：之前记录写"固件来自 `modem_a`"是**推断**——`mountPartition()` 先试 `modem_b`，
+清点读到的其实是 `modem_b`。清点也证明**槽不是拒绝的原因**：被测的那个槽（`modem_b`）确实有固件。
+两个槽是两个不同的构建，其中**一个可能就是 secure world 接受的那一个**。
+
+**两个槽各自的 blob 分别递上去**（`fuxi-modem=13`，同一份证据）：
+
+| 槽 | blob | metadata | PAS 38 |
+| --- | --- | --- | --- |
+| `modem_a` | 7992 字节，3 段，fixed，hash 2 | 4044 字节 @ 0x8d0b3f000 | 0xFFCFFFBB 拒绝 |
+| `modem_b` | 7992 字节，3 段，fixed，hash 2 | 4044 字节 @ 0x8d0b60000 | 0xFFCFFFBB 拒绝 |
+
+**两个都被拒，错误码相同**。槽这条线索到此为止：**没有一个构建是被接受的**，
+所以拒绝的原因在**两个构建共有的东西**上。
+
+两个构建共有的、而 secure world 要看的，是 metadata 的结构、程序头、段的地址
+（0x9b000000，就是板上自己的 `q6_mpss_dtb_region`），以及**这个镜像是 fixed 而不是 relocatable**。
+被接受的 adsp 那个 blob 是 **relocatable**。这个差别现在是第一件要查的事，
+而且它是板上保留内存布局的事实，不是 modem 代码的事实。
+

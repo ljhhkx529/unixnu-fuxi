@@ -28,7 +28,7 @@ limits = "The Sheng board's values for the same SoC. A prediction for this board
 
 [source.device_firmware_partition]
 repository = "this fuxi, read on the device"
-path = "the modem_a partition's FAT volume, listed read-only by the kernel's fuxi-modem=1 probe; the run's log is evidence/2026-11-19-modem-firmware-inventory.log"
+path = "the modem_b partition's FAT volume, listed read-only by the kernel's fuxi-modem=1 probe; the run's log is evidence/2026-11-19-modem-firmware-inventory.log"
 kind = "board-first-hand"
 limits = "It proves which files the board carries and how large each one is. It says nothing about whether the secure world accepts them, and it says nothing about the modem's runtime state."
 
@@ -161,17 +161,17 @@ proves = "That mss.lvl is the resource name the modem's remoteproc asks for on t
 # ---- the choices that are ours ----
 
 [device.firmware_partition.modem_images]
-path = "the modem_a partition's FAT volume, listed by the fuxi-modem=1 probe on the device"
+path = "the modem_b partition's FAT volume, listed by the fuxi-modem=1 probe on the device"
 statement = "The /image directory of the board's own modem partition holds modem.mdt (6364 bytes) and modem_dtb.mdt (4044 bytes), and the split segments modem.b00 through modem.b31 with b14, b21 and b30 absent: b00 1076, b01 6948, b02 811476, b03 19420, b04 16700, b05 11772, b06 34896, b07 118784, b08 3391400, b09 36928, b10 16384, b11 4304784, b12 262144, b13 5210112, b15 3732744, b16 473656, b17 4096000, b18 16917448, b19 15242839, b20 6676488, b22 123136, b23 42639424, b24 42896512, b25 1349297, b26 8928, b27 409600, b28 131072, b29 11272, b31 5288. The whole /image directory holds 448 entries."
 proves = "That the board carries the modem's firmware under exactly the two names the PAS sequence looks for, and that the image is a split one whose segments are the device's own files. The gaps at b14, b21 and b30 are the split index's own numbering, not a missing read: the listing walks the directory and reports what is there."
 
 [device.firmware_partition.modem_pr]
-path = "the modem_a partition's FAT volume, listed by the fuxi-modem=1 probe on the device"
+path = "the modem_b partition's FAT volume, listed by the fuxi-modem=1 probe on the device"
 statement = "/image/modem_pr is a directory holding mcfg and so, two more directories, and no firmware image of its own."
 proves = "That the modem's configuration and shared-object directories exist and where they are. It says nothing about their contents, which the probe does not walk."
 
 [device.firmware_partition.other_images]
-path = "the modem_a partition's FAT volume, listed by the fuxi-modem=1 probe on the device"
+path = "the modem_b partition's FAT volume, listed by the fuxi-modem=1 probe on the device"
 statement = "The same partition carries the board's other remote processors' firmware: adsp.mdt with adsp_dtb.mdt, cdsp.mdt with cdsp_dtb.mdt, and ipa_fws.mdt, plus cpusys_vm.mdt and the per-feature images (cardapp.mdt, faceutils.mdt, fingerpr.mdt, mlipay.mdt, ops.mdt, soter64.mdt, and the rest)."
 proves = "That the modem partition is a shared image partition that holds every remote processor's firmware, not the modem's alone. The modem's own files are the ones named modem.mdt and modem_dtb.mdt."
 
@@ -190,6 +190,26 @@ proves = "That the RSC layout rule and the interrupt-line ownership both hold on
 path = "the board's AOP command database, read by the fuxi-modem=3 probe on the device"
 statement = "The command database carries cx.lvl at address 0x30000 with 10 levels, mss.lvl at address 0x30060 with 7 levels, mx.lvl at 0x30010 with 9 levels and gfx.lvl at 0x30050 with 14 levels. gpu.lvl and gmxc.lvl are not in it."
 proves = "That both of the modem's proxy power domain rails, cx.lvl and mss.lvl, are in this board's own command database, so both votes of the bring-up have a target. It also corrects the earlier inference from the sheng board, which said mss.lvl was absent."
+[device.modem.pas_matrix]
+path = "the device run recorded in evidence/2026-11-19-modem-pas-matrix.md"
+statement = "The same INIT_IMAGE call was made four ways on the board. The ADSP's blob with the ADSP's pas id 36 was accepted with 0/0. The ADSP's blob with pas id 38, the modem's blob with pas id 38 and the modem's blob with pas id 36 were all refused with 0xFFCFFFBB. The instrument was checked first: the support query answers 0/0 for the ids 36 and 1 and 0xFFCFFFC0 for the ids 0xffff and 0x1234. Every one of the 21 ids the secure world accepts refuses the modem's blob with the same 0xFFCFFFBB, and so does the modem's main image under pas id 4."
+proves = "That the port's PAS call is correct: the same code, the same argument descriptor, a 4044 byte metadata buffer and neighbouring addresses accepted the ADSP's blob. The refusal is in the modem's firmware content and not in the call, the argument order, the buffer or the pas id. It does not say why the secure world refuses that firmware; the slot survey that follows says which slot was read and that the two slots hold different firmware."
+
+[device.modem.slot_survey]
+path = "the fuxi-modem=12 survey on the device, in evidence/2026-11-19-modem-slot-survey.md"
+statement = "The two slots are two distinct partitions on LUN 4: modem_a at first block 5126 and modem_b at first block 283283, 114688 blocks each. Both carry the modem's firmware: each /image directory holds 443 entries, with modem.mdt at 6364 bytes and modem_dtb.mdt at 4044 bytes in both. The two slots' modem_dtb blobs are the same 7992 bytes long and differ in 95 of them, the first at offset 4533, which is inside the hash segment."
+proves = "That the slot is not the reason the secure world refuses the modem's blob: both slots carry firmware, and the one the refusal was measured against (modem_b, the reader's first choice) is one of them. It also proves that the two slots hold two different builds of the modem firmware, so one of them may be the one the secure world accepts. It says nothing about which build the baseband actually runs."
+
+[device.modem.slot_pas]
+path = "the fuxi-modem=13 run on the device, in evidence/2026-11-19-modem-slot-survey.md"
+statement = "Each slot's own modem_dtb blob was read out whole, parsed from those bytes, built into the same metadata the runtime path builds and handed to the secure world with the modem's pas id 38. modem_a's blob (7992 bytes, 3 segments, fixed, hash 2) gave 4044 bytes of metadata at 0x8d0b3f000 and 0xFFCFFFBB; modem_b's blob (7992 bytes, 3 segments, fixed, hash 2) gave 4044 bytes of metadata at 0x8d0b60000 and the same 0xFFCFFFBB."
+proves = "That neither of the board's two modem firmware builds is accepted by the secure world, so the slot is not the reason for the refusal. The two builds share the metadata's structure, the program headers, the segment's address 0x9b000000 and the image being fixed rather than relocatable; the ADSP's blob, which is accepted, is relocatable. It does not say which of the shared things is the reason."
+
+[device.modem.pas_accepted_ids]
+path = "the fuxi-modem=9 sweep on the device, in evidence/2026-11-19-modem-pas-matrix.md"
+statement = "The secure world's support query accepts 21 pas ids in the range 0 to 255: 1, 4, 9, 12, 13, 14, 15, 18, 19, 20, 21, 23, 26, 27, 28, 33, 34, 35, 36, 37 and 38. The query answers 0xFFCFFFC0 for ids it does not accept."
+proves = "That the modem's pas ids 4 and 38 are among the ids the secure world knows, and that the query discriminates rather than answering yes to everything. It says nothing about which id belongs to which remote processor."
+
 [intents]
 statement = "The IPCRTR channel's intent size is 4096 and the count is 8. The size follows the modem's own edge; the count is ours: it bounds how much the AP can receive before it drains."
 proves = "A design decision, not a measurement. The intent handshake absorbs a smaller grant from the modem."

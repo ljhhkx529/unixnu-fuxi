@@ -222,8 +222,15 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                # whole file path runs against the board's own files. Mode 3 reads the board's
                # command database and looks the modem's rails up in it, still read only: no vote
                # goes out and no register is written. Mode 4 is the runtime path, which starts the
-               # modem over PAS.
-               "fuxi-modem=4",
+               # modem over PAS. Modes 5 to 11 are the diagnostics that isolated the secure world's
+               # refusal to the modem's own blob: the pas matrix (5), the instrument check (6),
+               # the segment written first (7), the blob's bytes (8), the id sweep (9), the hash
+               # compare (10) and the packed metadata (11). Each hands over a buffer and takes an
+               # answer back, and none of them loads anything or resets a processor. Mode 12 lists
+               # the two slots side by side, so which one carries the modem's firmware is a fact
+               # from the device and not an assumption about the reader's order. Mode 13 hands each
+               # slot's own blob to the secure world in turn. The runtime path is the mode to run.
+               "fuxi-modem=13",
                "fgraph=6",
                # Content follows unixnu-fuxi-old one switch at a time: sheng-aks brings up Apple
                # KeyStore, which AMFI consults before it accepts the adhoc-signed System volume.

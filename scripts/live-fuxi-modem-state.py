@@ -37,6 +37,10 @@ PAGES = {
     9: "glink_up",
     10: "entries_listed",
     11: "directories_found",
+    12: "dtb_pas_supported",
+    13: "modem_pas_supported",
+    14: "dtb_pas_answer",
+    15: "modem_pas_answer",
 }
 
 # The stage the bring-up reached, in the probe's order.
