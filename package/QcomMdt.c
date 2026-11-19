@@ -70,9 +70,27 @@ uint64_t qcom_mdt_metadata_size(const QcomMdtImage *image)
 
 int qcom_mdt_metadata(const QcomMdtImage *image, QcomMdtRead read, void *context, uint8_t *to, uint64_t capacity)
 {
+    return qcom_mdt_metadata_from_mdt(image, read, context, NULL, NULL, to, capacity);
+}
+
+int qcom_mdt_metadata_from_mdt(const QcomMdtImage *image, QcomMdtRead read, void *context,
+                               QcomMdtRead mdt_read, void *mdt_context, uint8_t *to, uint64_t capacity)
+{
     const QcomMdtSegment *hash = &image->segment[image->hash];
     if (capacity < qcom_mdt_metadata_size(image)) return QcomMdtTooSmall;
     uint64_t hash_offset;
+    /* The hash is taken out of the .mdt file when the caller has one: the .mdt is the header part
+     * followed by the hash segment, which is the form the secure world authenticates. The joined
+     * image of the .bNN pieces is a different file, with the hash at a different offset in it. */
+    if (mdt_read) {
+        if (image->mdt_size && image->header_size + hash->file_size != image->mdt_size)
+            return QcomMdtBadHeaders;
+        hash_offset = image->header_size;
+        if (mdt_read(mdt_context, 0, to, (size_t)image->header_size)) return QcomMdtReadError;
+        if (mdt_read(mdt_context, hash_offset, to + image->header_size, (size_t)hash->file_size))
+            return QcomMdtReadError;
+        return QcomMdtOk;
+    }
     /* A hash packed right behind the headers (the split .mdt form) or a hash segment inside the file. */
     if (image->header_size + hash->file_size == image->file_size) hash_offset = image->header_size;
     else if (fits(hash->file_offset, hash->file_size, image->file_size)) hash_offset = hash->file_offset;

@@ -34,6 +34,12 @@ typedef struct {
     uint64_t min_address, max_address;  /* of the loadable segments */
     uint8_t relocatable;
     uint64_t file_size;
+    /* Bytes of the .mdt file itself, which is the header part followed by the hash segment. The secure
+     * world authenticates the metadata out of this file (Linux drivers/soc/qcom/mdt_loader.c,
+     * qcom_mdt_read_metadata: "Firmware is split and hash is packed following the ELF header"), and not
+     * out of the joined image of the .bNN pieces, whose hash sits at a different offset in a different
+     * file. Zero when the caller has no .mdt. */
+    uint64_t mdt_size;
 } QcomMdtImage;
 
 enum {
@@ -54,9 +60,20 @@ int qcom_mdt_parse(QcomMdtImage *image, uint64_t file_size, QcomMdtRead read, vo
 /* Bytes of the metadata blob for the authentication service: the header part and the hash segment. */
 uint64_t qcom_mdt_metadata_size(const QcomMdtImage *image);
 
-/* Writes the metadata blob (qcom_mdt_metadata_size bytes) to to. The hash segment must lie inside the file: images split into .bNN
- * files are joined into one .mbn on the host before they are installed. */
+/* Writes the metadata blob (qcom_mdt_metadata_size bytes) to to.
+ *
+ * The hash segment is taken out of the .mdt file, which is what Linux does: the secure world
+ * authenticates the ELF header followed by the hash segment as they sit in the .mdt, and the .mdt is
+ * the header part followed by the hash segment (Linux drivers/soc/qcom/mdt_loader.c,
+ * qcom_mdt_read_metadata, the branch "Firmware is split and hash is packed following the ELF header").
+ * The joined image of the .bNN pieces is a different file with the hash at a different offset, so the
+ * two must not be mixed.
+ *
+ * mdt_read reads the .mdt file and may be null, in which case the hash is taken out of the joined
+ * image the way it was before. read reads the joined image. */
 int qcom_mdt_metadata(const QcomMdtImage *image, QcomMdtRead read, void *context, uint8_t *to, uint64_t capacity);
+int qcom_mdt_metadata_from_mdt(const QcomMdtImage *image, QcomMdtRead read, void *context,
+                               QcomMdtRead mdt_read, void *mdt_context, uint8_t *to, uint64_t capacity);
 
 /* Bytes the loadable segments span (the end rounded up to 4 KiB, minus the lowest address): the size to hand to the memory setup call
  * of a relocatable image. */

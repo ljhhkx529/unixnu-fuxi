@@ -251,6 +251,126 @@ static void test_fuxi_modem_layout(void)
           "the pieces around the holes keep their sizes");
 }
 
+/* The metadata is taken out of the .mdt file, not out of the joined image of the .bNN pieces.
+ *
+ * The fuxi's modem_dtb is the shape that matters, as the device reported it: the .mdt file is 4044
+ * bytes (a 148 byte header part followed by a 3896 byte hash segment), the pieces are b00 148
+ * bytes, b01 512 bytes and b02 3896 bytes, and the joined blob is 7992 bytes with the hash segment
+ * at offset 4096.
+ *
+ * Linux drivers/soc/qcom/mdt_loader.c, qcom_mdt_read_metadata: the metadata is the ELF header
+ * followed by the hash segment, copied out of the .mdt file itself. */
+#define MDT_HEADERS 148u                /* 52 byte ELF32 header plus three program headers */
+#define MDT_HASH 3896u
+#define MDT_BYTES (MDT_HEADERS + MDT_HASH)     /* 4044: the .mdt file's size */
+#define JOINED_BYTES 7992u
+#define JOINED_HASH_AT 4096u
+
+static uint8_t mdt_file[MDT_BYTES];
+static uint8_t joined_image[JOINED_BYTES];
+
+/* The modem_dtb's own shape: an ELF32 with three program headers, the first covering the headers
+ * themselves, the second the loadable segment and the third the hash segment.
+ *
+ * The hash bytes are given as a parameter, because the two sources can be made to differ: the
+ * question this test asks is which file the metadata is read out of, and a test where both files
+ * hold the same bytes cannot tell. */
+static void build_mdt(int same_bytes)
+{
+    memset(mdt_file, 0, sizeof mdt_file);
+    memset(joined_image, 0, sizeof joined_image);
+    uint8_t *e = joined_image;
+    e[0] = 0x7f; e[1] = 'E'; e[2] = 'L'; e[3] = 'F'; e[4] = 1; e[5] = 1;   /* ELF32, little endian */
+    le32(e + 28, 52);      /* e_phoff */
+    le16(e + 42, 32);      /* e_phentsize */
+    le16(e + 44, 3);       /* e_phnum */
+    uint8_t *p = e + 52;
+    le32(p + 0, 0); le32(p + 4, 0); le32(p + 12, 0);
+    le32(p + 16, MDT_HEADERS); le32(p + 20, 0);                 /* the headers */
+    p += 32;
+    le32(p + 0, 1); le32(p + 4, MDT_HEADERS); le32(p + 12, 0x9b000000);
+    le32(p + 16, MDT_HASH); le32(p + 20, MDT_HASH);             /* the loadable segment */
+    p += 32;
+    le32(p + 0, 0); le32(p + 4, JOINED_HASH_AT); le32(p + 12, 0x9b008000);
+    le32(p + 16, MDT_HASH); le32(p + 20, MDT_HASH);
+    le32(p + 24, QCOM_MDT_TYPE_HASH);                            /* the hash segment */
+    /* The .mdt file is the header part followed by the hash segment; the joined blob has the hash
+     * segment at 4096 instead. */
+    memcpy(mdt_file, joined_image, MDT_HEADERS);
+    for (unsigned i = 0; i < MDT_HASH; ++i) mdt_file[MDT_HEADERS + i] = (uint8_t)(0x11 ^ i);
+    for (unsigned i = 0; i < MDT_HASH; ++i)
+        joined_image[JOINED_HASH_AT + i] = (uint8_t)((same_bytes ? 0x11 : 0x77) ^ i);
+}
+
+static int read_mdt(void *context, uint64_t offset, void *to, size_t length)
+{
+    (void)context;
+    if (offset > MDT_BYTES || length > MDT_BYTES - offset) return -1;
+    memcpy(to, mdt_file + offset, length);
+    return 0;
+}
+
+static int read_joined(void *context, uint64_t offset, void *to, size_t length)
+{
+    (void)context;
+    if (offset > JOINED_BYTES || length > JOINED_BYTES - offset) return -1;
+    memcpy(to, joined_image + offset, length);
+    return 0;
+}
+
+static void test_metadata_from_mdt(void)
+{
+    QcomMdtImage m;
+    static uint8_t blob[MDT_BYTES];
+    static uint8_t joined_blob[MDT_BYTES];
+
+    /* The two files holding the same hash bytes: the .mdt is the header part followed by the hash
+     * segment and the joined blob carries the same hash segment at 4096, so the two sources give
+     * the same metadata. This is the shape the board's own files may have, and the metadata's
+     * length is the same either way. */
+    build_mdt(1);
+    check(qcom_mdt_parse(&m, JOINED_BYTES, read_joined, 0) == QcomMdtOk, "the joined blob parses");
+    check(m.hash == 2, "the hash segment is found in the joined blob");
+    check(m.header_size == MDT_HEADERS, "the header part is the size the program header names");
+    check(m.segment[m.hash].file_offset == JOINED_HASH_AT, "the hash segment sits at 4096 in the joined blob");
+    check(qcom_mdt_metadata_size(&m) == MDT_BYTES, "the metadata is the header part plus the hash");
+    m.mdt_size = MDT_BYTES;
+    check(qcom_mdt_metadata_from_mdt(&m, read_joined, 0, read_mdt, 0, blob, sizeof blob) == QcomMdtOk,
+          "the metadata is built out of the mdt file");
+    check(memcmp(blob, mdt_file, MDT_BYTES) == 0, "the metadata is the mdt file byte for byte");
+    check(qcom_mdt_metadata(&m, read_joined, 0, joined_blob, sizeof joined_blob) == QcomMdtOk,
+          "the metadata can still be built out of the joined blob");
+    check(memcmp(blob, joined_blob, MDT_BYTES) == 0, "the two forms agree when the files hold the same bytes");
+
+    /* The two files holding different hash bytes: this is what tells which file the metadata is
+     * read out of. The .mdt's hash must win, because that is the file upstream authenticates. */
+    build_mdt(0);
+    check(qcom_mdt_parse(&m, JOINED_BYTES, read_joined, 0) == QcomMdtOk, "the joined blob parses again");
+    m.mdt_size = MDT_BYTES;
+    check(qcom_mdt_metadata_from_mdt(&m, read_joined, 0, read_mdt, 0, blob, sizeof blob) == QcomMdtOk,
+          "the metadata is built out of the mdt file");
+    check(memcmp(blob, mdt_file, MDT_BYTES) == 0, "the metadata is the mdt file byte for byte");
+    check(blob[MDT_HEADERS] == (uint8_t)(0x11 ^ 0) && blob[MDT_BYTES - 1] == (uint8_t)(0x11 ^ (MDT_HASH - 1)),
+          "the hash segment comes out of the mdt file");
+    check(qcom_mdt_metadata(&m, read_joined, 0, joined_blob, sizeof joined_blob) == QcomMdtOk,
+          "the metadata can still be built out of the joined blob");
+    check(memcmp(blob, joined_blob, MDT_BYTES) != 0, "the two forms are not the same bytes");
+    check(joined_blob[MDT_HEADERS] == (uint8_t)(0x77 ^ 0),
+          "the joined form takes the hash out of the b02 piece");
+
+    /* An .mdt whose size does not match the header part plus the hash is refused: the metadata
+       would be a different length than the file holds. */
+    m.mdt_size = MDT_BYTES - 1;
+    check(qcom_mdt_metadata_from_mdt(&m, read_joined, 0, read_mdt, 0, blob, sizeof blob) == QcomMdtBadHeaders,
+          "an mdt file of the wrong size is refused");
+
+    /* Without an .mdt the old path is used unchanged. */
+    m.mdt_size = 0;
+    check(qcom_mdt_metadata_from_mdt(&m, read_joined, 0, NULL, NULL, blob, sizeof blob) == QcomMdtOk,
+          "with no mdt file the joined blob is used");
+    check(memcmp(blob, joined_blob, MDT_BYTES) == 0, "and it gives the joined form's bytes");
+}
+
 int main(void)
 {
     test_parse();
@@ -258,6 +378,7 @@ int main(void)
     test_split();
     test_split_holes();
     test_fuxi_modem_layout();
+    test_metadata_from_mdt();
     printf("PASS QcomMdt: %d checks\n", checks);
     return failed ? 1 : 0;
 }

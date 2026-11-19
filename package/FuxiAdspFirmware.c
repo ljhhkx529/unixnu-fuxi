@@ -102,6 +102,7 @@ static int mountPartition(void)
 struct modem_image {
     QcomMdtSplit split;
     FatFile piece[QCOM_MDT_MAX_SEGMENTS];
+    FatFile mdt;      /* NAME.mdt itself: the header part followed by the hash segment */
 };
 
 static int pieceRead(void *context, unsigned piece, uint64_t offset, void *to, size_t length)
@@ -122,8 +123,12 @@ static int pieceReadIn(void *context, unsigned piece, uint64_t offset, void *to,
 }
 
 /* The joined image of one named slot, read from that slot's own volume rather than from the
- * default one. So a caller can hold the same file out of two slots and compare them. */
-int fuxi_adsp_fw_read_slot(const char *slot, const char *name, uint64_t *size, void **out)
+ * default one. So a caller can hold the same file out of two slots and compare them.
+ *
+ * The .mdt file of that slot is returned as well, when mdt is not null: the secure world
+ * authenticates the metadata out of it, so a caller that hands the metadata over needs those bytes
+ * and not only the joined image. */
+int fuxi_adsp_fw_read_slot(const char *slot, const char *name, uint64_t *size, void **out, void **mdt, uint64_t *mdt_size)
 {
     struct partition *p = NULL;
     FatVolume *v = volumeOf(slot, &p);
@@ -141,6 +146,13 @@ int fuxi_adsp_fw_read_slot(const char *slot, const char *name, uint64_t *size, v
     if (!rc && fat_read(v, &headers, 0, bytes, headers.size)) rc = EIO;
     if (!rc && qcom_mdt_split(&m->split, bytes, headers.size)) rc = EFTYPE;
     if (bytes) IOFreeData(bytes, headers.size);
+    /* The .mdt file itself: the header part followed by the hash segment. The secure world
+     * authenticates the metadata out of this file, not out of the joined image. A firmware without
+     * one is not refused here: the caller falls back to the joined image and says so. */
+    if (!rc) {
+        snprintf(path, sizeof path, "image/%s.mdt", name);
+        if (fat_open(v, path, &m->mdt)) memset(&m->mdt, 0, sizeof m->mdt);
+    }
     for (unsigned i = 0; !rc && i < m->split.count; ++i) {
         if (!m->split.piece[i].size) continue;
         snprintf(path, sizeof path, "image/%s.b%02u", name, i);
@@ -170,6 +182,25 @@ int fuxi_adsp_fw_read_slot(const char *slot, const char *name, uint64_t *size, v
         IOFreeType(v, FatVolume);
         return EIO;
     }
+    /* The .mdt file is copied out as well, when the caller wants it. */
+    uint8_t *mdt_bytes = NULL;
+    if (mdt && mdt_size) {
+        *mdt = NULL;
+        *mdt_size = 0;
+        if (m->mdt.size) {
+            mdt_bytes = IOMallocData(m->mdt.size);
+            if (!mdt_bytes || fat_read(v, &m->mdt, 0, mdt_bytes, m->mdt.size)) {
+                if (mdt_bytes) IOFreeData(mdt_bytes, m->mdt.size);
+                IOFreeData(joined, total);
+                IOFreeType(m, struct modem_image);
+                IOFreeType(p, struct partition);
+                IOFreeType(v, FatVolume);
+                return EIO;
+            }
+            *mdt = mdt_bytes;
+            *mdt_size = m->mdt.size;
+        }
+    }
     IOFreeType(m, struct modem_image);
     IOFreeType(p, struct partition);
     IOFreeType(v, FatVolume);
@@ -194,6 +225,13 @@ static int openModem(const char *name, struct modem_image **image, uint64_t *siz
     if (!rc && fat_read(gVolume, &headers, 0, bytes, headers.size)) rc = EIO;
     if (!rc && qcom_mdt_split(&m->split, bytes, headers.size)) rc = EFTYPE;
     if (bytes) IOFreeData(bytes, headers.size);
+    /* The .mdt file itself: the header part followed by the hash segment. The secure world
+     * authenticates the metadata out of this file, not out of the joined image. A firmware without
+     * one is not refused here: the caller falls back to the joined image and says so. */
+    if (!rc) {
+        snprintf(path, sizeof path, "image/%s.mdt", name);
+        if (fat_open(gVolume, path, &m->mdt)) memset(&m->mdt, 0, sizeof m->mdt);
+    }
     for (unsigned i = 0; !rc && i < m->split.count; ++i) {
         if (!m->split.piece[i].size) continue;
         snprintf(path, sizeof path, "image/%s.b%02u", name, i);
@@ -257,6 +295,21 @@ int fuxi_adsp_fw_read(void *handle, uint64_t offset, void *to, size_t length)
         length -= (size_t)(want - resid);
     }
     return 0;
+}
+
+/* Reads the .mdt file of a modem firmware. The secure world authenticates the metadata out of this
+ * file, so it is read on its own and not out of the joined image of the .bNN pieces. */
+int fuxi_adsp_fw_read_mdt(void *handle, uint64_t offset, void *to, size_t length)
+{
+    struct fuxi_adsp_fw *fw = handle;
+    if (!fw || !fw->modem) return EIO;
+    return fat_read(gVolume, &fw->modem->mdt, offset, to, length) ? EIO : 0;
+}
+
+uint64_t fuxi_adsp_fw_mdt_size(void *handle)
+{
+    struct fuxi_adsp_fw *fw = handle;
+    return fw && fw->modem ? fw->modem->mdt.size : 0;
 }
 
 void fuxi_adsp_fw_close(void *handle)

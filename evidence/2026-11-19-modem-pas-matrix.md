@@ -61,7 +61,14 @@ the problem is the blob.
 | what was tried | result |
 | --- | --- |
 | the blob's segment written into its own hole (0x9b000000) before INIT_IMAGE (mode 7) | still 0xFFCFFFBB |
-| the metadata in the packed form, the headers with the hash segment right behind them (mode 11) | still 0xFFCFFFBB; the packed and the split forms are byte for byte the same |
+| the metadata in the packed form, the headers with the hash segment right behind them (mode 11) | still 0xFFCFFFBB |
+
+**Correction (2026-11-19, later run).** The mode 11 run also printed "the packed and the split forms
+are byte for byte the same". That comparison was written with two identical branches
+(`memcmp(...) ? "the same" : "the same"`) and both buffers were built from the same read, so it
+could not fail and proved nothing. The claim above is withdrawn: the two forms were **not** shown
+to be the same bytes. Mode 11 now counts the differing bytes and reads the packed form out of the
+`.mdt` file, so the next run measures it.
 
 ## Both blobs are well formed
 

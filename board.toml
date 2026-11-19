@@ -230,7 +230,7 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                # the two slots side by side, so which one carries the modem's firmware is a fact
                # from the device and not an assumption about the reader's order. Mode 13 hands each
                # slot's own blob to the secure world in turn. The runtime path is the mode to run.
-               "fuxi-modem=13",
+               "fuxi-modem=4",
                "fgraph=6",
                # Content follows unixnu-fuxi-old one switch at a time: sheng-aks brings up Apple
                # KeyStore, which AMFI consults before it accepts the adhoc-signed System volume.

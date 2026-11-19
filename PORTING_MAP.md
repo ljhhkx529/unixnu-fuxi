@@ -135,6 +135,117 @@ INIT_IMAGE → MEM_SETUP → 搬分段 → AUTH_AND_RESET，**两个镜像各走
 `authenticateHeader` 里，也就是**分段进洞之前就复位**，随后又在外层复位一次；现已改为
 只在分段进洞之后复位一次，与 Linux 和 ADSP 已验证的路径同形。
 
+**本板匹配的是 `qcom,sm8550-mpss-pas`，由 `qcom_q6v5_pas.c` 处理**（不是旧的
+`qcom_q6v5_mss.c` 那条 RMB 路径；那条路径的 PAS id 是 5，本板不是）。上游
+`qcom_pas_start()` 的八步与本仓 `stepPas()` 的对照：
+
+| 上游 `qcom_pas_start()` | 本仓 | 说明 |
+| --- | --- | --- |
+| `request_firmware(dtb_firmware_name)` | `openImage("modem:modem_dtb")` | 上游取 `modem_dtb.mdt` |
+| `qcom_q6v5_prepare()` | `stepIpcc()` 之前的准备 | 中断与 TCM 保持 |
+| `qcom_pas_pds_enable()` + `clk_prepare_enable(xo/aggre2)` + `regulator_enable(cx)` | rails 投票（模式 3/4） | `cx` 与 `mss` 两个 proxy pd |
+| `qcom_pas_prepare_and_auth_reset(dtb_pas_ctx)` | DTB 的 AUTH_AND_RESET | **在主镜像之前** |
+| `qcom_mdt_pas_load(pas_ctx, firmware)` | `authenticateHeader()` + `loadSegments()` | INIT_IMAGE / MEM_SETUP / 搬分段 |
+| `qcom_pas_prepare_and_auth_reset(pas_ctx)` | 镜像的 AUTH_AND_RESET | 分段进洞之后 |
+| `qcom_q6v5_wait_for_start()` | `stepQmp()` 前的等待 | AOP 握手 |
+| `qcom_pas_metadata_release()` | `releaseImage()` | metadata 在认证后才释放 |
+
+**metadata 的来源是 `.mdt` 文件，不是拼起来的镜像**（Linux
+`drivers/soc/qcom/mdt_loader.c` `qcom_mdt_read_metadata`：先 `memcpy(data, fw->data, ehdr_size)`
+把 ELF 头抄进缓冲区，再按 `ehdr_size + hash_size == fw->size` 这个**打包分支**把 hash 段
+从 `fw->data + ehdr_size` 抄过来；上游的 `fw` 就是 `.mdt` 文件本身）。本仓原先是拿
+`.bNN` 拼出来的 joined image 去凑 metadata，走的是第二个分支（hash 段在文件里的 `p_offset`），
+于是取 hash 的位置与上游不同。上游的哈希段在搬分段时又是从 `.bNN`
+里取的（`mdt_load_split_segment`），所以两个来源都要有，不能混。
+
+**字节上差多少，已经测出来了（2026-11-19 真机，模式 11）：** 紧凑形式与分片形式
+**4044 字节里 0 字节不同**，modem_dtb 与 adsp_dtb 都是。所以这台机器上"从 `.mdt` 取"与
+"从拼起来的镜像取"给安全世界的是**同一批字节**——这个改动与上游一致，但在这块板上是字节上的
+空操作，**不是被拒的原因**。之前的"两者相同"这条是用两个分支一样的 `memcmp` 写的，
+不可能失败、什么也没证明，已撤回；现在这条是数差异字节数得出的，能失败。
+
+**2026-11-19 真机：改了来源，拒绝不变。** 日志写明 `from the mdt file`，错误码仍是
+`0xFFCFFFBB`。所以 metadata 的来源不是安全世界拒绝的理由。
+
+**metadata 缓冲区的地址宽度：查过了，四项都查完了，结论是宽度不是拒绝的理由。**
+
+| 检查项 | 结论 | 出处 |
+| --- | --- | --- |
+| `0x8d5acf000` 是什么地址 | **物理地址**。`getPhysicalSegment(0, nullptr, kIOMemoryMapperNone)` 走 `getPhysicalSegment64` 的分支，返回的是页帧号换算出来的物理地址，不是虚拟地址，也不是 IOMMU 后的 DMA 地址 | `package/FuxiModemProbe.cpp` 的 `authenticateHeader`；XNU `IOMemoryDescriptor.cpp` |
+| 分配它的设备的 `dma_mask` 与 `coherent_dma_mask` | 上游的 SCM 平台设备**默认就是 32 位**：`setup_pdev_dma_masks` 把 `coherent_dma_mask` 设成 `DMA_BIT_MASK(32)`，`dma_mask` 指向同样是 `DMA_BIT_MASK(32)` 的 `platform_dma_mask`；`qcom_scm_probe` 自己一个掩码都没设 | Linux `drivers/base/platform.c:571`、`drivers/firmware/qcom/qcom_scm.c` |
+| `dma_alloc_coherent()` 的返回值与地址宽度 | 上游拿到的是 `dma_addr_t`（64 位类型），但被设备的 32 位掩码约束，所以**要么落在 4 GiB 以下，要么分配失败**。本仓的地址是 64 位值，通过 SMC64 的 x3 寄存器完整传下去，**SMC 编码这一层不截断** | `qcom_scm_pas_init_image` 的 `desc.args[1]`（`u64 args[]`）；`package/QcomScm.h` |
+| 上游用什么分配机制 | **`dma_alloc_coherent`**，就是 coherent DMA API。**不是 CMA，不是 reserved-memory**——保留内存是固件自己的洞（`qcom_pas_alloc_memory_region` 用 `of_reserved_mem_region_to_resource` 取得），装的是分段，不是 metadata | Linux `drivers/firmware/qcom/qcom_scm.c`、`drivers/remoteproc/qcom_q6v5_pas.c` |
+
+**上游还有一条分支本仓用不上**：`use_tzmem` 为真时走 `qcom_tzmem_alloc`（TrustZone 内存池）。
+它是 `desc->needs_tzmem || rproc->has_iommu` 的结果，而 `remoteproc_mpss` 节点**没有 `iommus`
+属性**（`sm8550.dtsi`），`sm8550_mpss_resource` 也没设 `needs_tzmem`，所以本板是 `false`，
+上游在这块板上也用 `dma_alloc_coherent`。
+
+**这台板上没有 4 GiB 以下的 DRAM 可分配**（`../uefi-fuxi` 的 `MemoryMapLib.c`）：
+最低的 AddMem DRAM 行是 `DRAM 0x811d0000`（0x30000 字节），4 GiB 以下其余的全是保留区
+（`mpss_region` 0x8A800000、`q6_mpss_dtb_region` 0x9B000000、`mpss_dsm_region` 0xD4D00000）。
+所以主线那个 fuxi 移植必须开 `CONFIG_ZONE_DMA`/`CONFIG_ZONE_DMA32` 才分配得出 metadata，
+这是硬件事实，本仓绕不开。
+
+**但宽度不是 secure world 拒绝 modem blob 的理由**（PAS 矩阵，`fuxi-modem=5`）：
+
+| blob | metadata 地址 | PAS | 结果 |
+| --- | --- | --- | --- |
+| `adsp_dtb` | 0x8d0b1f000 | 36 | **0/0 接受** |
+| `modem_dtb` | 0x8d0b1e000 | 38 | 0xFFCFFFBB 拒绝 |
+| `modem_dtb` | 0x8d0b1e000 | 36 | 0xFFCFFFBB 拒绝 |
+
+两个地址相邻，**都在 4 GiB 以上**。如果 secure world 只能访问 32 位地址，两个会一起失败；
+事实是一个被接受。所以**地址宽度区分不了被接受的 blob 与被拒绝的 blob**，区分它们的是镜像内容
+（adsp 的是 relocatable，modem 的是 fixed）。低地址分配的改动**不会修好 modem 的拒绝**。
+
+**本仓与上游的差别，以及要不要改**：本仓的掩码是 `0xfffffffffffff000`（不约束），上游是 32 位。
+这是真实差别，但按上面那条，它不是拒绝的原因。**本轮不改分配**：理由是改它需要新开一个
+低 DRAM 窗口（音频链占着 0xd0000000 那 64 KiB），而它换不来任何被拒绝的 blob 的改善。
+若将来要用，正确的做法是走 XNU 的掩码机制（`NativeAdrenoMemory.cpp` 的写法：把掩码限制到
+4 GiB 以下，让分配器自己选），**不是硬编码一个低地址覆盖现有分配**。
+
+**之前记的"metadata 地址在这块板的 DRAM 之外"是错的，已撤回**：UEFI 的内存图
+（`../uefi-fuxi/Platforms/Xiaomi/fuxiPkg/Library/MemoryMapLib/MemoryMapLib.c`）有
+`{"DRAM 0x8c0000000", 0x8C0000000, 0x140000000, ...}` 一行，覆盖 0x8C0000000..0xA00000000，
+0x8d5acf000 就在里面，是普通内存。真正为真的那句话更窄：**这块板没有 4 GiB 以下的 DRAM 可分配**。
+
+**主线 Linux 的 fuxi 移植在同一块板上撞到过一模一样的问题并修好了**：它的
+`modem_dtb` PAS 初始化返回 **-12**，原因是 `dma_alloc_coherent` 分配那 4044 字节返回 NULL——
+系统内存超过 4 GiB，而 `CONFIG_ZONE_DMA`/`CONFIG_ZONE_DMA32` 关着，没有 32 位的
+coherent 区可退；打开这两项后 modem 跑起来了（主线树 `/tmp/x13` 的
+`docs/交接-新会话-20261030-2110.md`）。那个移植在这块板上能起 modem，
+所以硬件侧在那边已经定了。
+
+本仓该走自己的、已经验证过的配方：**固定低 DRAM 映射**（音频链已证明可用：
+`0xd0000000`、`kIOMapAnywhere` 必需）。metadata 是 4044 字节，且上游要求 4 KiB 对齐，
+放得下。**未实现**：那个低 DRAM 窗口是 64 KiB 且已被音频链占用，需要另开一个窗口。
+
+`modem_dtb` 的实测形状：`.mdt` 4044 字节（148 字节头 + 3896 字节 hash），joined blob
+7992 字节、hash 在 4096（`.b02`）。两个 `.mdt` 都满足上游的打包分支，所以上游拿到的
+就是 `.mdt` 里的 hash。
+
+**上游还有两步本仓没做**（都在 `qcom_q6v5_pas.c` 与 `qcom_scm.c` 里读到的）：
+
+| 上游的做法 | 本仓 | 为什么要紧 |
+| --- | --- | --- |
+| `qcom_pas_assign_memory_region()`：把设备树里第 3 块保留内存（`mpss_dsm_mem@0xd4d00000`，`0x3300000`，DSM 区）从 HLOS（vmid 3）交给 modem 的 MSA（vmid 0xF），**在任何 PAS 调用之前** | 没有 | 这是 **modem 独有**的：ADSP 的 `sm8550_adsp_resource` 没有 `region_assign_idx`。所以"ADSP 接受、modem 拒绝"不能用 ADSP 的成功来论证这一步可省 |
+| 每个 PAS 调用前后的 `qcom_scm_clk_enable()`（SCM 的 core/iface 时钟）与 `qcom_scm_bw_enable()`（总线带宽） | 没有 | 调用本身在 2026-11-19 真机上成功过（ADSP 接受），说明这一步不是 modem 被拒的原因，但它仍是上游的规矩 |
+
+内存归属那一步不能照抄：上游把参数块放在 SCM 的 secure memory pool 里
+（`qcom_tzmem_alloc`，由 TrustZone 内存分配器供给，平台支持时还走 SHM bridge），
+不是普通可缓存的分配。上游对 TZ mem 的支持还要走 `drivers/firmware/qcom/qcom_tzmem.c`
+和 `qcom_scm_shm_bridge_*`，超出本轮的四文件范围，**未实现**。
+
+**metadata 缓冲区的缓存属性**：上游用 `dma_alloc_coherent` 分配它，
+`qcom_scm_pas_init_image` 的注释写明它必须"physically contiguous, 4K aligned and
+**non-cachable** to avoid XPU violations"。本仓用 `IOBufferMemoryDescriptor::
+inTaskWithPhysicalMask` 分配，是**可缓存**的映射，但在 SCM 调用前用 `dc civac`
+把整段清到 PoC（`cleanToPoc`），所以安全世界读到的字节是新的。
+`IOBufferMemoryDescriptor` 的构造函数没有暴露不可缓存的选项，要补这一条需要另找 API，
+**本轮未做**。ADSP 的 blob 用同一个分配方式被接受，所以这不是 modem blob 被拒的原因，
+但它仍是上游的规矩。
+
 **ADSP 与 modem 争同一条中断线和同一个 TCS**（2026-11-19）：两边的 bring-up 都要
 
 | 资源 | ADSP | modem | 能否共享 |
@@ -158,6 +269,8 @@ ADSP 的运行时重新打开之前，modem 和 ADSP 必须共用一个主控。
 ## 待查的上游源码
 
 <!-- 列出要先读上游才能定下来的问题。读完把答案写回上面的表或 facts/baseband/，然后把这一条删掉。 -->
+
+（本节为空。）
 
 
 ## 桥接与 IPA
@@ -238,7 +351,7 @@ IPCC client 2。这些都已从一手出处确认来源，但没有跑过真机�
 | 试的东西 | 结果 |
 | --- | --- |
 | 把 blob 的分段先搬进它自己的洞（0x9b000000）再 INIT_IMAGE（`fuxi-modem=7`） | 仍然 0xFFCFFFBB |
-| 把 metadata 换成紧凑形式（头后面直接跟 hash 段，`fuxi-modem=11`） | 仍然 0xFFCFFFBB；紧凑形式与分片形式逐字节相同 |
+| 把 metadata 换成紧凑形式（头后面直接跟 hash 段，`fuxi-modem=11`） | 仍然 0xFFCFFFBB。**"紧凑形式与分片形式逐字节相同"这条已撤回**：那次比较写成了两个分支一样的 `memcmp(...) ? "the same" : "the same"`，两个缓冲区又都来自同一次读，所以它不可能失败，什么也没证明。模式 11 现在改为统计差异字节数，且紧凑形式改从 `.mdt` 文件读 |
 
 **两个 blob 本身都是完好的**：modem 的 512 字节段声明 452+60=512，adsp 的 8376 字节段声明
 8316+60=8376，都自洽；头都是 `43 46 47 4c`（CFGL）。modem 的 blob 是 **fixed**（段地址 0x9b000000），
@@ -260,6 +373,11 @@ modem 的**主镜像**（149 MB，32 段，PAS 4）同样被拒，错误码同�
 两个槽是**同一 LUN 上两个不同的分区**（GPT 名字匹配是全等的），**两个槽都有基带固件**，
 而且**两个槽的固件不一样**：两个 `modem_dtb` blob 都是 7992 字节，逐字节比较有 **95 字节不同**，
 第一处在偏移 4533——落在 hash 段里（头 148 字节，hash 段 4096 到 7992）。所以两个槽是**两个不同的构建**。
+
+**同一件事在 `.mdt` 文件上也量到了（2026-11-19，模式 12）：** 两个槽的 `modem_dtb.mdt` 都是
+4044 字节，逐字节比较也是 **95 字节不同**，第一处在偏移 **585**（`.mdt` 的布局是 148 字节头
+接 3896 字节 hash，585 落在 hash 段里）。同一批差异在两种文件布局上各出现一次，
+这是"两个槽是两个不同构建"的字节级证据，而且是在 metadata 真正被取用的那个文件上。
 
 **这条线索变了**：之前记录写"固件来自 `modem_a`"是**推断**——`mountPartition()` 先试 `modem_b`，
 清点读到的其实是 `modem_b`。清点也证明**槽不是拒绝的原因**：被测的那个槽（`modem_b`）确实有固件。

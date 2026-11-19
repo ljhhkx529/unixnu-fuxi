@@ -697,6 +697,22 @@ int firmwareRead(void *context, uint64_t offset, void *to, size_t length)
     return fuxi_adsp_fw_read(context, offset, to, length);
 }
 
+/* Reads the .mdt file, which is the file the secure world authenticates the metadata out of. */
+int firmwareReadMdt(void *context, uint64_t offset, void *to, size_t length)
+{
+    return fuxi_adsp_fw_read_mdt(context, offset, to, length);
+}
+
+/* Builds the metadata blob: the ELF header followed by the hash segment, both out of the .mdt file
+ * when the firmware has one. The joined image of the .bNN pieces has the hash at another offset in
+ * another file, and the two are not the same bytes. */
+int buildMetadata(Image &image, uint8_t *va, uint64_t bytes)
+{
+    return image.mdt.mdt_size
+        ? qcom_mdt_metadata_from_mdt(&image.mdt, firmwareRead, image.file, firmwareReadMdt, image.file, va, bytes)
+        : qcom_mdt_metadata(&image.mdt, firmwareRead, image.file, va, bytes);
+}
+
 int openImage(Image &image, const char *path, uint32_t size_slot, uint32_t segment_slot)
 {
     image = {};
@@ -711,6 +727,8 @@ int openImage(Image &image, const char *path, uint32_t size_slot, uint32_t segme
         image.file = nullptr;
         return -1000 + rc;
     }
+    /* The .mdt file's own size: the metadata is taken out of it. */
+    image.mdt.mdt_size = fuxi_adsp_fw_mdt_size(image.file);
     native_fuxi_adsp_stats[size_slot] = static_cast<uint32_t>(image.size >> 10);
     native_fuxi_adsp_stats[segment_slot] = image.mdt.count;
     syncStats();
@@ -741,7 +759,7 @@ int authenticateHeader(Image &image, uint32_t pas, uint64_t base, unsigned stage
         bytes, 0xfffffffffffff000ull);
     if (!image.meta || image.meta->prepare() != kIOReturnSuccess) return -12;
     uint8_t *va = static_cast<uint8_t *>(image.meta->getBytesNoCopy());
-    if (!va || qcom_mdt_metadata(&image.mdt, firmwareRead, image.file, va, bytes)) return -5;
+    if (!va || buildMetadata(image, va, bytes)) return -5;
     cleanToPoc(va, static_cast<size_t>(bytes));
     gOwner.meta_bytes = bytes;
     gOwner.mdt_header = image.mdt.header_size;

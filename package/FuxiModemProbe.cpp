@@ -397,6 +397,23 @@ int firmwareRead(void *context, uint64_t offset, void *to, size_t length)
     return fuxi_adsp_fw_read(context, offset, to, length);
 }
 
+/* Reads the .mdt file, which is the file the secure world authenticates the metadata out of. */
+int firmwareReadMdt(void *context, uint64_t offset, void *to, size_t length)
+{
+    return fuxi_adsp_fw_read_mdt(context, offset, to, length);
+}
+
+/* Builds the metadata blob for an image: the ELF header followed by the hash segment, both taken out
+ * of the .mdt file, which is the form the secure world authenticates (Linux drivers/soc/qcom/
+ * mdt_loader.c, qcom_mdt_read_metadata). The joined image of the .bNN pieces has the hash at another
+ * offset in another file, and the two are not the same bytes. */
+int buildMetadata(Image &image, uint8_t *va, uint64_t bytes)
+{
+    return image.mdt.mdt_size
+        ? qcom_mdt_metadata_from_mdt(&image.mdt, firmwareRead, image.file, firmwareReadMdt, image.file, va, bytes)
+        : qcom_mdt_metadata(&image.mdt, firmwareRead, image.file, va, bytes);
+}
+
 int openImage(Image &image, const char *path)
 {
     image = {};
@@ -411,6 +428,9 @@ int openImage(Image &image, const char *path)
         image.file = nullptr;
         return -1000 + rc;
     }
+    /* The .mdt file is the header part followed by the hash segment, and it is what the secure world
+     * authenticates, so its size is recorded and its bytes are read on their own. */
+    image.mdt.mdt_size = fuxi_adsp_fw_mdt_size(image.file);
     return 0;
 }
 
@@ -442,14 +462,20 @@ int authenticateHeader(Image &image, uint32_t pas, uint64_t base)
         bytes, 0xfffffffffffff000ull);
     if (!image.meta || image.meta->prepare() != kIOReturnSuccess) return -12;
     uint8_t *va = static_cast<uint8_t *>(image.meta->getBytesNoCopy());
-    if (!va || qcom_mdt_metadata(&image.mdt, firmwareRead, image.file, va, bytes)) return -5;
+    if (!va) return -5;
+    /* The metadata is the ELF header followed by the hash segment, both taken out of the .mdt file:
+     * that is the form the secure world authenticates (Linux drivers/soc/qcom/mdt_loader.c,
+     * qcom_mdt_read_metadata). The joined image of the .bNN pieces has the hash at another offset in
+     * another file, and the two are not the same bytes. */
+    if (buildMetadata(image, va, bytes)) return -5;
     cleanToPoc(va, static_cast<size_t>(bytes));
     const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
     /* The secure world reads this metadata buffer. Its address and size are what it looks at, so
      * they are printed: a refusal that is not about the pas id is most likely about them. */
-    printf("FUXI_MODEM: the metadata is %llu bytes at %llx, hash %d, %s\n",
+    printf("FUXI_MODEM: the metadata is %llu bytes at %llx, hash %d, %s, from the %s\n",
            static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(phys),
-           image.mdt.hash, image.mdt.relocatable ? "relocatable" : "fixed");
+           image.mdt.hash, image.mdt.relocatable ? "relocatable" : "fixed",
+           image.mdt.mdt_size ? "mdt file" : "joined image");
 
     unsigned steps[FuxiModemPasStepCount];
     const unsigned count = fuxi_modem_pas_header_steps(image.mdt.relocatable ? 1 : 0, steps, FuxiModemPasStepCount);
@@ -988,7 +1014,7 @@ int pasInstrument()
                 bytes, 0xfffffffffffff000ull);
             if (blob.meta && blob.meta->prepare() == kIOReturnSuccess) {
                 uint8_t *va = static_cast<uint8_t *>(blob.meta->getBytesNoCopy());
-                if (va && !qcom_mdt_metadata(&blob.mdt, firmwareRead, blob.file, va, bytes)) {
+                if (va && !buildMetadata(blob, va, bytes)) {
                     cleanToPoc(va, static_cast<size_t>(bytes));
                     const uint64_t phys = blob.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
                     const ScmResult result = secureCall(QCOM_SCM_PAS_INIT_IMAGE,
@@ -1066,7 +1092,7 @@ int pasMatrix()
                     return -12;
                 }
                 uint8_t *va = static_cast<uint8_t *>(blob.meta->getBytesNoCopy());
-                if (!va || qcom_mdt_metadata(&blob.mdt, firmwareRead, blob.file, va, bytes)) {
+                if (!va || buildMetadata(blob, va, bytes)) {
                     printf("FUXI_MODEM: the matrix could not read the metadata of %s\n", paths[image]);
                     releaseImage(blob);
                     return -5;
@@ -1152,7 +1178,7 @@ int pasIdSweep()
             return -12;
         }
         uint8_t *va = static_cast<uint8_t *>(blob.meta->getBytesNoCopy());
-        if (!va || qcom_mdt_metadata(&blob.mdt, firmwareRead, blob.file, va, bytes)) {
+        if (!va || buildMetadata(blob, va, bytes)) {
             printf("FUXI_MODEM: the sweep could not read the metadata\n");
             releaseImage(blob);
             return -5;
@@ -1248,7 +1274,7 @@ int pasHashCompare()
         return -12;
     }
     uint8_t *va = static_cast<uint8_t *>(main.meta->getBytesNoCopy());
-    if (!va || qcom_mdt_metadata(&main.mdt, firmwareRead, main.file, va, bytes)) {
+    if (!va || buildMetadata(main, va, bytes)) {
         printf("FUXI_MODEM: the hash compare could not read the metadata\n");
         releaseImage(main);
         return -5;
@@ -1291,7 +1317,8 @@ int pasPacked()
         }
         const QcomMdtSegment &hash = blob.mdt.segment[blob.mdt.hash];
         const uint64_t headers = blob.mdt.header_size;
-        /* The packed form: the headers, then the hash segment right behind them. */
+        /* The packed form: the headers, then the hash segment right behind them, which is the .mdt
+           file's own layout and the form the secure world authenticates. */
         const uint64_t bytes = headers + hash.file_size;
         uint8_t *packed = static_cast<uint8_t *>(IOMallocData(bytes));
         if (!packed) {
@@ -1299,26 +1326,23 @@ int pasPacked()
             releaseImage(blob);
             continue;
         }
-        firmwareRead(blob.file, 0, packed, static_cast<size_t>(headers));
-        firmwareRead(blob.file, hash.file_offset, packed + headers, static_cast<size_t>(hash.file_size));
+        firmwareReadMdt(blob.file, 0, packed, static_cast<size_t>(headers));
+        firmwareReadMdt(blob.file, headers, packed + headers, static_cast<size_t>(hash.file_size));
         /* The split form, the way the reader joins it: the same headers, then the hash segment at the
-           place the program header names. */
+           place the program header names, which in the joined image is another file at another offset. */
         uint8_t *split = static_cast<uint8_t *>(IOMallocData(bytes));
         if (split) {
             firmwareRead(blob.file, 0, split, static_cast<size_t>(headers));
             firmwareRead(blob.file, hash.file_offset, split + headers, static_cast<size_t>(hash.file_size));
-            printf("FUXI_MODEM: the packed test: %s: the split and the packed forms are %s\n",
-                   paths[image], memcmp(packed, split, static_cast<size_t>(bytes)) ? "the same" : "the same");
-        }
-        /* The metadata the caller actually builds: the headers out of the file, then the hash segment
-           at the place the program header names, which for the joined image is the file offset the
-           program header gives. */
-        uint8_t *built = static_cast<uint8_t *>(IOMallocData(bytes));
-        if (built) {
-            firmwareRead(blob.file, 0, built, static_cast<size_t>(headers));
-            firmwareRead(blob.file, hash.file_offset, built + headers, static_cast<size_t>(hash.file_size));
-            printf("FUXI_MODEM: the packed test: %s: the hash segment sits at the file offset %llu\n",
-                   paths[image], static_cast<unsigned long long>(hash.file_offset));
+            unsigned differing = 0;
+            for (uint64_t i = 0; i < bytes; ++i) if (packed[i] != split[i]) ++differing;
+            printf("FUXI_MODEM: the packed test: %s: the packed and the split forms differ in %u of %llu bytes\n",
+                   paths[image], differing, static_cast<unsigned long long>(bytes));
+            printf("FUXI_MODEM: the packed test: %s: the mdt file is %llu bytes, the hash segment is %llu bytes "
+                   "at the joined offset %llu\n", paths[image],
+                   static_cast<unsigned long long>(blob.mdt.mdt_size),
+                   static_cast<unsigned long long>(hash.file_size),
+                   static_cast<unsigned long long>(hash.file_offset));
         }
         /* The packed metadata goes to the secure world, in a buffer of its own. */
         blob.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
@@ -1342,7 +1366,6 @@ int pasPacked()
         }
         if (packed) IOFreeData(packed, bytes);
         if (split) IOFreeData(split, bytes);
-        if (built) IOFreeData(built, bytes);
         releaseImage(blob);
     }
     return 0;
@@ -1420,14 +1443,19 @@ int slotSurvey()
     }
     /* The two slots' modem blobs, compared byte for byte. Two slots that hold the same firmware
      * are the same firmware, and the secure world will refuse both the same way; two that differ
-     * are different firmwares, and the refusal belongs to one of them. */
+     * are different firmwares, and the refusal belongs to one of them.
+     *
+     * The .mdt file is compared as well, since that is the file the metadata is taken out of. */
     {
         void *blob[2] = {nullptr, nullptr};
         uint64_t size[2] = {0, 0};
+        void *mdt[2] = {nullptr, nullptr};
+        uint64_t mdt_size[2] = {0, 0};
         for (unsigned s = 0; s < 2; ++s) {
-            const int rc = fuxi_adsp_fw_read_slot(slots[s], "modem_dtb", &size[s], &blob[s]);
-            printf("FUXI_MODEM: the slot %s's modem_dtb: %llu bytes (%d)\n", slots[s],
-                   static_cast<unsigned long long>(size[s]), rc);
+            const int rc = fuxi_adsp_fw_read_slot(slots[s], "modem_dtb", &size[s], &blob[s], &mdt[s], &mdt_size[s]);
+            printf("FUXI_MODEM: the slot %s's modem_dtb: %llu bytes (%d), the mdt %llu bytes\n", slots[s],
+                   static_cast<unsigned long long>(size[s]), rc,
+                   static_cast<unsigned long long>(mdt_size[s]));
         }
         if (blob[0] && blob[1]) {
             if (size[0] != size[1]) {
@@ -1447,7 +1475,23 @@ int slotSurvey()
                        static_cast<unsigned long long>(size[0]), differ, first_at);
             }
         }
-        for (unsigned s = 0; s < 2; ++s) if (blob[s]) IOFreeData(blob[s], size[s]);
+        if (mdt[0] && mdt[1] && mdt_size[0] == mdt_size[1]) {
+            const uint8_t *a = static_cast<const uint8_t *>(mdt[0]);
+            const uint8_t *b = static_cast<const uint8_t *>(mdt[1]);
+            unsigned differ = 0;
+            unsigned first_at = 0;
+            for (uint64_t i = 0; i < mdt_size[0]; ++i) {
+                if (a[i] == b[i]) continue;
+                if (!differ) first_at = (unsigned)i;
+                ++differ;
+            }
+            printf("FUXI_MODEM: the two slots' mdt files: %llu bytes compared, %u differ, the first at %u\n",
+                   static_cast<unsigned long long>(mdt_size[0]), differ, first_at);
+        }
+        for (unsigned s = 0; s < 2; ++s) {
+            if (blob[s]) IOFreeData(blob[s], size[s]);
+            if (mdt[s]) IOFreeData(mdt[s], mdt_size[s]);
+        }
     }
     return 0;
 }
@@ -1482,7 +1526,9 @@ int slotPas()
     for (unsigned s = 0; s < 2; ++s) {
         uint64_t size = 0;
         void *raw = nullptr;
-        const int rc = fuxi_adsp_fw_read_slot(slots[s], "modem_dtb", &size, &raw);
+        void *mdt = nullptr;
+        uint64_t mdt_size = 0;
+        const int rc = fuxi_adsp_fw_read_slot(slots[s], "modem_dtb", &size, &raw, &mdt, &mdt_size);
         if (rc || !raw) {
             printf("FUXI_MODEM: the slot %s's blob could not be read (%d)\n", slots[s], rc);
             if (raw) IOFreeData(raw, size);
@@ -1496,22 +1542,32 @@ int slotPas()
             IOFreeData(raw, size);
             continue;
         }
-        printf("FUXI_MODEM: the slot %s's blob: %llu bytes, %u segments, %s, hash %d, a %llu byte header\n",
+        image.mdt_size = mdt_size;
+        struct slot_bytes mdt_blob = {static_cast<const uint8_t *>(mdt), mdt_size};
+        printf("FUXI_MODEM: the slot %s's blob: %llu bytes, %u segments, %s, hash %d, a %llu byte header, "
+               "a %llu byte mdt\n",
                slots[s], static_cast<unsigned long long>(size), image.count,
                image.relocatable ? "relocatable" : "fixed", image.hash,
-               static_cast<unsigned long long>(image.header_size));
+               static_cast<unsigned long long>(image.header_size),
+               static_cast<unsigned long long>(mdt_size));
         const uint64_t bytes = qcom_mdt_metadata_size(&image);
         uint8_t *va = static_cast<uint8_t *>(IOMallocData(bytes));
         if (!va) {
             printf("FUXI_MODEM: the slot %s's metadata could not be allocated\n", slots[s]);
             IOFreeData(raw, size);
+            if (mdt) IOFreeData(mdt, mdt_size);
             continue;
         }
-        const int built = qcom_mdt_metadata(&image, slotRead, &blob, va, bytes);
+        /* The metadata is the ELF header followed by the hash segment, both out of the slot's .mdt
+         * file: that is the form the secure world authenticates. */
+        const int built = mdt_size
+            ? qcom_mdt_metadata_from_mdt(&image, slotRead, &blob, slotRead, &mdt_blob, va, bytes)
+            : qcom_mdt_metadata(&image, slotRead, &blob, va, bytes);
         if (built) {
             printf("FUXI_MODEM: the slot %s's metadata did not build (%d)\n", slots[s], built);
             IOFreeData(va, bytes);
             IOFreeData(raw, size);
+            if (mdt) IOFreeData(mdt, mdt_size);
             continue;
         }
         cleanToPoc(va, static_cast<size_t>(bytes));
@@ -1523,6 +1579,7 @@ int slotPas()
             if (meta) meta->release();
             IOFreeData(va, bytes);
             IOFreeData(raw, size);
+            if (mdt) IOFreeData(mdt, mdt_size);
             continue;
         }
         uint8_t *target = static_cast<uint8_t *>(meta->getBytesNoCopy());
@@ -1542,6 +1599,7 @@ int slotPas()
         meta->release();
         IOFreeData(va, bytes);
         IOFreeData(raw, size);
+        if (mdt) IOFreeData(mdt, mdt_size);
     }
     return 0;
 }
@@ -1660,7 +1718,7 @@ int pasFixedFirst()
         return -12;
     }
     uint8_t *va = static_cast<uint8_t *>(blob.meta->getBytesNoCopy());
-    if (!va || qcom_mdt_metadata(&blob.mdt, firmwareRead, blob.file, va, bytes)) {
+    if (!va || buildMetadata(blob, va, bytes)) {
         printf("FUXI_MODEM: the fixed-first test could not read the metadata\n");
         releaseImage(blob);
         return -5;
