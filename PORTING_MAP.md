@@ -242,12 +242,17 @@ coherent 区可退；打开这两项后 modem 跑起来了（主线树 `/tmp/x13
 7992 字节、hash 在 4096（`.b02`）。两个 `.mdt` 都满足上游的打包分支，所以上游拿到的
 就是 `.mdt` 里的 hash。
 
-**上游还有两步本仓没做**（都在 `qcom_q6v5_pas.c` 与 `qcom_scm.c` 里读到的）：
+**上游与本仓的差别，2026-11-20 逐项核对后的状态**（`qcom_q6v5_pas.c` 与 `qcom_scm.c`）：
 
 | 上游的做法 | 本仓 | 为什么要紧 |
 | --- | --- | --- |
-| `qcom_pas_assign_memory_region()`：把设备树里第 3 块保留内存（`mpss_dsm_mem@0xd4d00000`，`0x3300000`，DSM 区）从 HLOS（vmid 3）交给 modem 的 MSA（vmid 0xF），**在任何 PAS 调用之前** | **已做**（`package/FuxiModemAssign.h` + `stepAssign()`，2026-11-20） | 这是 **modem 独有**的：ADSP 的 `sm8550_adsp_resource` 没有 `region_assign_idx`。所以"ADSP 接受、modem 拒绝"不能用 ADSP 的成功来论证这一步可省 |
-| 每个 PAS 调用前后的 `qcom_scm_clk_enable()`（SCM 的 core/iface 时钟）与 `qcom_scm_bw_enable()`（总线带宽） | 没有 | 调用本身在 2026-11-19 真机上成功过（ADSP 接受），说明这一步不是 modem 被拒的原因，但它仍是上游的规矩 |
+| `qcom_pas_assign_memory_region()`：把设备树里第 3 块保留内存（`mpss_dsm_mem@0xd4d00000`，`0x3300000`，DSM 区）从 HLOS（vmid 3）交给 modem 的 MSA（vmid 0xF），**在任何 PAS 调用之前** | **已做**（`package/FuxiModemAssign.h` + `stepAssign()`，2026-11-20，真机 `scm 0/0` 接受） | 这是 **modem 独有**的：ADSP 的 `sm8550_adsp_resource` 没有 `region_assign_idx`。所以"ADSP 接受、modem 拒绝"不能用 ADSP 的成功来论证这一步可省。**做完并被接受后，拒绝没有变，所以这一步不是原因** |
+| 每个 PAS 调用前后的 `qcom_scm_clk_enable()`（SCM 的 core/iface/bus 三个时钟）与 `qcom_scm_bw_enable()`（总线带宽 `icc_set_bw`） | 没有 | 调用本身在 2026-11-19 真机上成功过（ADSP 接受），说明这一步不是 modem 被拒的原因，但它仍是上游的规矩。**这是本仓与上游的序列之间最后一处差别** |
+| PAS 三个步骤的参数类型字（`0x82` / `0x03` / `0x01`） | **一致**（`package/FuxiModemPas.h` 的 `fuxi_modem_pas_arginfo()`） | 2026-11-20 逐字核对 |
+| metadata 从 `.mdt` 文件取（上游的打包分支） | **一致**（`package/QcomMdt.c` 的 `qcom_mdt_metadata_from_mdt()`） | 2026-11-19 核对 |
+| 探针顺序：分配洞 → region assign → 时钟 → proxy pd → `rproc_add` | **一致**（`stepAssign()` → `stepRails()` → `stepPas()`） | 2026-11-20 核对。DTB 的 INIT_IMAGE 在上游属于**启动阶段**（rails 之后），本仓同 |
+| fixed（不可重定位）镜像：少发 MEM_SETUP，分段落点用洞的物理基址 | **一致**（`fuxi_modem_pas_header_steps()`、`qcom_mdt_place()`） | 2026-11-20 核对 |
+| `qcom_pas_shutdown(lite_pas_id)` / `lite_dtb_pas_id` | 不需要 | `sm8550_mpss_resource` 没有这两个字段，上游自己也不发 |
 
 **region assign 的形状（2026-11-20 在上游 7.4-rc3 里逐行读出来的，`package/FuxiModemAssign.h` 是它的逐字实现）**：
 
@@ -305,7 +310,7 @@ DTB 的 INIT_IMAGE 仍然回 `0xFFCFFFBB`，与 2026-11-19 完全一样。
 连 `stepAssign()` 的第一行 `printf` 都没到。它变成 `MAP_MEM_IO`（`iomd_mem_types[]`），
 `vmProtForCacheMode` 还要额外给 `VM_PROT_WRITE`（VM 改缓存属性需要写权限）。
 上游自己的 `dma_alloc_coherent` 在 ARM64 上是**可缓存但一致**的，它不要求不可缓存的映射，
-也不做任何清缓存——一致��是 DMA API 的职责；本仓里与之等价的是调用者那次 `cleanToPoc`。
+也不做任何清缓存——一致——那是 DMA API 的职责；本仓里与之等价的是调用者那次 `cleanToPoc`。
 所以现在**整页 + 物理连续 + 页对齐 + 页内清零 + `cleanToPoc` 全部保留**，
 但**不再强制不可缓存的映射**。改完这一步，线程就过了分配，assign 被安全世界接受（0/0）。
 
@@ -333,10 +338,69 @@ ADSP 的运行时重新打开之前，modem 和 ADSP 必须共用一个主控。
 
 <!-- 列出要先读上游才能定下来的问题。读完把答案写回上面的表或 facts/baseband/，然后把这一条删掉。 -->
 
-无。region assign 的参数块结构、七���参数的逐个含义、七参数怎么进 SMC64 的寄存器、
-以及 DTB 那一步搬不搬分段，这四个问题已在 2026-11-20 全部读完上游并写回上面的表
-（`package/FuxiModemAssign.h` 是它的逐字实现，`evidence/2026-11-20-modem-region-assign.md`
-是它的真机结果）。
+**没有待查的上游源码。** 2026-11-20 读完上游并写回下面的答案：region assign 的参数块结构、
+七个参数的逐个含义、七参数怎么进 SMC64 的寄存器、DTB 那一步搬不搬分段、
+PAS 三个步骤的参数类型字、fixed 镜像走哪条路、探针顺序与 DTB 的 INIT_IMAGE 属于哪个阶段。
+
+**2026-11-20 第三次读上游：探针顺序与 DTB 的 INIT_IMAGE 属于哪个阶段（已核对，本仓一致）**
+
+上游探针（`qcom_q6v5_pas.c` 的 `qcom_pas_probe`）的行号顺序：
+
+| 行 | 上游做什么 | 本仓对应 |
+| --- | --- | --- |
+| 976 | `qcom_pas_alloc_memory_region()`：解析设备树的保留内存（DTB 的洞是**第 2 块**，modem 的洞是第 1 块） | `kModemDtbCarveoutBase` / `kModemCarveoutBase`（与厂商 DTS 一致） |
+| 980 | `qcom_pas_assign_memory_region()`：**在任何 PAS 调用之前**把 DSM 区从 HLOS 交给 modem 的 MSA | `stepAssign()`（本仓也在 PAS 之前） |
+| 984 | `qcom_pas_init_clock()` | （无 SCM 时钟，见"上游还有两步本仓没做"那张表） |
+| 988 | `qcom_pas_init_regulator()` | — |
+| 992 | `qcom_pas_pds_attach()`：拿 `cx` 与 `mss` 两个 proxy pd | `stepRails()` |
+| 1022 | `pas->pas_ctx->use_tzmem = desc->needs_tzmem \|\| rproc->has_iommu` | — |
+| 1033 | `rproc_add(rproc)` | — |
+
+**DTB 的 INIT_IMAGE 属于启动阶段，不属于探针阶段。** 上游 `qcom_pas_load()`（`.load` 回调，
+`qcom_q6v5_pas.c:259`）是由 remoteproc 核心在 **`rproc_start()` 里**调的
+（`remoteproc_core.c:1274` → `rproc_load_segments()` → `rproc->ops->load()`，
+`remoteproc_internal.h:222-228`），而 `rproc_start()` 是启动阶段。
+所以上游的 DTB 的 INIT_IMAGE 与搬分段都发生在 **`qcom_pas_start()` 里、在 rails 投票之后**，
+与本仓 `stepRails()` → `stepPas()` 的顺序一致。
+**本仓的 PAS 顺序与上游一致。**
+
+上游 `qcom_pas_load()` 里另外两件事，本仓不需要做：
+`qcom_pas_shutdown(lite_pas_id)` 与 `qcom_pas_shutdown(lite_dtb_pas_id)`——
+`sm8550_mpss_resource` **没有**这两个字段（只有 `pas_id = 4` 与 `dtb_pas_id = 0x26`），
+所以上游自己也不发这两个关闭调用。
+
+**2026-11-20 第二次读上游：PAS 三个步骤的参数类型字与 fixed 镜像的路径（已核对，本仓一致）**
+
+上游三个描述符的 `.arginfo`（`drivers/firmware/qcom/qcom_scm.c`）：
+
+| 步骤 | 上游的 `.arginfo` | 算出来的值 | 本仓 `fuxi_modem_pas_arginfo()` | 一致 |
+| --- | --- | --- | --- | --- |
+| INIT_IMAGE | `QCOM_SCM_ARGS(2, QCOM_SCM_VAL, QCOM_SCM_RW)` | `2 \| VAL<<4 \| RW<<6` = **0x82** | `qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0)` | 是 |
+| MEM_SETUP | `QCOM_SCM_ARGS(3)` | **0x03** | `qcom_scm_args(3, 0, 0, 0)` | 是 |
+| AUTH_AND_RESET | `QCOM_SCM_ARGS(1)` | **0x01** | `qcom_scm_args(1, 0, 0, 0)` | 是 |
+
+（`QCOM_SCM_ARGS` 的编码：`a<<4 \| b<<6 \| c<<8 \| ...`，计数在 bits 3:0。）
+
+**fixed 镜像在上游走的是哪条路**（`drivers/soc/qcom/mdt_loader.c` `__qcom_mdt_pas_init` + `qcom_mdt_load_no_init`）：
+
+- `relocate` 只在**可加载**的程序头上判断：`mdt_phdr_loadable()` 要求 `p_type == PT_LOAD`、
+  不是 hash 类型、`p_memsz != 0`；`relocate = true` 当且仅当某个可加载段的 `p_flags` 带
+  `QCOM_MDT_RELOCATABLE`（`BIT(27)`）。
+- `relocate` 为真才调 `qcom_pas_mem_setup(pas_id, mem_phys, max_addr - min_addr)`。
+  **fixed 镜像根本不调 MEM_SETUP**——与本仓 `fuxi_modem_pas_header_steps()` 的做法一致。
+- 分段的落点（`qcom_mdt_load_no_init`）：
+  - relocatable：`mem_reloc = min_addr`，落点 = `p_paddr - min_addr`；
+  - **fixed**：`mem_reloc = mem_phys`（**洞的物理基址**），落点 = `p_paddr - mem_phys`。
+  本仓 `qcom_mdt_place()` 的 fixed 分支是 `s->address - region_base`，与此一致。
+- `min_addr` / `max_addr` 都用 **`p_paddr`**（不是 `p_vaddr`），`max_addr` 按 `ALIGN(p_paddr + p_memsz, SZ_4K)`
+  取整。本仓 `QcomMdt.c` 读的也是 `p_paddr`（ELF32 的偏移 12、ELF64 的偏移 24），一致。
+- `p_filesz > p_memsz` 的段上游直接拒绝（`-EINVAL`），本仓 `qcom_mdt_parse()` 也返回 `QcomMdtBadHeaders`。
+
+**结论：fixed 与 relocatable 的差别在参数层不改变 INIT_IMAGE。** 两者发出去的 INIT_IMAGE
+完全一样（`pas_id` + metadata 地址），只有 fixed 少了 MEM_SETUP 这一步、且分段落点用洞的基址。
+所以"被接受的 ADSP 是 relocatable、被拒的 modem 是 fixed"这个差别，**不能解释 INIT_IMAGE 被拒**：
+DTB 的 INIT_IMAGE 在 fixed 路径下发的两个参数与 relocatable 路径逐字相同。
+**这条线索到此为止**，与"两个槽都被拒"那条线索合在一起：拒绝的原因在两个构建共有的东西上。
 
 
 ## 桥接与 IPA
@@ -379,7 +443,7 @@ IPCC client 2。这些都已从一手出处确认来源，但没有跑过真机�
 同样的参数顺序，metadata 缓冲区也在高 DRAM 的连续段里。两次 bring-up 的差别只有 PAS id
 （DTB 是 0x26）和镜像本身。当前探针在第一次拒绝处就停下，不说 secure world 觉得哪个参数不对。
 
-**拒绝的��因已经定位在镜像内容上，不在调用上**（2026-11-19 第二次真机，PAS 矩阵，
+**拒绝的原因已经定位在镜像内容上，不在调用上**（2026-11-19 第二次真机，PAS 矩阵，
 `fuxi-modem=5`，证据 `evidence/2026-11-19-modem-pas-matrix.md`）：
 
 | 组合 | INIT_IMAGE |
@@ -421,7 +485,7 @@ IPCC client 2。这些都已从一手出处确认来源，但没有跑过真机�
 
 **两个 blob 本身都是完好的**：modem 的 512 字节段声明 452+60=512，adsp 的 8376 字节段声明
 8316+60=8376，都自洽；头都是 `43 46 47 4c`（CFGL）。modem 的 blob 是 **fixed**（段地址 0x9b000000），
-adsp 的是 **relocatable**。hash 段两��都是 3896 字节，其中 193 字节不同——这是不同的固件，
+adsp 的是 **relocatable**。hash 段两者都是 3896 字节，其中 193 字节不同——这是不同的固件，
 本来就该不同。
 
 **结论**：modem 的 DTB blob 在这台机器上不被 secure world 接受，而 adsp 的 blob 被接受。
@@ -461,6 +525,49 @@ modem 的**主镜像**（149 MB，32 段，PAS 4）同样被拒，错误码同�
 
 两个构建共有的、而 secure world 要看的，是 metadata 的结构、程序头、段的地址
 （0x9b000000，就是板上自己的 `q6_mpss_dtb_region`），以及**这个镜像是 fixed 而不是 relocatable**。
-被接受的 adsp 那个 blob 是 **relocatable**。这个差别现在是第一件要查的事，
-而且它是板上保留内存布局的事实，不是 modem 代码的事实。
+被接受的 adsp 那个 blob 是 **relocatable**。
+
+**2026-11-20 查完了：fixed 与 relocatable 的差别不能解释 INIT_IMAGE 被拒。**
+上游（`drivers/soc/qcom/mdt_loader.c`）的 `relocate` 只决定两件事：
+fixed 少发一次 `MEM_SETUP`，以及分段的落点用洞的物理基址而不是最小地址。
+**INIT_IMAGE 发出去的参数逐字相同**（`pas_id` 与 metadata 的地址），
+所以两种镜像在 INIT_IMAGE 这一步没有任何差别。
+本仓 `package/FuxiModemPas.h` 与 `package/QcomMdt.c` 已经与上游一致（详见"待查的上游源码"下面
+2026-11-20 第二次读上游的那张表）。这条线索到此为止。
+
+**所以拒绝的原因只能在下面这些共有事实上**：metadata 的**字节**、它的程序头、
+段的 `p_paddr`（0x9b000000）、以及 PAS id 38 本身。
+
+**2026-11-20 找到最重的一条线索：主线 Linux 在同一块板上、用同一份固件，把基带跑起来了。**
+主线端口的 `/tmp/x13/docs/交接-新会话-20261030-2110.md` 记着：modem12 首次让基带稳定运行
+4584 s 并注册上 CHN-UNICOM 460-01。它用的固件就是本板 `modem_a`/`modem_b` 分区里的
+`modem.mdt` 与 `modem_dtb.mdt`（主线 DTS：`firmware-name = "qcom/sm8550/xiaomi/fuxi/modem.mdt",
+"qcom/sm8550/xiaomi/fuxi/modem_dtb.mdt"`），设备树用的也是同一套 `sm8550.dtsi` 的
+`remoteproc_mpss`。**所以这份固件不是被 secure world 拒绝的**：同一块板、同一份 blob、
+同一个 pas id 38，主线把它启动了。
+
+主线那边真正卡住的是 **metadata 的地址宽度**：主线 `qcom_scm_pas_init_image` 用
+`dma_alloc_coherent` 分配 4044 字节，而 SCM 平台设备的 mask 默认 32 位
+（`dma_mask = DMA_BIT_MASK(32)`），主板上 4 GiB 以下没有可用的 coherent 区，
+`dma_alloc_coherent` 返回 NULL，modem_dtb 的 PAS init 报 **-12**。
+主线的修法是 **`CONFIG_ZONE_DMA=y` + `CONFIG_ZONE_DMA32=y`**（`abl-fuxi-modem12-imem.config`
+相对基线只多了这两项），打开之后 3 次崩溃恢复全部成功。
+**打开 DMA32 的作用只有一个：让 metadata 落到 4 GiB 以下。**
+
+本仓的 metadata 落在 **0x8d39ab000**（2026-11-20 真机实测），**在 4 GiB 以上**。
+本仓的 mask 是 `0xfffffffffffff000`，不限制地址宽度，所以分配成功、地址却在 4 GiB 以上。
+**这条线索与主线那边修好的那个 bug 是同一个形状**，而且它是目前唯一一条能同时解释
+"ADSP 的 blob 接受、modem 的 blob 拒绝"的线索吗？——不是：ADSP 的 blob 也是从 4 GiB 以上的
+地址交的（0x8d0b1f000），却被接受。所以**地址宽度本身不足以解释 ADSP 与 modem 的差别**，
+但它仍然可能是 modem 被拒的**原因之一**：主线那条路上 metadata 从来没有在 4 GiB 以上被交过。
+
+下一步（本轮要做的）：把 metadata 的分配限制在 4 GiB 以下再试一次。
+XNU 的机制是 `IOBufferMemoryDescriptor::inTaskWithPhysicalMask` 的 mask 参数
+（`IOBufferMemoryDescriptor.h` 的文档："physical addresses will only have bits set present
+in physicalMask ... pass 0x00000000FFFFFFFFULL for a buffer to be accessed by hardware that has
+32 address bits"），本仓 `package/FuxiAdspProbe.cpp` 的 `probeOwnedLowPcm()` 已经有这个用法
+（mask `0x00000000fffff000`），但那条路在真机上测出来的 PA 是 **0x8CFF84000（35.25 GiB）**，
+**掩码没有生效**（`docs/fuxi-audio-porting-log.md` §P3）。所以掩码这条路要先弄明白为什么没生效，
+或者改走固定低 DRAM 映射（音频链已经验证过 `IODeviceMemory::withRange(0xd0000000, 64 KiB)
+-> map(kIOMapAnywhere | kIOMapWriteCombineCache)` 这条配方）。
 

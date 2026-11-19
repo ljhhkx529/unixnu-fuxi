@@ -106,6 +106,19 @@ static void test_step_arginfo(void)
     /* AUTH_AND_RESET takes nothing. */
     CHECK(fuxi_modem_pas_arginfo(FuxiModemPasAuthAndReset) == qcom_scm_args(1, 0, 0, 0),
           "AUTH_AND_RESET takes one argument");
+
+    /* The numbers upstream actually sends, so the encoders cannot drift from them unnoticed.
+       Linux drivers/firmware/qcom/qcom_scm.c, on 2026-11-20:
+         INIT_IMAGE      .arginfo = QCOM_SCM_ARGS(2, QCOM_SCM_VAL, QCOM_SCM_RW)   -> 0x82
+         MEM_SETUP       .arginfo = QCOM_SCM_ARGS(3)                              -> 0x03
+         AUTH_AND_RESET  .arginfo = QCOM_SCM_ARGS(1)                              -> 0x01
+       QCOM_SCM_ARGS puts the count in bits 3:0 and the type of argument i in bits 5+2i:4+2i. */
+    CHECK(fuxi_modem_pas_arginfo(FuxiModemPasInitImage) == 0x82u,
+          "INIT_IMAGE's argument word is 0x82, as upstream sends it");
+    CHECK(fuxi_modem_pas_arginfo(FuxiModemPasMemSetup) == 0x03u,
+          "MEM_SETUP's argument word is 0x03, as upstream sends it");
+    CHECK(fuxi_modem_pas_arginfo(FuxiModemPasAuthAndReset) == 0x01u,
+          "AUTH_AND_RESET's argument word is 0x01, as upstream sends it");
 }
 
 static void test_pas_ids(void)
