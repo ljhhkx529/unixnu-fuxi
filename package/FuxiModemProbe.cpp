@@ -39,6 +39,7 @@
 #include "QcomQmp.h"
 #include "QcomRpmh.h"
 #include "FuxiRpmhCorner.h"
+#include "FuxiRscLayout.h"
 #include "QcomScm.h"
 #include "QcomSmem.h"
 #include "QcomSmp2p.h"
@@ -179,6 +180,7 @@ struct Owner {
     uint32_t cx_index, mss_index;
     uint32_t cx_addr, mss_addr;
     uint32_t mss_rail_found;   /* 0: the command database has no mss.lvl */
+    uint32_t rsc_drv_id;       /* the RSC DRV2 id register, or the forced major version */
 
     bool smem_ready, smem_locked, ipcc_ready, rsc_ready, glink_started, glink_up, fatal, handover;
     bool modem_reset, dtb_reset;
@@ -420,6 +422,10 @@ void releaseImage(Image &image)
 /* Hands the metadata to the secure world and, for a relocatable image, tells it where the image will live.
  * The metadata buffer has to be in memory the secure world can read, so it is a physically contiguous
  * allocation cleaned to the point of coherency before the call. */
+/* Tells the secure world where the metadata lives and, for a relocatable image, where the image will live.
+   It stops short of the reset on purpose: Linux's qcom_mdt_pas_load does the metadata and the segment load
+   and leaves "authentication of the segments done by a separate call", so the reset belongs after the
+   segments are in the carveout, not before. The caller does that call. */
 int authenticateHeader(Image &image, uint32_t pas, uint64_t base)
 {
     const uint64_t bytes = qcom_mdt_metadata_size(&image.mdt);
@@ -434,7 +440,7 @@ int authenticateHeader(Image &image, uint32_t pas, uint64_t base)
     const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
 
     unsigned steps[FuxiModemPasStepCount];
-    const unsigned count = fuxi_modem_pas_steps(image.mdt.relocatable ? 1 : 0, steps, FuxiModemPasStepCount);
+    const unsigned count = fuxi_modem_pas_header_steps(image.mdt.relocatable ? 1 : 0, steps, FuxiModemPasStepCount);
     for (unsigned i = 0; i < count; ++i) {
         const uint32_t command = fuxi_modem_pas_command(steps[i]);
         const uint32_t arginfo = fuxi_modem_pas_arginfo(steps[i]);
@@ -683,8 +689,13 @@ int stepMap()
 int stepRails()
 {
     /* The RSC's own register layout: the id register says which major version it is, and the version moved the
-     * TCS registers. */
-    gOwner.layout = qcom_rsc_layout(rd(gOwner.rsc_window, 0));
+     * TCS registers.  The DRV2 id register reads zero on this board, so the major version is forced to 3
+     * rather than let the zero choose the version 2 layout: with that layout the TCS registers sit at the
+     * wrong offsets and the request never completes.  The ADSP bring-up reads the same window and found
+     * the same zero, so the fallback is the one the hardware is known to need. */
+    const uint32_t drv_id = rd(gOwner.rsc_window, 0);
+    gOwner.rsc_drv_id = fuxi_rsc_drv_id(drv_id);
+    gOwner.layout = fuxi_rsc_layout(drv_id);
     const int rc = voteRails();
     if (rc) {
         printf("FUXI_MODEM: the proxy rails could not be voted (%d)\n", rc);
@@ -703,8 +714,9 @@ int stepPas()
     int rc = authenticateHeader(gOwner.dtb, fuxi_modem_pas_id(FuxiModemPasImageDtb), kModemDtbCarveoutBase);
     if (!rc) rc = loadSegments(gOwner.dtb, kModemDtbCarveoutBase, kModemDtbCarveoutSize);
     if (!rc) {
-        const ScmResult auth = secureCall(fuxi_modem_pas_command(FuxiModemPasAuthAndReset),
-                                           fuxi_modem_pas_arginfo(FuxiModemPasAuthAndReset),
+        /* The reset comes after the segments are in the carveout, once per image. */
+        const ScmResult auth = secureCall(fuxi_modem_pas_command(fuxi_modem_pas_reset_step),
+                                           fuxi_modem_pas_arginfo(fuxi_modem_pas_reset_step),
                                            fuxi_modem_pas_id(FuxiModemPasImageDtb), 0, 0, 0);
         if (!fuxi_modem_scm_ok(auth.x0, auth.x1)) rc = -3;
         else gOwner.dtb_auth_cookie = gOwner.scm_x0;
@@ -727,8 +739,8 @@ int stepPas()
         return rc;
     }
     setStage(kStLoaded);
-    const ScmResult auth = secureCall(fuxi_modem_pas_command(FuxiModemPasAuthAndReset),
-                                       fuxi_modem_pas_arginfo(FuxiModemPasAuthAndReset),
+    const ScmResult auth = secureCall(fuxi_modem_pas_command(fuxi_modem_pas_reset_step),
+                                       fuxi_modem_pas_arginfo(fuxi_modem_pas_reset_step),
                                        fuxi_modem_pas_id(FuxiModemPasImageModem), 0, 0, 0);
     if (!fuxi_modem_scm_ok(auth.x0, auth.x1)) {
         printf("FUXI_MODEM: the modem was not released (scm %u/%u)\n", gOwner.scm_x0, gOwner.scm_x1);

@@ -204,7 +204,17 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                # mapping, SMP2P, IPCC, QMP, both PAS images and the bounded
                # SMP2P ready wait. GLINK, GPR and the speaker graph stay off
                # until this ready evidence is accepted.
-               "fuxi-adsp=2",
+               #
+               # The ADSP's runtime is off for now: mode 1 only inventories the DSP's
+               # firmware, read only, and starts nothing. The reason is the two interrupt
+               # lines and the RSC's active TCS, which the ADSP's bring-up and the modem's
+               # both need: an interrupt line is attached once per boot and cannot be
+               # released (armcpu_spi_attach returns kIOReturnExclusiveAccess for a line
+               # in use), and a TCS is one request slot, so two owners on it corrupt each
+               # other. The ADSP's bring-up runs first in bsd_init, so while it holds the
+               # lines the modem's stepIpcc cannot attach them and mode 4 cannot run. The
+               # modem takes them for this round; the two share one owner in the end.
+               "fuxi-adsp=1",
                # The modem's bring-up. Mode 1 only inventories the firmware partition, read only: it
                # names the modem's files and their sizes and starts nothing, so it can run on a
                # device whose radio policy forbids anything else. Mode 2 opens and parses the two
@@ -212,8 +222,8 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                # whole file path runs against the board's own files. Mode 3 reads the board's
                # command database and looks the modem's rails up in it, still read only: no vote
                # goes out and no register is written. Mode 4 is the runtime path, which starts the
-               # modem over PAS and is off until its steps are accepted.
-               "fuxi-modem=3",
+               # modem over PAS.
+               "fuxi-modem=4",
                "fgraph=6",
                # Content follows unixnu-fuxi-old one switch at a time: sheng-aks brings up Apple
                # KeyStore, which AMFI consults before it accepts the adhoc-signed System volume.

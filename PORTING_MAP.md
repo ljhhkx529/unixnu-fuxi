@@ -110,6 +110,51 @@ sheng 板推断的，对本板不成立。
 这不影响 modem 启动（那时那两种票还没上线），但 AP 挂起再回来之后 modem 的 `cx` 域会停在
 硬件当前记着的档位上。这属于 modem 起来以后的事。
 
+**RSC 布局的版本必须强制为 major 3**（2026-11-19）：DRV2 的 ID 寄存器（`drv->base + 0`）在本板
+读出**零**，于是按 ID 选布局会落到 v2_7 的偏移上。v2_7 与 v3_0 的 TCS 寄存器偏移不同
+（`CMD_OFFSET` 20 vs 24，命令寄存器块 0x30/0x34/0x38 vs 0x34/0x38/0x3C，
+wait/control/status/enable 0x10/0x14/0x18/0x1C vs 0x20/0x24/0x28/0x2C），选错就写不到真的
+TCS 请求寄存器上。ADSP 探针早已因此加了强制回落（`gOwner.rsc_drv_id = gOwner.rsc_id2 ? gOwner.rsc_id2 : (3u << 16);`），
+并在真机上证明这是能用的那一种：设备记录 `RSC: forced v3 layout after DRV2 ID read 0; active TCS 2; vote done`。
+**没有强制回落的那一方，投票永远收不到 done 位**——touch 探针的 `tcs2 rc0 w-1` 就是这个现象
+（票写进去了，done 位 10 ms 内没来）。modem 探针原先也缺这个回落，现已补上，与 ADSP 同形。
+
+**PAS 的三个步骤与它们的先后**（Linux `drivers/remoteproc/qcom_q6v5_pas.c` `qcom_pas_start`
++ `drivers/soc/qcom/mdt_loader.c` `qcom_mdt_pas_load`）：
+
+| 步骤 | SCM 命令 | 参数 | 什么时候 |
+| --- | --- | --- | --- |
+| INIT_IMAGE | `QCOM_SCM_PAS_INIT_IMAGE` | metadata 的物理地址 | 票之前 |
+| MEM_SETUP | `QCOM_SCM_PAS_MEM_SETUP` | 镜像的基址与跨度 | **只在可重定位镜像时**；固定地址的镜像本来就知道自己在哪里，再问一次是错的 |
+| AUTH_AND_RESET | `QCOM_SCM_PAS_AUTH_AND_RESET` | 无 | **分段搬进洞之后**，每个镜像一次 |
+
+关键点：`qcom_mdt_pas_load` 的注释写明"Authentication of the segments done by a separate call"——
+加载分段与认证复位是**两件事**，复位在分段进洞之后。Linux 对每个镜像的顺序是
+INIT_IMAGE → MEM_SETUP → 搬分段 → AUTH_AND_RESET，**两个镜像各走一遍，先 DTB 后镜像**
+（DTB 告诉 modem 自己的内存在哪里，必须先就位）。modem 探针原先把 AUTH_AND_RESET 放在
+`authenticateHeader` 里，也就是**分段进洞之前就复位**，随后又在外层复位一次；现已改为
+只在分段进洞之后复位一次，与 Linux 和 ADSP 已验证的路径同形。
+
+**ADSP 与 modem 争同一条中断线和同一个 TCS**（2026-11-19）：两边的 bring-up 都要
+
+| 资源 | ADSP | modem | 能否共享 |
+| --- | --- | --- | --- |
+| IPCC 中断（SPI 229 → INTID 261） | attach | attach | **不能**：中断线一次 boot 只能 attach 一次，`armcpu_spi_attach` 对已用的 INTID 返回 `kIOReturnExclusiveAccess`，且**没有 detach** |
+| RSC 中断（SPI 5 → INTID 37） | attach | attach | **不能**，同上 |
+| RSC 的活动 TCS（DRV2 的 TCS 2） | 投票 | 投票 | **不能**：一个 TCS 就是一个请求槽，两个主人在上面写请求会互相破坏 |
+| AOSS QMP 邮箱（0xc300000，phandle 0x43） | 用 | 用 | 能：它是一个 0x400 字节的共享 RAM，不是独占资源 |
+| GLINK 的 SMEM 项 478/479/480 | remote pid 2 | remote pid 1 | 能：`qcom_smem_alloc` 按 **remote pid** 分项，同一个 item id 对两个 remote pid 是两条 |
+
+`armcpu_spi_attach` 在 `package/ArmCpu.cpp:836`，`ARMCPU_SPI_SLOTS` 是 16。
+已核对过不冲突的占用者：touch 占 240（32+208）、按键占 513（32+481）、GPU 占 332，
+都和 261 与 37 无关；基带组件 `UniXNU/drivers/QcomBaseband` 不 attach 任何中断，它是轮询的。
+
+**因此本轮只跑 modem**：`board.toml` 把 `fuxi-adsp` 从 2 改成 1（模式 1 只盘点 DSP 的
+固件，只读，不 attach 中断、不映射窗口），把 `fuxi-modem` 从 3 改成 4（运行时路径）。
+`bsd_init` 里 `native_audio_probe()` 排在 `native_fuxi_modem_probe()` 之前，所以只要
+ADSP 还开着运行时，它会先占住那两条线，modem 的 `stepIpcc` 就会以 -74 失败。
+ADSP 的运行时重新打开之前，modem 和 ADSP 必须共用一个主控。
+
 ## 待查的上游源码
 
 <!-- 列出要先读上游才能定下来的问题。读完把答案写回上面的表或 facts/baseband/，然后把这一条删掉。 -->

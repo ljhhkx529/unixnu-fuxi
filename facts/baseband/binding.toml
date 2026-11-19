@@ -111,6 +111,34 @@ load_state_message = { value = "{class: image, res: load_state, name: modem, val
 base = { value = 0xc300000, state = "inferred", evidence = "sheng.sm8550" }
 size = { value = 0x400, state = "inferred", evidence = "sheng.sm8550" }
 
+# The RSC window and the TCS the modem's vote goes out on.
+[rsc]
+base = { value = 0x17a20000, state = "confirmed", evidence = "caf.fuxi_live_dts.apps_rsc_drv2" }
+size = { value = 0x10000, state = "confirmed", evidence = "caf.fuxi_live_dts.apps_rsc_drv2" }
+tcs_offset = { value = 0xd00, state = "confirmed", evidence = "caf.fuxi_live_dts.apps_rsc_drv2" }
+spi = { value = 5, state = "confirmed", evidence = "caf.fuxi_live_dts.apps_rsc" }
+tcs_stride = { value = 672, state = "confirmed", evidence = "linux.rpmh_rsc.tcs_offset" }
+active_tcs_count = { value = 3, state = "confirmed", evidence = "caf.fuxi_live_dts.apps_rsc_tcs_config" }
+# The DRV2 id register reads zero on this board, so the layout cannot be taken from it. SM8550's
+# RSC is the major-3 layout and the ADSP's forced choice completed its vote on the device.
+major_version = { value = 3, state = "confirmed", evidence = "device.adsp.rsc_forced_v3" }
+drv_id_zero = { value = true, state = "confirmed", evidence = "device.adsp.rsc_forced_v3" }
+
+# The resources the ADSP's bring-up and the modem's bring-up both need. The interrupt lines are
+# attached once per boot and cannot be released, and the RSC's TCS is a single request slot, so
+# two owners on the same line or the same TCS corrupt each other. Both remoteprocs name the same
+# AOSS mailbox and the same IPCC node in the device tree, which is why these are shared and not
+# merely adjacent.
+[shared]
+ipcc_node = { value = "qcom,ipcc@408000", state = "confirmed", evidence = "caf.fuxi_live_dts.ipcc" }
+ipcc_spi = { value = 229, state = "confirmed", evidence = "caf.fuxi_live_dts.ipcc" }
+aoss_node = { value = "power-controller@c300000", state = "confirmed", evidence = "caf.fuxi_live_dts.aoss_qmp" }
+aoss_phandle = { value = 0x43, state = "confirmed", evidence = "caf.fuxi_live_dts.modem_remoteproc" }
+aoss_phandle_adsp = { value = 0x43, state = "confirmed", evidence = "caf.fuxi_live_dts.adsp_remoteproc" }
+ipcc_phandle = { value = 0x44, state = "confirmed", evidence = "caf.fuxi_live_dts.modem_remoteproc" }
+ipcc_phandle_adsp = { value = 0x44, state = "confirmed", evidence = "caf.fuxi_live_dts.adsp_remoteproc" }
+adsp_ipcc_client = { value = 3, state = "confirmed", evidence = "linux.qcom_ipcc" }
+
 # The QRTR node the AP claims. Linux leaves the node id to the endpoint registration, but its
 # local node id is 1 and the reference port uses the same.
 [qrtr]

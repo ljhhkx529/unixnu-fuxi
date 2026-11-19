@@ -56,6 +56,26 @@ static inline unsigned fuxi_modem_pas_steps(int relocatable, unsigned *out, unsi
     return n;
 }
 
+/* The steps that come before the segments are in the carveout: where the metadata lives, and, for a
+   relocatable image, where the image will live. The reset is not one of them.
+
+   Linux's qcom_mdt_pas_load does the metadata and the segment load and leaves "authentication of
+   the segments done by a separate call", so the reset belongs after the load. The caller asks for
+   the header's steps with this, loads the segments, and then asks for the reset with
+   fuxi_modem_pas_reset_step. */
+static inline unsigned fuxi_modem_pas_header_steps(int relocatable, unsigned *out, unsigned max)
+{
+    unsigned n = 0;
+    if (max < 1) return 0;
+    out[n++] = FuxiModemPasInitImage;
+    if (relocatable && n < max) out[n++] = FuxiModemPasMemSetup;
+    return n;
+}
+
+/* The step that authenticates the image and releases the processor's reset. It is the last step of
+   one image, and it happens once, after the segments are in the carveout. */
+#define fuxi_modem_pas_reset_step FuxiModemPasAuthAndReset
+
 /* The secure world's command for a step, and its argument-type word. The argument counts and types are the
    ones Linux's qcom_pas_start passes: INIT_IMAGE takes the metadata's address and says it is readable and
    writable, MEM_SETUP takes the image's base and its span, AUTH_AND_RESET takes nothing. */

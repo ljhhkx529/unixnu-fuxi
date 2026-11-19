@@ -57,6 +57,36 @@ static void test_fixed_steps(void)
     CHECK(steps[1] == FuxiModemPasAuthAndReset, "a fixed-address image skips MEM_SETUP");
 }
 
+/* The steps that come before the segments are in the carveout. The reset is not one of them:
+   Linux's qcom_mdt_pas_load does the metadata and the segment load and leaves "authentication of
+   the segments done by a separate call", so a reset before the load resets a processor whose
+   image is not there yet. */
+static void test_header_steps_leave_out_the_reset(void)
+{
+    unsigned steps[FuxiModemPasStepCount];
+
+    const unsigned n = fuxi_modem_pas_header_steps(1, steps, FuxiModemPasStepCount);
+    CHECK(n == 2, "a relocatable image's header has two steps, not %u", n);
+    if (n == 2) {
+        CHECK(steps[0] == FuxiModemPasInitImage, "the header's first step is INIT_IMAGE");
+        CHECK(steps[1] == FuxiModemPasMemSetup, "the header's second step is MEM_SETUP");
+        CHECK(steps[0] != FuxiModemPasAuthAndReset && steps[1] != FuxiModemPasAuthAndReset,
+              "the header's steps do not include the reset");
+    }
+
+    const unsigned m = fuxi_modem_pas_header_steps(0, steps, FuxiModemPasStepCount);
+    CHECK(m == 1, "a fixed-address image's header has one step, not %u", m);
+    if (m == 1) {
+        CHECK(steps[0] == FuxiModemPasInitImage, "the fixed-address header's only step is INIT_IMAGE");
+    }
+
+    /* The reset is a step of its own, and it is the last one. */
+    CHECK(fuxi_modem_pas_reset_step == FuxiModemPasAuthAndReset, "the reset step is AUTH_AND_RESET");
+    CHECK(fuxi_modem_pas_steps(1, steps, FuxiModemPasStepCount) == 3,
+          "the full sequence is still three steps");
+    CHECK(steps[2] == FuxiModemPasAuthAndReset, "the reset is the last step of the full sequence");
+}
+
 static void test_step_commands(void)
 {
     CHECK(command_of(FuxiModemPasInitImage) == QCOM_SCM_PAS_INIT_IMAGE, "INIT_IMAGE is command 1");
@@ -119,6 +149,7 @@ int main(void)
 {
     test_relocatable_steps();
     test_fixed_steps();
+    test_header_steps_leave_out_the_reset();
     test_step_commands();
     test_step_arginfo();
     test_pas_ids();

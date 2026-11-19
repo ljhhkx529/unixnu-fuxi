@@ -111,6 +111,36 @@ path = "/tmp/x13/work/device-info/fuxi-live.dts, the qcom,modem_qrtr node"
 statement = "channel \"IPCRTR\", qcom,intents 0x800 0x05 0x2000 0x03 0x4400 0x02."
 proves = "The name of the channel the modem opens for QRTR."
 
+[caf.fuxi_live_dts.apps_rsc]
+path = "/tmp/x13/work/device-info/fuxi-live.dts, the apps_rsc@17a00000 node and its drv@2 child"
+statement = "apps_rsc@17a00000 has reg \"drv-0\" 0x17a00000, \"drv-1\" 0x17a10000 and \"drv-2\" 0x17a20000, each 0x10000, with interrupts GIC_SPI 3, 4 and 5; drv@2 carries qcom,drv-id 0x02 and qcom,tcs-offset 0xd00, and its channel@0 gives qcom,tcs-config <0x02 0x03 0x00 0x02 0x01 0x02 0x03 0x00 0x04 0x01>."
+proves = "The RSC window the modem's vote goes out on, its TCS offset, the interrupt line the RSC raises, and the shape of the TCS configuration. The tcs-config names five types (SLEEP 2, WAKE 2, ACTIVE 3, CONTROL 0, FAST_PATH 1), so the three active TCS are the ones a vote may use."
+
+[caf.fuxi_live_dts.ipcc]
+path = "/tmp/x13/work/device-info/fuxi-live.dts, the qcom,ipcc@408000 node"
+statement = "reg 0x408000 of 0x1000, interrupts GIC_SPI 229, an interrupt-controller with three cells, phandle 0x44."
+proves = "The IPCC block's address, its one interrupt line, and that it is an interrupt controller, so all its clients share one line and one handler."
+
+[caf.fuxi_live_dts.aoss_qmp]
+path = "/tmp/x13/work/device-info/fuxi-live.dts, the power-controller@c300000 node"
+statement = "compatible \"qcom,kalama-aoss-qmp\", reg 0xc300000 of 0x400, interrupt-parent 0x44, mboxes <0x44 0x00 0x00>, phandle 0x43."
+proves = "The AOSS QMP mailbox's address and size, and that it is the one node both remote processors name with qcom,qmp 0x43."
+
+[caf.fuxi_live_dts.adsp_remoteproc]
+path = "/tmp/x13/work/device-info/fuxi-live.dts, the remoteproc-adsp@03000000 node"
+statement = "compatible \"qcom,kalama-adsp-pas\", qcom,qmp = <0x43>, mboxes = <0x44 0x02 0x00>, and the glink-edge gives qcom,remote-pid 0x02."
+proves = "That the ADSP names the same AOSS mailbox (0x43) and the same IPCC node (0x44) the modem names. The two bring-ups therefore contend for one mailbox and one interrupt line, and the ADSP's remote pid of 2 is what keeps its GLINK SMEM items apart from the modem's."
+
+[linux.rpmh_rsc.tcs_offset]
+repository = "Linux, drivers/soc/qcom/rpmh-rsc.c"
+statement = "A TCS's registers sit at tcs_base + regs[RSC_DRV_TCS_OFFSET] * tcs_id + reg, where tcs_base is the driver's base plus the device tree's qcom,tcs-offset, and RSC_DRV_TCS_OFFSET is 672 in both the version 2_7 and the version 3_0 offset tables."
+proves = "The stride between consecutive TCS, and so the address arithmetic the port's QcomRpmh.c reproduces. The version tables differ in CMD_OFFSET (20 against 24) and in where the command and wait registers sit, which is why the wrong major version writes to the wrong registers."
+
+[device.adsp.rsc_forced_v3]
+path = "the device run recorded in docs/fuxi-audio-test-results.md, the R-SCM-STRICT-01 round"
+statement = "The DRV2 id register reads zero on this board, and the ADSP bring-up therefore forces the major version to 3 rather than let the zero choose the version 2_7 layout. With that forced layout the active TCS 2 vote completed and the run recorded \"forced v3 layout after DRV2 ID read 0; active TCS 2; vote done\"."
+proves = "That SM8550's RSC on this board is the major-3 layout, and that a vote on the active TCS completes with it. The touch probe, which does not force the version, wrote its votes and never saw the done bit."
+
 # ---- the same-SoC inferences ----
 
 [sheng.sm8550]

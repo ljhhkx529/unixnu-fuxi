@@ -6,8 +6,9 @@
  #endif
 +
 +#if DEVELOPMENT || DEBUG
-+	/* The Fuxi modem owner glue is off unless fuxi-modem is set. Mode 1 only
-+	 * inventories the modem firmware read-only; mode 2 is the explicit runtime path. */
++	/* The Fuxi modem owner glue is off unless fuxi-modem is set. Modes 1 to 3
++	 * are read only: they inventory the firmware, parse the images and read
++	 * the rails out of the command database. Mode 4 is the runtime path. */
 +	extern void native_fuxi_modem_probe(void);
 +	native_fuxi_modem_probe();
 +#endif
