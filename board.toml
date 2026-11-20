@@ -404,6 +404,11 @@ certificate-security-mode = 1
 effective-security-mode-sep = 1
 amfi-only-platform-code = 1
 kernel-ctrr-to-be-enabled = 0
+# The Qualcomm baseband bridge. The component's services (AppleBaseband and the rest) are published only
+# when /chosen says so: the bridge reads this property and stays silent without it (the component's
+# coachz_baseband_enabled). Without it the modem's QRTR link comes up and its services are announced, but
+# nothing consumes them, so no QMI request ever goes out and the card is never read.
+coachz-baseband = 1
 # The display's logical mode: the size the system UI is laid out for, and the
 # size every frame is scaled from and to. 1125x2436 is 375x812 points at 3x,
 # the iPhone X screen type, which UIKit knows; the panel itself is 1080x2400.
