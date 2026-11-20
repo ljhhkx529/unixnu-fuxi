@@ -69,6 +69,21 @@ struct LinkStatus {
     uint32_t tx_again;
     uint32_t open_failures;
     uint32_t qrtr_servers;
+    /* Where the traffic stops. The link can be up while nothing arrives, and these say at which layer. */
+    uint32_t glink_rx_messages;
+    uint32_t glink_tx_messages;
+    uint32_t glink_rx_data;
+    uint32_t glink_dropped;
+    uint32_t glink_unknown_opens;
+    uint32_t rx_avail;
+    uint32_t ch_up, ch_remote_open, ch_open_sent, ch_open_acked;
+    uint32_t ch_local_advertised;
+    uint32_t qrtr_rx, qrtr_malformed, qrtr_hello_received, qrtr_hello_dropped;
+    uint32_t qrtr_remote_node, qrtr_hello_reply_node, qrtr_hello_reply_port;
+    uint8_t qrtr_hello_reply_owed, qrtr_remote_node_known;
+    uint8_t reserved2[2];
+    uint32_t glink_remote_intents;
+    char last_unknown[32];
 };
 extern "C" void fuxi_modem_status(LinkStatus *status);
 
@@ -207,6 +222,8 @@ struct Owner {
     uint32_t rsc_drv_id;       /* the RSC DRV2 id register, or the forced major version */
     uint32_t pas_supported[2];  /* the secure world's answer for the DTB's and the modem's pas id */
     uint32_t pas_support_x0[2]; /* what it said */
+    uint32_t last_tx_again;   /* the link's send-again count the last time it was reported */
+    uint32_t last_glink_rx;   /* the GLINK layer's message count the last time it was reported */
 
     bool smem_ready, smem_locked, ipcc_ready, rsc_ready, glink_started, glink_up, fatal, handover;
     bool modem_reset, dtb_reset;
@@ -862,8 +879,12 @@ uint32_t waitEvents(uint32_t ms)
         clear_wait(current_thread(), THREAD_AWAKENED);
         return bits;
     }
-    thread_block(THREAD_CONTINUE_NULL);
-    return __atomic_exchange_n(&gOwner.pending, 0, __ATOMIC_ACQ_REL);
+    /* The wait was woken but the bits were already taken, so there is nothing to report. Blocking here
+     * without a timeout would strand the thread: the doorbell that woke it has already been accounted for,
+     * and no one else would wake it again. The caller treats a timeout as "nothing happened", so the
+     * thread returns and the caller polls again. */
+    clear_wait(current_thread(), THREAD_AWAKENED);
+    return 0;
 }
 
 void serviceEvents(uint32_t bits);
@@ -1360,6 +1381,56 @@ int waitLink()
            status.ready, status.hello_sent, status.tx_packets, status.rx_packets, status.tx_again,
            status.open_failures, status.qrtr_servers);
     return -6;
+}
+
+/* Keeps the link running for as long as the modem is up.
+ *
+ * Everything after the first HELLO arrives on the modem's own schedule: the reply to our HELLO, the
+ * NEW_SERVER announcements for the services it offers, and the answers to what the bridge asks it.
+ * The GLINK is a shared-memory transport and nobody pushes anything into it, so every one of those
+ * waits for somebody to read the receive FIFO. The thread that brought the modem up is the thread
+ * that has to keep reading it.
+ *
+ * The report goes out once a second, so the USB control channel sees the counters move rather than
+ * a link that looks the same every time it is asked. */
+void serviceLink()
+{
+    LinkStatus status = {};
+    uint64_t next_report = 0;
+    unsigned second = 0;
+    for (;;) {
+        serviceEvents(waitEvents(100) | kEvGlink);
+        fuxi_modem_poll();
+        fuxi_modem_status(&status);
+        gOwner.glink_up = status.ready ? 1 : 0;
+        if (mach_absolute_time() >= next_report) {
+            clock_interval_to_deadline(1, kSecondScale, &next_report);
+            second++;
+            /* The heartbeat goes out every second whether or not anything moved, so a silent link and a
+             * dead thread do not look the same. The counters below say where the traffic stops. */
+            printf("FUXI_MODEM: %u s: the link is %s, QRTR tx %u rx %u, servers %u, glink irqs %u\n", second,
+                   status.ready ? "up" : "down", status.tx_packets, status.rx_packets,
+                   status.qrtr_servers, gOwner.glink_irqs);
+            printf("FUXI_MODEM: %u s: glink rx %u tx %u data %u dropped %u unknown %u, fifo %u bytes, "
+                   "channel up %u remote %u sent %u acked %u, our intents %u, their intents %u\n",
+                   second, status.glink_rx_messages, status.glink_tx_messages, status.glink_rx_data,
+                   status.glink_dropped, status.glink_unknown_opens, status.rx_avail,
+                   status.ch_up, status.ch_remote_open, status.ch_open_sent, status.ch_open_acked,
+                   status.ch_local_advertised, status.glink_remote_intents);
+            /* The name service's state: the modem's node id, and whether the answer to its HELLO is still
+             * owed. If the answer never lands, the modem never announces its services. */
+            printf("FUXI_MODEM: %u s: qrtr rx %u bad %u, hello got %u, reply owed %u to node %u port %u, "
+                   "their node %u known %u, hello dropped %u\n",
+                   second, status.qrtr_rx, status.qrtr_malformed, status.qrtr_hello_received,
+                   status.qrtr_hello_reply_owed, status.qrtr_hello_reply_node, status.qrtr_hello_reply_port,
+                   status.qrtr_remote_node, status.qrtr_remote_node_known, status.qrtr_hello_dropped);
+            if (status.last_unknown[0]) printf("FUXI_MODEM: %u s: the last unknown channel name is %s\n",
+                                                second, status.last_unknown);
+            gOwner.last_tx_again = status.tx_again;
+            gOwner.last_glink_rx = status.glink_rx_messages;
+            syncStats();
+        }
+    }
 }
 
 /* Waits for the modem's ready bits over SMP2P. */
@@ -2242,6 +2313,12 @@ void ownerThread(void *, wait_result_t)
     if (rc) goto failed;
     setStage(kStUp);
     printf("FUXI_MODEM: the modem is up, stage %u\n", gOwner.stage);
+    /* The thread stays alive and keeps the link running. The modem opens the channel and says HELLO once,
+     * but everything after that arrives on its own schedule: the reply to our HELLO, the NEW_SERVER
+     * announcements for the services it offers, and the answers to what the bridge asks it. Nothing
+     * arrives unless somebody polls the link, so the thread that brought the modem up is the thread that
+     * has to keep it running. */
+    serviceLink();
     return;
 
 failed:
