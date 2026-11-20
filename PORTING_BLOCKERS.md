@@ -5,9 +5,16 @@
 `## 已发现的缺陷` 一节里的条目是代码里的真缺陷，写下它就必须当场修：钩子会挡住对其他文件的写入，
 直到那个缺陷所在的文件被改过。上面这些条目不是缺陷，是等真机测量的开放问题，不挡路。
 
+`## 待查的缺陷` 一节里的条目是**原因还没查清**的 bug。钩子会挡住对这些文件的下一次写入，
+直到那次写入带上测量（printf）：同一个 bug 猜第二次之前，先量一次。
+
 ## 已发现的缺陷
 
 <!-- 每条写下：缺陷是什么、它在哪个文件里、怎么确认修好了。修好后把这条移到下面的「已解除的阻塞」。 -->
+
+## 待查的缺陷
+
+<!-- 暂无条目。原因已经查清的条目应当移入下面的「已解除的阻塞」。 -->
 
 ## B1 板级 cmd-db 里 `mss.lvl` 是否存在 — 需运行时确认
 
@@ -101,3 +108,17 @@ modem 起来后 RF 会自动搜网。要求：控制面（SIM 状态、信号）
   `Silicon/Qualcomm/QcomPkg/Library/` 无 modem 库。所以 AP 侧必须自己做 PAS 引导，这正是缺失的那一块。
 - **ADSP 的 SMC 成功判据**。早期注释把正数 cookie 当成功值，真机证明那是寄存器参数错位造成的假象。
   正确判据是严格 `x0 == 0 && x1 == 0`，ADSP 已在真机上按此跑通。
+- **基带起来了（2026-11-20）**。此前记在「待查的缺陷」里的「modem 镜像的 AUTH_AND_RESET
+  不返回」已经查清并解决：原因不在调用、不在 metadata 的地址、不在 region assign，而在
+  **AOSS 窗口的地址少了一位十六进制**——`package/FuxiModemProbe.cpp` 的 `kAossBase` 写的是
+  `0x00c30000`，而板上 always-on processor 的窗口在 `0xc300000`（CAF live dts 的
+  `power-controller@c300000` 节点，reg `0xc300000` of `0x400`；`facts/audio/binding.toml` 的
+  `aoss_base` 也是这个值）。映射到了空的地址，读第一个描述符字就挂死。修正之后描述符按上游预期
+  读出（word 0 是 `QMP_MAGIC` 0x4d41494c，word 1 是 `QMP_VERSION` 1，word 13 是邮箱大小 728，
+  word 14 是偏移 296），握手打开，load_state 有回应，blob 与镜像的 AUTH_AND_RESET 都被接受，
+  31 个分段全部拷完，探针到阶段 9（up）。证据 `evidence/2026-11-20-modem-up.md`。
+  同一轮里修掉两个 bring-up 路径上的缺陷：`waitEvents` 忽略了 `assert_wait_timeout` 的返回值，
+  所以每个「有界」等待其实都是无界的（`package/FuxiAdspProbe.cpp` 里同样的缺陷也修了）；
+  `qcom_qmp_step` 只从中断处理里被调用，所以握手从来没被发起过。
+  **这一轮没有证明的**：`glink_up` 仍然是 0，卡 1 的 SIM 还没有被读；`smp2p_ready` 读到的是 4，
+  是该项自己的编码，还没有和上游的 `q6v5_ready_interrupt` 对过；RF 仍然关着。

@@ -23,6 +23,11 @@ Four rules, each with its own check:
    "已发现的缺陷" heading blocks the next write of an unrelated file until the
    defect's file has been written. The other entries of that document are open
    questions waiting on a device measurement and do not block anything.
+5. A bug that is not understood must not be theorised about twice. When the agent has
+   already changed a file for a bug whose cause it could not name, the next write to
+   that same file has to carry instrumentation — a print of the state the hypothesis
+   turns on — or the write is refused. The rule is what keeps a round from becoming a
+   sequence of guesses: one hypothesis, one test, and the measurement that decides it.
 
 The state lives in .claude/hooks/state.json so it survives between calls.
 """
@@ -86,6 +91,18 @@ def load_state():
     else:
         state = {}
     state.setdefault("dirty", [])
+    # suspect maps a file to the number of times it was written for a bug whose cause was
+    # not named. See rule 5.
+    state.setdefault("suspect", {})
+    # A bug under investigation is declared in the blockers document, so the declaration is
+    # in the notes and not only in the agent's head. A file whose entry now states its cause
+    # is no longer under investigation, so it is dropped from the state.
+    chasing = under_investigation()
+    for candidate in list(state["suspect"]):
+        if candidate not in chasing:
+            del state["suspect"][candidate]
+    for candidate in chasing:
+        state["suspect"][candidate] = max(int(state["suspect"].get(candidate, 0)), 1)
     # defects maps a heading to the file that fixes it. An older state may have keyed this by
     # path, which is the same information the other way round.
     defects = state.get("defects", {})
@@ -266,6 +283,37 @@ def noted_defects():
     return found
 
 
+def under_investigation():
+    """The files a bug under investigation is being chased in, as a set of paths.
+
+    A bug whose cause is not established is declared in the blockers document's
+    "待查的缺陷" section: the entry names the file the chase is in. The hook then requires
+    the next write of that file to carry a print, so a second guess becomes a measurement.
+
+    An entry that states its cause is no longer a chase: the cause is written down, so the
+    file is free again and the fix can go in.
+    """
+    if not BLOCKERS.is_file():
+        return set()
+    text = BLOCKERS.read_text(errors="replace")
+    heading_match = re.search(r"^##\s+待查的缺陷\s*$", text, re.M)
+    if heading_match is None:
+        return set()
+    rest = text[heading_match.end():]
+    end = re.search(r"^##\s(?!#)", rest, re.M)
+    body = rest[:end.start()] if end else rest
+    found = set()
+    for section in re.split(r"^###\s+", body, flags=re.M)[1:]:
+        # The cause is stated in the entry, so the chase is over.
+        if re.search(r"^\*\*原因\*\*", section, re.M):
+            continue
+        for match in re.finditer(r"`([A-Za-z0-9_./-]+\.(?:c|cpp|h|py|rs|toml|patch))`", section):
+            candidate = match.group(1)
+            if (ROOT / candidate).is_file():
+                found.add(candidate)
+    return found
+
+
 def blocking_reason(state, path):
     """Why this write has to wait, or None if it may go ahead.
 
@@ -289,6 +337,71 @@ def blocking_reason(state, path):
                 f"must not be left behind. Fix it first: {heading} ({file_path}). "
                 "Write that file, then continue."
             )
+    return None
+
+
+def added_measurement(path, params):
+    """Whether this write adds a print, and only a print that was not there before.
+
+    A whole-file rewrite carries every print the file already had, so counting them would let
+    the rule be passed by rewriting the file as it was. What counts is a print that is new:
+    for an edit that is the text the edit adds, for a rewrite it is the prints the old file
+    did not have.
+    """
+    new_text = params.get("new_string") or ""
+    if not new_text:
+        new_text = params.get("content") or ""
+        if not new_text:
+            for edit in params.get("edits") or []:
+                new_text += edit.get("new_string") or ""
+        old_text = ""
+        try:
+            old_text = Path(str(path)).read_text(errors="replace")
+        except OSError:
+            old_text = ""
+        if old_text:
+            new_prints = set(re.findall(r"printf\s*\(\s*\"([^\"]*)\"", new_text))
+            old_prints = set(re.findall(r"printf\s*\(\s*\"([^\"]*)\"", old_text))
+            added = new_prints - old_prints
+            return bool(added)
+    return bool(re.search(r"printf\s*\(", new_text))
+
+
+def speculation_reason(state, path, params):
+    """Why this write has to carry instrumentation, or None if it may go ahead.
+
+    Rule 5: a bug whose cause is not known must not be theorised about twice. The hook cannot
+    tell whether a write is a guess, so it uses what it can measure: a file that is under
+    investigation for a bug, written again with no new print, is the shape of a second guess.
+    The write is then refused until the file carries a print of the state the hypothesis turns
+    on.
+
+    The counter is per file and it is cleared by a write that adds a print, so a file that has
+    been instrumented is free to be written again.
+    """
+    suspect = state.get("suspect", {})
+    if not suspect:
+        return None
+    target = str(path)
+    for suspect_path, count in suspect.items():
+        if suspect_path not in target:
+            continue
+        if count < 1:
+            continue
+        if added_measurement(path, params):
+            # The write prints something new: it measures. The counter goes back to zero, so
+            # the next write of this file is allowed again.
+            suspect[suspect_path] = 0
+            continue
+        suspect[suspect_path] = count + 1
+        return (
+            f"Write of {Path(target).name} is blocked: this file is under investigation for a "
+            "bug whose cause is not established, and this write adds no measurement. Add a "
+            "print of the state the hypothesis turns on (the register, the stage, the error), "
+            "so the next round has data instead of a second guess. Write the file with the "
+            "print, then continue."
+        )
+    state["suspect"] = suspect
     return None
 
 
@@ -369,7 +482,12 @@ def main():
             for heading in [h for h, f in state["defects"].items()
                             if f and f in str(path)]:
                 state["defects"].pop(heading, None)
-            save_state(state)
+            # Rule 5: a second guess about the same bug has to become a measurement.
+            reason = speculation_reason(state, path, params)
+            if reason:
+                decision = reason
+            else:
+                save_state(state)
 
     elif tool in ("Read",):
         path = params.get("file_path", "")

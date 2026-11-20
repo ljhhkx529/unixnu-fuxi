@@ -563,7 +563,13 @@ uint32_t waitEvents(uint32_t ms)
 {
     uint32_t bits = __atomic_exchange_n(&gOwner.pending, 0, __ATOMIC_ACQ_REL);
     if (bits) return bits;
-    assert_wait_timeout(reinterpret_cast<event_t>(&gOwner.pending), THREAD_UNINT, ms, kMillisecondScale);
+    if (!assert_wait_timeout(reinterpret_cast<event_t>(&gOwner.pending), THREAD_UNINT, ms, kMillisecondScale)) {
+        /* The wait timed out with nothing to report. The wait is taken off the thread here, so the
+         * caller sees the timeout instead of blocking forever: a step that waits for the
+         * always-on processor or for the DSP's doorbells has to be able to give up and report. */
+        clear_wait(current_thread(), THREAD_TIMED_OUT);
+        return 0;
+    }
     bits = __atomic_exchange_n(&gOwner.pending, 0, __ATOMIC_ACQ_REL);
     if (bits) {
         clear_wait(current_thread(), THREAD_AWAKENED);

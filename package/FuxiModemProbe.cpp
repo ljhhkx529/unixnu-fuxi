@@ -35,6 +35,7 @@
 #include "FuxiModemPas.h"
 #include "FuxiModemScm.h"
 #include "FuxiModemAssign.h"
+#include "FuxiModemLowMeta.h"
 #include "FuxiAdspFirmware.h"
 #include "QcomGlink.h"
 #include "QcomMdt.h"
@@ -49,6 +50,8 @@
 extern "C" int armcpu_spi_attach(uint32_t, bool, void (*)(void *), void *, uint32_t *, uint64_t *)
     __attribute__((weak_import));
 extern int printf(const char *format, ...);
+/* Physical window of the kernel: the low metadata window must not be inside it. */
+extern "C" unsigned long gPhysBase, gPhysSize;
 
 /* The component's board adapter, in the QcomBaseband component. The link and the QRTR layer live there; this
  * file only starts the modem and hands the adapter its SMEM window and its doorbell. */
@@ -73,7 +76,10 @@ constexpr uint64_t kTcsrMutex = 0x01f43000ull;
 constexpr uint32_t kTcsrMutexSize = 0x10000u;
 constexpr uint64_t kIpccBase = 0x00408000ull;
 constexpr uint32_t kIpccSize = 0x1000u;
-constexpr uint64_t kAossBase = 0x00c30000ull;
+/* The always-on processor's window. The board's power controller is at 0xc300000 of 0x400
+ * (the CAF live device tree's power-controller@c300000 node; facts/audio/binding.toml's
+ * aoss_base is the same value, and the ADSP probe already uses it). */
+constexpr uint64_t kAossBase = 0x00c300000ull;
 constexpr uint32_t kAossSize = 0x400u;
 constexpr uint64_t kRscBase = 0x17a20000ull;
 constexpr uint32_t kRscSize = 0x10000u;
@@ -147,11 +153,20 @@ struct Window {
     uint64_t size;
 };
 
+/* A metadata buffer in the low DRAM window: the slice's virtual address, the physical address the
+ * secure world is given, and how many bytes the metadata is. */
+struct LowMeta {
+    volatile uint8_t *va;
+    uint64_t phys;
+    uint64_t bytes;
+};
+
 struct Image {
     void *file;
     uint64_t size;
     QcomMdtImage mdt;
-    IOBufferMemoryDescriptor *meta;
+    LowMeta meta;
+    bool has_meta;
     bool reset;
     uint32_t init_x0, mem_x0;
 };
@@ -453,9 +468,14 @@ int openImage(Image &image, const char *path)
 
 void releaseImage(Image &image)
 {
-    if (image.meta) {
-        image.meta->release();
-        image.meta = nullptr;
+    /* The metadata is a slice of the low window, so there is nothing to release: the window stays
+     * mapped for the rest of the boot. What has to happen is that the slice is cleared, so a later
+     * image cannot find the previous one's bytes there. */
+    if (image.has_meta && image.meta.va) {
+        for (uint64_t i = 0; i < image.meta.bytes; ++i) image.meta.va[i] = 0;
+        __asm__ volatile("dsb sy" ::: "memory");
+        image.meta = {};
+        image.has_meta = false;
     }
     if (image.file) {
         fuxi_adsp_fw_close(image.file);
@@ -467,6 +487,122 @@ void releaseImage(Image &image)
  * aligned and not cacheable (drivers/firmware/qcom/qcom_scm.c, qcom_scm_pas_init_image), so the buffer
  * is a whole page and the page is mapped without a cache. */
 constexpr uint64_t kMetadataPageBytes = 4096;
+
+/* The metadata's buffer, in a fixed low DRAM window.
+ *
+ * The window is mapped once, when the modem's sequence starts, and every metadata buffer is a slice of
+ * it. The address is fixed and below 4 GiB because upstream's is: Linux takes it from
+ * dma_alloc_coherent on the SCM platform device, whose masks default to 32 bits, so upstream's
+ * metadata always lands below 4 GiB or the allocation fails (the mainline fuxi port saw -12 and fixed
+ * it with CONFIG_ZONE_DMA and CONFIG_ZONE_DMA32, whose only effect is to move the allocation below
+ * 4 GiB).
+ *
+ * A physical mask cannot do this here. XNU's initWithPhysicalMask turns the mask into a highestMask
+ * and an alignment, and IOKernelAllocateWithPhysicalRestrict drops any maximum physical address of
+ * 0xFFFFFFFF or below to zero and substitutes KMA_LOMEM instead; on arm64 vm_lopage_needed is false
+ * (only i386 sets it), so the low-memory request is ignored and the allocation lands wherever it
+ * lands. That is why the audio chain's 32-bit mask produced 0x8CFF84000 and the modem's metadata
+ * 0x8d39ab000, both above 4 GiB.
+ *
+ * So the address is fixed, and IODeviceMemory::withRange is the mechanism: the audio chain already
+ * proved that recipe on this board (package/FuxiAdspProbe.cpp, probeOwnedPcmSmmu). */
+struct LowMetaWindow {
+    IOMemoryMap *map;
+    volatile uint8_t *va;
+    uint64_t size;
+    bool mapped;
+};
+
+LowMetaWindow gLowMeta;
+
+/* Maps the low DRAM window the metadata lives in. The window has to be outside everything else on the
+ * board, and the header holds the list of what it must not touch; the check is here rather than in the
+ * header so that it runs on the device, where the port's own windows are known. */
+bool mapLowMeta()
+{
+    if (gLowMeta.mapped) return true;
+    const uint64_t base = FUXI_MODEM_LOW_META_BASE;
+    const uint64_t size = FUXI_MODEM_LOW_META_SPAN;
+    /* The port's own windows and the modem's carveouts are checked here, on the device. The list in the
+     * header is the device tree's; these are the ones the port itself maps. */
+    if (fuxi_modem_low_meta_overlaps(base, size, kModemCarveoutBase, kModemCarveoutSize) ||
+        fuxi_modem_low_meta_overlaps(base, size, kModemDtbCarveoutBase, kModemDtbCarveoutSize) ||
+        fuxi_modem_low_meta_overlaps(base, size, FUXI_MODEM_DSM_BASE, FUXI_MODEM_DSM_SIZE)) {
+        printf("FUXI_MODEM: the low metadata window at %llx overlaps a region the modem owns\n",
+               static_cast<unsigned long long>(base));
+        return false;
+    }
+    /* The kernel's own physical window. The kernel lives above 4 GiB on this board, so a window below
+     * 4 GiB cannot be inside it, but the check is made anyway: it costs nothing and it is the check
+     * that would catch the window being moved. */
+    if (gPhysBase && gPhysBase < base + size && base < gPhysBase + gPhysSize) {
+        printf("FUXI_MODEM: the low metadata window at %llx is inside the kernel's physical window\n",
+               static_cast<unsigned long long>(base));
+        return false;
+    }
+    IODeviceMemory *memory = IODeviceMemory::withRange(base, size);
+    if (!memory) {
+        printf("FUXI_MODEM: the low metadata window at %llx could not be described\n",
+               static_cast<unsigned long long>(base));
+        return false;
+    }
+    /* kIOMapAnywhere is required: without it the fixed mapping fails silently, which is what the
+     * audio chain found (the map() call reports nothing and the page is not there). */
+    gLowMeta.map = memory->map(kIOMapAnywhere | kIOMapWriteCombineCache);
+    memory->release();
+    if (!gLowMeta.map) {
+        printf("FUXI_MODEM: the low metadata window at %llx could not be mapped\n",
+               static_cast<unsigned long long>(base));
+        return false;
+    }
+    gLowMeta.va = reinterpret_cast<volatile uint8_t *>(gLowMeta.map->getVirtualAddress());
+    gLowMeta.size = size;
+    gLowMeta.mapped = gLowMeta.va != nullptr;
+    if (!gLowMeta.mapped) {
+        gLowMeta.map->release();
+        gLowMeta.map = nullptr;
+        printf("FUXI_MODEM: the low metadata window at %llx mapped to nothing\n",
+               static_cast<unsigned long long>(base));
+        return false;
+    }
+    /* The whole window is zeroed before anything is put in it, so a slice that is not written is still
+     * zero, which is what the secure world expects for the part of the page the metadata does not
+     * reach. */
+    for (uint64_t i = 0; i < size; ++i) gLowMeta.va[i] = 0;
+    __asm__ volatile("dsb sy" ::: "memory");
+    printf("FUXI_MODEM: the low metadata window is %llx of %llu bytes, below 4 GiB\n",
+           static_cast<unsigned long long>(base), static_cast<unsigned long long>(size));
+    return true;
+}
+
+/* A metadata buffer in the low window. It is a slice of the mapped window, so its address is the
+ * window's address plus the slice's offset, and it is the address the secure world is given.
+   The caller fills it and cleans it to the point of coherency before the call. */
+bool allocLowMeta(unsigned which, uint64_t bytes, LowMeta &out)
+{
+    if (!mapLowMeta()) return false;
+    if (!fuxi_modem_low_meta_fits(which, bytes)) {
+        printf("FUXI_MODEM: a metadata of %llu bytes does not fit the window's slot\n",
+               static_cast<unsigned long long>(bytes));
+        return false;
+    }
+    out.va = gLowMeta.va + fuxi_modem_low_meta_offset(which);
+    out.phys = fuxi_modem_low_meta_address(which);
+    out.bytes = bytes;
+    return true;
+}
+
+/* A metadata buffer for the diagnostics. Every attempt needs a fresh buffer, because the secure world
+   may write into it, and the diagnostics make their attempts one after another, so the window's blob
+   slot is zeroed before each one. */
+bool allocDiagnosticMeta(Image &image, uint64_t bytes)
+{
+    if (!allocLowMeta(FuxiModemLowMetaDtb, bytes, image.meta)) return false;
+    image.has_meta = true;
+    const uint64_t occupied = fuxi_modem_low_meta_occupied(bytes);
+    for (uint64_t i = 0; i < occupied; ++i) image.meta.va[i] = 0;
+    return true;
+}
 
 /* A page of memory the secure world can read: physically contiguous and page aligned.
    The caller fills it and cleans it to the point of coherency before the call.
@@ -503,22 +639,27 @@ IOBufferMemoryDescriptor *allocSecurePage()
    and leaves "authentication of the segments done by a separate call", so the reset belongs after the
    segments are in the carveout, not before. The caller does that call.
 
-   The metadata lives in a whole page, and the page is not cacheable. Linux says why
-   (drivers/firmware/qcom/qcom_scm.c, qcom_scm_pas_init_image): "During the scm call memory protection
+   The metadata lives in a fixed low DRAM window, below 4 GiB, because upstream's does: Linux takes the
+   metadata's address from dma_alloc_coherent on the SCM platform device, whose masks default to 32
+   bits, so upstream's metadata always lands below 4 GiB or the allocation fails. The window's
+   reasoning is in FuxiModemLowMeta.h.
+
+   The buffer is page aligned and the rest of the page is zero, which Linux also asks for
+   (drivers/firmware/qcom/qcom_scm.c, qcom_scm_pas_init_image: "During the scm call memory protection
    will be enabled for the meta data blob, so make sure it's physically contiguous, 4K aligned and
-   non-cachable to avoid XPU violations." The port's own memory map makes the region a reserved,
-   uncacheable one, and the metadata's own page has to be uncacheable for the same reason. */
-int authenticateHeader(Image &image, uint32_t pas, uint64_t base)
+   non-cachable to avoid XPU violations"). The page is mapped write-combined rather than uncacheable:
+   the uncacheable mapping hung the modem's thread on the device on 2026-11-20, and the write-combined
+   one is what the audio chain proved on this board. */
+int authenticateHeader(Image &image, uint32_t pas, uint64_t base, unsigned which)
 {
     const uint64_t bytes = qcom_mdt_metadata_size(&image.mdt);
     if (!bytes) return -5;
-    /* The whole page, so the buffer is page-aligned and the rest of the page is zero. */
-    image.meta = allocSecurePage();
-    if (!image.meta) return -12;
-    uint8_t *va = static_cast<uint8_t *>(image.meta->getBytesNoCopy());
-    if (!va) return -5;
+    if (!allocLowMeta(which, bytes, image.meta)) return -12;
+    image.has_meta = true;
+    uint8_t *va = const_cast<uint8_t *>(image.meta.va);
     /* The page is zeroed first, so the part of the page the metadata does not reach is zero. */
-    bzero(va, static_cast<size_t>(kMetadataPageBytes));
+    const uint64_t occupied = fuxi_modem_low_meta_occupied(bytes);
+    for (uint64_t i = 0; i < occupied; ++i) va[i] = 0;
     /* The metadata is the ELF header followed by the hash segment, both taken out of the .mdt file:
      * that is the form the secure world authenticates (Linux drivers/soc/qcom/mdt_loader.c,
      * qcom_mdt_read_metadata). The joined image of the .bNN pieces has the hash at another offset in
@@ -526,8 +667,8 @@ int authenticateHeader(Image &image, uint32_t pas, uint64_t base)
     if (buildMetadata(image, va, bytes)) return -5;
     /* The whole page is cleaned, not just the metadata, because the page is what the secure world is
      * given. */
-    cleanToPoc(va, static_cast<size_t>(kMetadataPageBytes));
-    const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+    cleanToPoc(va, static_cast<size_t>(occupied));
+    const uint64_t phys = image.meta.phys;
     /* The secure world reads this metadata buffer. Its address and size are what it looks at, so
      * they are printed: a refusal that is not about the pas id is most likely about them. */
     printf("FUXI_MODEM: the metadata is %llu bytes at %llx, hash %d, %s, from the %s\n",
@@ -535,6 +676,7 @@ int authenticateHeader(Image &image, uint32_t pas, uint64_t base)
            image.mdt.hash, image.mdt.relocatable ? "relocatable" : "fixed",
            image.mdt.mdt_size ? "mdt file" : "joined image");
     if (phys & 0xfffull) printf("FUXI_MODEM: the metadata's address is not page aligned\n");
+    if (phys >= 0x100000000ull) printf("FUXI_MODEM: the metadata's address is above 4 GiB\n");
 
     unsigned steps[FuxiModemPasStepCount];
     const unsigned count = fuxi_modem_pas_header_steps(image.mdt.relocatable ? 1 : 0, steps, FuxiModemPasStepCount);
@@ -703,7 +845,13 @@ uint32_t waitEvents(uint32_t ms)
 {
     uint32_t bits = __atomic_exchange_n(&gOwner.pending, 0, __ATOMIC_ACQ_REL);
     if (bits) return bits;
-    assert_wait_timeout(reinterpret_cast<event_t>(&gOwner.pending), THREAD_UNINT, ms, kMillisecondScale);
+    if (!assert_wait_timeout(reinterpret_cast<event_t>(&gOwner.pending), THREAD_UNINT, ms, kMillisecondScale)) {
+        /* The wait timed out with nothing to report. The wait is taken off the thread here, so the
+         * caller sees the timeout instead of blocking forever: a step that waits for the always-on
+         * processor or for the modem's doorbells has to be able to give up and report. */
+        clear_wait(current_thread(), THREAD_TIMED_OUT);
+        return 0;
+    }
     bits = __atomic_exchange_n(&gOwner.pending, 0, __ATOMIC_ACQ_REL);
     if (bits) {
         clear_wait(current_thread(), THREAD_AWAKENED);
@@ -792,6 +940,17 @@ int stepMap()
     if (!mapWindow(gOwner.ipcc_window, kIpccBase, kIpccSize)) return -12;
     if (!mapWindow(gOwner.aoss_window, kAossBase, kAossSize)) return -12;
     if (!mapWindow(gOwner.rsc_window, kRscBase, kRscSize)) return -12;
+    /* The windows as they were mapped, so a fault in one of them can be told apart from a fault
+     * in what is read out of it. The always-on processor's window is the one the mailbox lives
+     * in, and it is the one the modem's handshake needs. */
+    printf("FUXI_MODEM: the shared memory window is at %p of %llu bytes\n",
+           (const void *)(const uintptr_t)gOwner.smem_window.va, (unsigned long long)gOwner.smem_window.size);
+    printf("FUXI_MODEM: the interrupt window is at %p of %llu bytes\n",
+           (const void *)(const uintptr_t)gOwner.ipcc_window.va, (unsigned long long)gOwner.ipcc_window.size);
+    printf("FUXI_MODEM: the always-on processor's window is at %p of %llu bytes\n",
+           (const void *)(const uintptr_t)gOwner.aoss_window.va, (unsigned long long)gOwner.aoss_window.size);
+    printf("FUXI_MODEM: the resource's window is at %p of %llu bytes\n",
+           (const void *)(const uintptr_t)gOwner.rsc_window.va, (unsigned long long)gOwner.rsc_window.size);
     gOwner.smem.base = gOwner.smem_window.va;
     gOwner.smem.size = kSmemSize;
     /* The modem's partition is the one shared with the modem itself: local pid 0, remote pid 1. */
@@ -893,24 +1052,61 @@ int stepAssign()
     return 0;
 }
 
-/* The device tree blob first, then the modem image, as Linux does. */
-int stepPas()
+/* The device tree blob first, then the modem image, as Linux does.
+ *
+ * Linux splits this into two phases and the port now does too, because the always-on processor's
+ * message belongs between them. Upstream drivers/remoteproc/qcom_q6v5_pas.c, qcom_pas_start, and
+ * remoteproc_core.c, rproc_start:
+ *
+ *   the load phase: rproc_start calls rproc_load_segments, which calls qcom_pas_load, which does
+ *   the device tree blob's INIT_IMAGE (and MEM_SETUP if the blob is relocatable) and copies the
+ *   blob's segments into its carveout. Nothing else.
+ *
+ *   the start phase: qcom_pas_start calls qcom_q6v5_prepare, which votes for the interconnect's
+ *   bandwidth and sends "{class: image, res: load_state, name: modem, val: on}" to the always-on
+ *   processor; then the blob's AUTH_AND_RESET; then the modem image's own INIT_IMAGE, MEM_SETUP
+ *   and segment copy; then the modem image's AUTH_AND_RESET; then the wait for the modem's first
+ *   words.
+ *
+ * The port had the always-on processor's message after both resets, and on 2026-11-20 the modem
+ * image's AUTH_AND_RESET never returned with it there. Both upstream Linux and the reference port
+ * for the same modem in XNU (hakios's drivers/modem/hakios.mpss.c, step 7) put the message before
+ * the reset, so it goes here too. */
+
+/* The load phase: the device tree blob's metadata is given to the secure world and its segments
+ * are copied into its carveout. The blob is not reset yet. */
+int stepPasLoad()
 {
+    printf("FUXI_MODEM: step: the modem's shutdown\n");
     (void)secureCall(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), fuxi_modem_pas_id(FuxiModemPasImageModem), 0, 0, 0);
     (void)secureCall(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), fuxi_modem_pas_id(FuxiModemPasImageDtb), 0, 0, 0);
 
-    int rc = authenticateHeader(gOwner.dtb, fuxi_modem_pas_id(FuxiModemPasImageDtb), kModemDtbCarveoutBase);
-    if (!rc) rc = loadSegments(gOwner.dtb, kModemDtbCarveoutBase, kModemDtbCarveoutSize);
+    printf("FUXI_MODEM: step: the device tree blob's metadata\n");
+    const int rc = authenticateHeader(gOwner.dtb, fuxi_modem_pas_id(FuxiModemPasImageDtb), kModemDtbCarveoutBase,
+                                       FuxiModemLowMetaDtb);
     if (!rc) {
-        /* The reset comes after the segments are in the carveout, once per image. */
-        const ScmResult auth = secureCall(fuxi_modem_pas_command(fuxi_modem_pas_reset_step),
-                                           fuxi_modem_pas_arginfo(fuxi_modem_pas_reset_step),
-                                           fuxi_modem_pas_id(FuxiModemPasImageDtb), 0, 0, 0);
-        printf("FUXI_MODEM: pas %u step %u answers %u/%u\n", fuxi_modem_pas_id(FuxiModemPasImageDtb),
-               fuxi_modem_pas_reset_step, static_cast<uint32_t>(auth.x0), static_cast<uint32_t>(auth.x1));
-        if (!fuxi_modem_scm_ok(auth.x0, auth.x1)) rc = -3;
-        else gOwner.dtb_auth_cookie = gOwner.scm_x0;
+        printf("FUXI_MODEM: step: the device tree blob's segments\n");
+        return loadSegments(gOwner.dtb, kModemDtbCarveoutBase, kModemDtbCarveoutSize);
     }
+    printf("FUXI_MODEM: the modem device tree blob was refused (scm %u/%u)\n", gOwner.scm_x0, gOwner.scm_x1);
+    shutdownModem(true, false);
+    return rc;
+}
+
+/* The start phase: the blob is reset, then the modem image is given to the secure world and reset
+ * as well. */
+int stepPasStart()
+{
+    int rc = 0;
+    /* The reset comes after the segments are in the carveout, once per image. */
+    printf("FUXI_MODEM: step: the device tree blob's reset\n");
+    const ScmResult auth = secureCall(fuxi_modem_pas_command(fuxi_modem_pas_reset_step),
+                                       fuxi_modem_pas_arginfo(fuxi_modem_pas_reset_step),
+                                       fuxi_modem_pas_id(FuxiModemPasImageDtb), 0, 0, 0);
+    printf("FUXI_MODEM: pas %u step %u answers %u/%u\n", fuxi_modem_pas_id(FuxiModemPasImageDtb),
+           fuxi_modem_pas_reset_step, static_cast<uint32_t>(auth.x0), static_cast<uint32_t>(auth.x1));
+    if (!fuxi_modem_scm_ok(auth.x0, auth.x1)) rc = -3;
+    else gOwner.dtb_auth_cookie = gOwner.scm_x0;
     if (rc) {
         printf("FUXI_MODEM: the modem device tree blob was refused (scm %u/%u)\n", gOwner.scm_x0, gOwner.scm_x1);
         shutdownModem(true, false);
@@ -925,18 +1121,26 @@ int stepPas()
      * right after the authentication would hand the page back while the secure world may still be
      * reading it. */
 
-    rc = authenticateHeader(gOwner.modem, fuxi_modem_pas_id(FuxiModemPasImageModem), kModemCarveoutBase);
-    if (!rc) rc = loadSegments(gOwner.modem, kModemCarveoutBase, kModemCarveoutSize);
+    printf("FUXI_MODEM: step: the modem image's metadata\n");
+    rc = authenticateHeader(gOwner.modem, fuxi_modem_pas_id(FuxiModemPasImageModem), kModemCarveoutBase,
+                            FuxiModemLowMetaImage);
+    if (!rc) {
+        printf("FUXI_MODEM: step: the modem image's segments\n");
+        rc = loadSegments(gOwner.modem, kModemCarveoutBase, kModemCarveoutSize);
+    }
     if (rc) {
         printf("FUXI_MODEM: the modem image was refused (%d)\n", rc);
         shutdownModem(true, false);
         return rc;
     }
     setStage(kStLoaded);
-    const ScmResult auth = secureCall(fuxi_modem_pas_command(fuxi_modem_pas_reset_step),
-                                       fuxi_modem_pas_arginfo(fuxi_modem_pas_reset_step),
-                                       fuxi_modem_pas_id(FuxiModemPasImageModem), 0, 0, 0);
-    if (!fuxi_modem_scm_ok(auth.x0, auth.x1)) {
+    printf("FUXI_MODEM: step: the modem image's reset\n");
+    const ScmResult image_auth = secureCall(fuxi_modem_pas_command(fuxi_modem_pas_reset_step),
+                                             fuxi_modem_pas_arginfo(fuxi_modem_pas_reset_step),
+                                             fuxi_modem_pas_id(FuxiModemPasImageModem), 0, 0, 0);
+    printf("FUXI_MODEM: pas %u step %u answers %u/%u\n", fuxi_modem_pas_id(FuxiModemPasImageModem),
+           fuxi_modem_pas_reset_step, static_cast<uint32_t>(image_auth.x0), static_cast<uint32_t>(image_auth.x1));
+    if (!fuxi_modem_scm_ok(image_auth.x0, image_auth.x1)) {
         printf("FUXI_MODEM: the modem was not released (scm %u/%u)\n", gOwner.scm_x0, gOwner.scm_x1);
         shutdownModem(true, true);
         return -3;
@@ -946,29 +1150,100 @@ int stepPas()
     return 0;
 }
 
-/* The AOP mailbox: the handshake, then the message that releases the modem. */
-int stepQmp()
+/* The AOP mailbox: the handshake, then the message that releases the modem.
+ *
+ * The handshake and the message are two steps here, because Linux's order puts the message
+ * *before* the modem is authenticated and the port had it after.
+ * Linux drivers/remoteproc/qcom_q6v5.c, qcom_q6v5_prepare: the vote for the bandwidth comes
+ * first, then q6v5_load_state_toggle(q6v5, true), which sends
+ * "{class: image, res: load_state, name: modem, val: on}" to the always-on processor. That is
+ * qcom_q6v5_prepare, which qcom_pas_start calls before anything else, so the message is on its
+ * way before the device tree blob's AUTH_AND_RESET and long before the modem image's.
+ *
+ * The port had it the other way round, and the modem image's AUTH_AND_RESET never came back on
+ * 2026-11-20. The reference port for the same modem in XNU, hakios's drivers/modem/hakios.mpss.c
+ * (step 7), also sends it before: "ask TrustZone to authenticate the image and let the DSP out of
+ * reset" comes after the mailbox message "{class: image, res: load_state, name: modem, val: on}".
+ */
+
+/* Opens the mailbox to the always-on processor. The channel has to be open before anything can be
+ * sent through it.
+ *
+ * The handshake is stepped here, not left to the interrupt. qcom_qmp_step is what writes the first
+ * half of the handshake out (the link state and the doorbell that asks the always-on processor to
+ * look at it), so a caller that only waits for an interrupt never starts it: the interrupt is the
+ * always-on processor's answer, and the question has to be asked first. The audio chain's own
+ * mailbox does the same thing (package/FuxiAdspProbe.cpp, hookQmp: qcom_qmp_step in a loop before
+ * the wait), and that one works on this board. */
+int stepQmpOpen()
 {
     qcom_qmp_init(&gOwner.qmp, reinterpret_cast<volatile uint32_t *>(gOwner.aoss_window.va), kAossSize, kickAop,
                   nullptr);
-    uint64_t deadline = 0;
-    clock_interval_to_deadline(1000, kMillisecondScale, &deadline);
-    while (gOwner.qmp.state != QcomQmpOpen && mach_absolute_time() < deadline)
-        serviceEvents(waitEvents(10) | kEvAop);
+    /* The descriptor as it stands before anything is written to it: the always-on processor's side,
+     * then ours, so a stall in the handshake says which half is missing an answer.
+     *
+     * The window is read word by word and each word is printed before the next one is read, so
+     * the last word that arrives names the read that faulted. A read that faults kills the
+     * kernel, so the word count is kept small and the words that matter come first: the magic
+     * and the version are what upstream checks first. */
+    printf("FUXI_MODEM: the mailbox is at %p of %u bytes\n", (const void *)(const uintptr_t)gOwner.aoss_window.va,
+           kAossSize);
+    printf("FUXI_MODEM: the mailbox descriptor before the handshake\n");
+    volatile uint32_t *descriptor = reinterpret_cast<volatile uint32_t *>(gOwner.aoss_window.va);
+    for (unsigned word = 0; word < 16; ++word) {
+        const uint32_t value = descriptor[word];
+        printf("FUXI_MODEM: the descriptor word %u is %08x\n", word, value);
+    }
+    /* The handshake is four steps and the always-on processor answers each with an interrupt, so the
+     * loop steps it and waits for the answer, over and over, until the channel is open. */
+    for (unsigned phase = 0; phase < 8; ++phase) {
+        if (qcom_qmp_step(&gOwner.qmp) == QcomQmpOpen) break;
+        if (gOwner.qmp.state < 0) break;
+        uint64_t deadline = 0;
+        clock_interval_to_deadline(1000, kMillisecondScale, &deadline);
+        while (gOwner.qmp.state != QcomQmpOpen && gOwner.qmp.state >= 0 && mach_absolute_time() < deadline)
+            serviceEvents(waitEvents(10) | kEvAop);
+        printf("FUXI_MODEM: the handshake is at phase %u, the state is %d\n", phase, gOwner.qmp.state);
+    }
     if (gOwner.qmp.state != QcomQmpOpen) {
+        printf("FUXI_MODEM: the mailbox to the always-on processor did not open (state %d)\n", gOwner.qmp.state);
+        printf("FUXI_MODEM: the mailbox descriptor after the handshake\n");
+        for (unsigned word = 0; word < 16; ++word) {
+            printf("FUXI_MODEM: the descriptor word %u is %08x\n", word,
+                   gOwner.aoss_window.va ? gOwner.aoss_window.va[word] : 0u);
+        }
         qcom_qmp_abandon(&gOwner.qmp);
         return -60;
     }
-    if (qcom_qmp_send(&gOwner.qmp, kLoadStateMessage) != QcomQmpSending) return -60;
-    deadline = 0;
+    printf("FUXI_MODEM: the mailbox to the always-on processor is open (box %u of %u bytes)\n",
+           gOwner.qmp.box, gOwner.qmp.box_size);
+    return 0;
+}
+
+/* The message itself: the always-on processor is told the modem's image is loaded and may be
+ * released. */
+int stepQmpLoadState()
+{
+    if (gOwner.qmp.state != QcomQmpOpen) {
+        printf("FUXI_MODEM: the mailbox is not open (state %d), the message is not sent\n", gOwner.qmp.state);
+        return -60;
+    }
+    printf("FUXI_MODEM: step: the always-on processor's load state\n");
+    if (qcom_qmp_send(&gOwner.qmp, kLoadStateMessage) != QcomQmpSending) {
+        printf("FUXI_MODEM: the load state message did not go in (state %d)\n", gOwner.qmp.state);
+        return -60;
+    }
+    uint64_t deadline = 0;
     clock_interval_to_deadline(1000, kMillisecondScale, &deadline);
     while (gOwner.qmp.state == QcomQmpSending && mach_absolute_time() < deadline)
         serviceEvents(waitEvents(10) | kEvAop);
     if (gOwner.qmp.state != QcomQmpOpen) {
+        printf("FUXI_MODEM: the always-on processor did not take the message (state %d)\n", gOwner.qmp.state);
         qcom_qmp_abandon(&gOwner.qmp);
         return -60;
     }
     gOwner.qmp_response = gOwner.qmp.ram[gOwner.qmp.box / 4];
+    printf("FUXI_MODEM: the always-on processor answered the load state with %u\n", gOwner.qmp_response);
     setStage(kStLoadState);
     return 0;
 }
@@ -1149,14 +1424,11 @@ int pasInstrument()
         Image blob = {};
         if (!openImage(blob, "modem:modem_dtb")) {
             const uint64_t bytes = qcom_mdt_metadata_size(&blob.mdt);
-            blob.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-                kernel_task, static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryPhysicallyContiguous),
-                bytes, 0xfffffffffffff000ull);
-            if (blob.meta && blob.meta->prepare() == kIOReturnSuccess) {
-                uint8_t *va = static_cast<uint8_t *>(blob.meta->getBytesNoCopy());
-                if (va && !buildMetadata(blob, va, bytes)) {
+            if (allocDiagnosticMeta(blob, bytes)) {
+                uint8_t *va = const_cast<uint8_t *>(blob.meta.va);
+                if (!buildMetadata(blob, va, bytes)) {
                     cleanToPoc(va, static_cast<size_t>(bytes));
-                    const uint64_t phys = blob.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+                    const uint64_t phys = blob.meta.phys;
                     const ScmResult result = secureCall(QCOM_SCM_PAS_INIT_IMAGE,
                                                          qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0),
                                                          0xffffu, phys, 0, 0);
@@ -1223,22 +1495,19 @@ int pasMatrix()
         for (unsigned id = 0; id < 2; ++id) {
             for (unsigned with_setup = 0; with_setup < 3; ++with_setup) {
                 /* A fresh buffer for every attempt: the secure world may write into it. */
-                blob.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-                    kernel_task, static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryPhysicallyContiguous),
-                    bytes, 0xfffffffffffff000ull);
-                if (!blob.meta || blob.meta->prepare() != kIOReturnSuccess) {
+                if (!allocDiagnosticMeta(blob, bytes)) {
                     printf("FUXI_MODEM: the matrix could not allocate the metadata of %s\n", paths[image]);
                     releaseImage(blob);
                     return -12;
                 }
-                uint8_t *va = static_cast<uint8_t *>(blob.meta->getBytesNoCopy());
-                if (!va || buildMetadata(blob, va, bytes)) {
+                uint8_t *va = const_cast<uint8_t *>(blob.meta.va);
+                if (buildMetadata(blob, va, bytes)) {
                     printf("FUXI_MODEM: the matrix could not read the metadata of %s\n", paths[image]);
                     releaseImage(blob);
                     return -5;
                 }
                 cleanToPoc(va, static_cast<size_t>(bytes));
-                const uint64_t phys = blob.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+                const uint64_t phys = blob.meta.phys;
                 /* Start from a clean pas id, so an attempt does not see what a previous one left. */
                 (void)secureCall(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), ids[id], 0, 0, 0);
                 const ScmResult init = secureCall(QCOM_SCM_PAS_INIT_IMAGE,
@@ -1264,8 +1533,8 @@ int pasMatrix()
                 } else {
                     setup_results[image * 2 + id] = setup;
                 }
-                blob.meta->release();
-                blob.meta = nullptr;
+                blob.has_meta = false;
+                blob.meta = {};
             }
         }
         releaseImage(blob);
@@ -1309,22 +1578,19 @@ int pasIdSweep()
     }
     const uint64_t bytes = qcom_mdt_metadata_size(&blob.mdt);
     for (unsigned i = 0; i < count; ++i) {
-        blob.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-            kernel_task, static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryPhysicallyContiguous),
-            bytes, 0xfffffffffffff000ull);
-        if (!blob.meta || blob.meta->prepare() != kIOReturnSuccess) {
+        if (!allocDiagnosticMeta(blob, bytes)) {
             printf("FUXI_MODEM: the sweep could not allocate the metadata\n");
             releaseImage(blob);
             return -12;
         }
-        uint8_t *va = static_cast<uint8_t *>(blob.meta->getBytesNoCopy());
-        if (!va || buildMetadata(blob, va, bytes)) {
+        uint8_t *va = const_cast<uint8_t *>(blob.meta.va);
+        if (buildMetadata(blob, va, bytes)) {
             printf("FUXI_MODEM: the sweep could not read the metadata\n");
             releaseImage(blob);
             return -5;
         }
         cleanToPoc(va, static_cast<size_t>(bytes));
-        const uint64_t phys = blob.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+        const uint64_t phys = blob.meta.phys;
         (void)secureCall(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), accepted[i], 0, 0, 0);
         const ScmResult init = secureCall(QCOM_SCM_PAS_INIT_IMAGE,
                                            qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0),
@@ -1333,8 +1599,8 @@ int pasIdSweep()
         printf("FUXI_MODEM: the sweep: the pas id %u took the blob: %s (scm %u/%u)\n",
                accepted[i], took ? "yes" : "no",
                static_cast<uint32_t>(init.x0), static_cast<uint32_t>(init.x1));
-        blob.meta->release();
-        blob.meta = nullptr;
+        blob.has_meta = false;
+        blob.meta = {};
         if (took) {
             printf("FUXI_MODEM: the sweep: the modem's blob goes with the pas id %u\n", accepted[i]);
             native_fuxi_modem_stats[12] = static_cast<int32_t>(accepted[i]);
@@ -1405,22 +1671,19 @@ int pasHashCompare()
            static_cast<unsigned long long>(main.size), main.mdt.count,
            main.mdt.relocatable ? "relocatable" : "fixed", main.mdt.hash);
     const uint64_t bytes = qcom_mdt_metadata_size(&main.mdt);
-    main.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-        kernel_task, static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryPhysicallyContiguous),
-        bytes, 0xfffffffffffff000ull);
-    if (!main.meta || main.meta->prepare() != kIOReturnSuccess) {
+    if (!allocDiagnosticMeta(main, bytes)) {
         printf("FUXI_MODEM: the hash compare could not allocate the metadata\n");
         releaseImage(main);
         return -12;
     }
-    uint8_t *va = static_cast<uint8_t *>(main.meta->getBytesNoCopy());
-    if (!va || buildMetadata(main, va, bytes)) {
+    uint8_t *va = const_cast<uint8_t *>(main.meta.va);
+    if (buildMetadata(main, va, bytes)) {
         printf("FUXI_MODEM: the hash compare could not read the metadata\n");
         releaseImage(main);
         return -5;
     }
     cleanToPoc(va, static_cast<size_t>(bytes));
-    const uint64_t phys = main.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+    const uint64_t phys = main.meta.phys;
     (void)secureCall(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), fuxi_modem_pas_id(FuxiModemPasImageModem), 0, 0, 0);
     const ScmResult init = secureCall(QCOM_SCM_PAS_INIT_IMAGE,
                                        qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0),
@@ -1485,24 +1748,20 @@ int pasPacked()
                    static_cast<unsigned long long>(hash.file_offset));
         }
         /* The packed metadata goes to the secure world, in a buffer of its own. */
-        blob.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-            kernel_task, static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryPhysicallyContiguous),
-            bytes, 0xfffffffffffff000ull);
-        if (blob.meta && blob.meta->prepare() == kIOReturnSuccess) {
-            uint8_t *va = static_cast<uint8_t *>(blob.meta->getBytesNoCopy());
-            if (va) {
-                memcpy(va, packed, static_cast<size_t>(bytes));
-                cleanToPoc(va, static_cast<size_t>(bytes));
-                const uint64_t phys = blob.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
-                const uint32_t id = image ? 36u : fuxi_modem_pas_id(FuxiModemPasImageDtb);
-                (void)secureCall(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), id, 0, 0, 0);
-                const ScmResult init = secureCall(QCOM_SCM_PAS_INIT_IMAGE,
-                                                   qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0),
-                                                   id, phys, 0, 0);
-                printf("FUXI_MODEM: the packed test: %s, the packed metadata against the pas id %u gave scm %u/%u (%s)\n",
-                       paths[image], id, static_cast<uint32_t>(init.x0), static_cast<uint32_t>(init.x1),
-                       init.x0 == 0 && init.x1 == 0 ? "accepted" : "refused");
-            }
+        if (allocDiagnosticMeta(blob, bytes)) {
+            uint8_t *va = const_cast<uint8_t *>(blob.meta.va);
+            memcpy(va, packed, static_cast<size_t>(bytes));
+            cleanToPoc(va, static_cast<size_t>(bytes));
+            const uint64_t phys = blob.meta.phys;
+            const uint32_t id = image ? 36u : fuxi_modem_pas_id(FuxiModemPasImageDtb);
+            (void)secureCall(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), id, 0, 0, 0);
+            const ScmResult init = secureCall(QCOM_SCM_PAS_INIT_IMAGE,
+                                               qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0),
+                                               id, phys, 0, 0);
+            printf("FUXI_MODEM: the packed test: %s, the packed metadata at %llx against the pas id %u gave scm %u/%u (%s)\n",
+                   paths[image], static_cast<unsigned long long>(phys), id,
+                   static_cast<uint32_t>(init.x0), static_cast<uint32_t>(init.x1),
+                   init.x0 == 0 && init.x1 == 0 ? "accepted" : "refused");
         }
         if (packed) IOFreeData(packed, bytes);
         if (split) IOFreeData(split, bytes);
@@ -1711,21 +1970,18 @@ int slotPas()
             continue;
         }
         cleanToPoc(va, static_cast<size_t>(bytes));
-        IOBufferMemoryDescriptor *meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-            kernel_task, static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryPhysicallyContiguous),
-            bytes, 0xfffffffffffff000ull);
-        if (!meta || meta->prepare() != kIOReturnSuccess) {
+        Image slot_image = {};
+        if (!allocDiagnosticMeta(slot_image, bytes)) {
             printf("FUXI_MODEM: the slot %s's metadata buffer could not be prepared\n", slots[s]);
-            if (meta) meta->release();
             IOFreeData(va, bytes);
             IOFreeData(raw, size);
             if (mdt) IOFreeData(mdt, mdt_size);
             continue;
         }
-        uint8_t *target = static_cast<uint8_t *>(meta->getBytesNoCopy());
-        if (target) memcpy(target, va, static_cast<size_t>(bytes));
+        uint8_t *target = const_cast<uint8_t *>(slot_image.meta.va);
+        memcpy(target, va, static_cast<size_t>(bytes));
         cleanToPoc(target, static_cast<size_t>(bytes));
-        const uint64_t phys = meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+        const uint64_t phys = slot_image.meta.phys;
         const uint32_t id = fuxi_modem_pas_id(FuxiModemPasImageDtb);
         (void)secureCall(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), id, 0, 0, 0);
         const ScmResult init = secureCall(QCOM_SCM_PAS_INIT_IMAGE,
@@ -1736,7 +1992,8 @@ int slotPas()
                static_cast<unsigned long long>(phys), id,
                static_cast<uint32_t>(init.x0), static_cast<uint32_t>(init.x1),
                init.x0 == 0 && init.x1 == 0 ? "accepted" : "refused");
-        meta->release();
+        slot_image.has_meta = false;
+        slot_image.meta = {};
         IOFreeData(va, bytes);
         IOFreeData(raw, size);
         if (mdt) IOFreeData(mdt, mdt_size);
@@ -1849,22 +2106,19 @@ int pasFixedFirst()
            static_cast<unsigned long long>(written));
 
     const uint64_t bytes = qcom_mdt_metadata_size(&blob.mdt);
-    blob.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-        kernel_task, static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryPhysicallyContiguous),
-        bytes, 0xfffffffffffff000ull);
-    if (!blob.meta || blob.meta->prepare() != kIOReturnSuccess) {
+    if (!allocDiagnosticMeta(blob, bytes)) {
         printf("FUXI_MODEM: the fixed-first test could not allocate the metadata\n");
         releaseImage(blob);
         return -12;
     }
-    uint8_t *va = static_cast<uint8_t *>(blob.meta->getBytesNoCopy());
-    if (!va || buildMetadata(blob, va, bytes)) {
+    uint8_t *va = const_cast<uint8_t *>(blob.meta.va);
+    if (buildMetadata(blob, va, bytes)) {
         printf("FUXI_MODEM: the fixed-first test could not read the metadata\n");
         releaseImage(blob);
         return -5;
     }
     cleanToPoc(va, static_cast<size_t>(bytes));
-    const uint64_t phys = blob.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+    const uint64_t phys = blob.meta.phys;
     const ScmResult init = secureCall(QCOM_SCM_PAS_INIT_IMAGE,
                                        qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0),
                                        fuxi_modem_pas_id(FuxiModemPasImageDtb), phys, 0, 0);
@@ -1881,6 +2135,7 @@ void ownerThread(void *, wait_result_t)
 
     int rc = stepFirmware();
     if (rc) goto failed;
+    printf("FUXI_MODEM: step: the windows\n");
     rc = stepMap();
     if (rc) goto failed;
     /* The memory assign comes before the rails and before any PAS call. Linux runs it in the probe,
@@ -1890,17 +2145,49 @@ void ownerThread(void *, wait_result_t)
      * is the fact this round is after. */
     rc = stepAssign();
     if (rc) printf("FUXI_MODEM: the assign did not succeed (%d), the sequence continues\n", rc);
+    printf("FUXI_MODEM: step: the proxy rails\n");
     rc = stepRails();
     if (rc) goto failed;
+    printf("FUXI_MODEM: step: the pas ids\n");
     rc = stepPasIds();
     if (rc) goto failed;
+    printf("FUXI_MODEM: step: the smp2p item\n");
     rc = stepSmp2p();
     if (rc) goto failed;
+    printf("FUXI_MODEM: step: the doorbells\n");
     rc = stepIpcc();
     if (rc) goto failed;
-    rc = stepPas();
+    /* The order here is Linux's, and it is not the order the port had.
+     *
+     * Linux drivers/remoteproc/qcom_q6v5_pas.c: qcom_pas_load (the remoteproc's load callback)
+     * hands the device tree blob to the secure world and copies the blob's segments into the blob's
+     * carveout. That happens before the remoteproc's start callback, qcom_pas_start, is called at
+     * all (drivers/remoteproc/remoteproc_core.c, rproc_start: rproc_load_segments comes before
+     * rproc->ops->start).
+     *
+     * qcom_pas_start then does, in this order:
+     *
+     *   1. qcom_q6v5_prepare, which votes for the interconnect's bandwidth and sends
+     *      "{class: image, res: load_state, name: modem, val: on}" to the always-on processor
+     *      (drivers/remoteproc/qcom_q6v5.c, q6v5_load_state_toggle)
+     *   2. the proxy power domains, the clocks and the regulators
+     *   3. the blob's AUTH_AND_RESET
+     *   4. qcom_mdt_pas_load for the modem image, which is its INIT_IMAGE, its MEM_SETUP and the
+     *      copy of its segments into the modem's carveout
+     *   5. the modem image's AUTH_AND_RESET
+     *   6. the wait for the modem's first words
+     *
+     * The always-on processor's message is sent where Linux sends it, before the blob's reset. The
+     * reference port for the same modem in XNU, hakios's drivers/modem/hakios.mpss.c (step 7),
+     * sends it before the reset too. */
+    rc = stepPasLoad();
     if (rc) goto failed;
-    rc = stepQmp();
+    printf("FUXI_MODEM: step: the mailbox to the always-on processor\n");
+    rc = stepQmpOpen();
+    if (rc) goto failed;
+    rc = stepQmpLoadState();
+    if (rc) goto failed;
+    rc = stepPasStart();
     if (rc) goto failed;
     rc = waitReady();
     if (rc) goto failed;

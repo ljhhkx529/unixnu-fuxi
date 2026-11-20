@@ -28,7 +28,7 @@
 | MDT 解析 | Linux `drivers/soc/qcom/mdt_loader.c` | `unixnu-fuxi/package/QcomMdt.c` | A | |
 | RPMh ARC 资源 | Linux `drivers/soc/qcom/cmd_db.c` + `rpmh.c` | `unixnu-fuxi/package/QcomRpmh.c` | A | |
 | RPMh 寄存器与 TCS | Linux `drivers/soc/qcom/rpmh-rsc.c` | `unixnu-fuxi/package/QcomRpmh.c` | A | 两个 RSC 寄存器布局、TCS 的选择与触发顺序 |
-| AOSS QMP | Linux `drivers/mailbox/qcom_aoss.c` | `unixnu-fuxi/package/QcomQmp.c` | A | |
+| AOSS QMP | Linux `drivers/mailbox/qcom_aoss.c` | `unixnu-fuxi/package/QcomQmp.c` | A | 窗口地址 0xc300000（0x400 字节），2026-11-20 实机验证；描述符 16 个字的偏移与上游逐字一致 |
 | SMP2P | Linux `drivers/soc/qcom/smp2p.c` | `unixnu-fuxi/package/QcomSmp2p.c` | A | |
 | **QRTR 协议** | Linux `net/qrtr/af_qrtr.c` | `UniXNU/drivers/QcomBaseband/platform/fuxi/qcom_qrtr.c` | **D** | XNU 无 QRTR，按线格式重写（32 字节 `qrtr_hdr_v1`） |
 | **GLINK 适配 + 桥接** | Trogdor `bsd/dev/coachz_wifi.c` | `UniXNU/drivers/QcomBaseband/platform/fuxi/fuxi_modem.c` | **D** | fuxi 树无该文件；Trogdor 把 QRTR 与 IOKit 桥写在一起，fuxi 拆成两层 |
@@ -338,7 +338,40 @@ ADSP 的运行时重新打开之前，modem 和 ADSP 必须共用一个主控。
 
 <!-- 列出要先读上游才能定下来的问题。读完把答案写回上面的表或 facts/baseband/，然后把这一条删掉。 -->
 
-**没有待查的上游源码。** 2026-11-20 读完上游并写回下面的答案：region assign 的参数块结构、
+**已查完（2026-11-20 第四轮，两个问题的答案）：**
+
+- `drivers/remoteproc/qcom_q6v5_pas.c` —— 上游 `qcom_pas_assign_memory_region()`（776-821 行）
+  **只交一块**：`region_assign_count = 1`，循环里只有一次 `of_reserved_mem_region_to_resource()`，
+  取的是 `region_assign_idx + offset`，也就是 `sm8550_mpss_resource` 里 `region_assign_idx = 2`
+  指的那一块（`memory-region = <&mpss_mem>, <&q6_mpss_dtb_mem>, <&mpss_dsm_mem>` 的第三块，
+  `mpss_dsm_mem` 0xd4d00000 / 0x3300000）。modem 自己的两个洞（`mpss_region` 0x8a800000、
+  `q6_mpss_dtb_region` 0x9b000000）**不**经过 assign：它们是 `qcom_pas_alloc_memory_region()`
+  读的 reserved memory，只用来取 carveout 的物理地址和大小，本身不改所有权。
+  **分工**：`qcom_pas_alloc_memory_region()`（736-774 行）把设备树的保留内存读成 `res`，记下
+  `pas->mem_phys = pas->mem_reloc = res.start`、`pas->mem_size = resource_size(&res)`，
+  并建 `pas_ctx`；`qcom_pas_assign_memory_region()` 才发那一次改所有权的 SCM 调用。
+  两者在探针里连着跑，顺序是 alloc（976 行）→ assign（980 行）→ clock（984 行）→
+  regulator（988 行）→ pds（992 行）→ `rproc_add`（1033 行），也就是 assign 在**任何 PAS 调用之前**。
+  **owner 只有一个**：`sm8550_mpss_resource` 没有 `region_assign_shared`，所以
+  `perm[0].vmid = region_assign_vmid`（`QCOM_SCM_VMID_MSS_MSA` = 0xF）、`perm[0].perm = RW`、
+  `perm_size = 1`，没有第二个 owner；`region_assign_owners[offset] = BIT(QCOM_SCM_VMID_HLOS)` 是
+  **源**列表（vmid 3），不是目标。**本仓一致**：`package/FuxiModemAssign.h` 就是这一块，
+  源 vmid 3、目标 vmid 0xF、权限 RW、DSM 区 0xd4d00000/0x3300000，真机 `scm 0/0` 接受。
+- `drivers/firmware/qcom/qcom_scm.c` —— `qcom_scm_pas_init_image()`（636-676 行）**只有两个实参**，
+  **没有第三个**，**长度不传给 secure world**：
+  `__qcom_scm_pas_init_image()`（579-609 行）的 `.arginfo = QCOM_SCM_ARGS(2, QCOM_SCM_VAL, QCOM_SCM_RW)`
+  = **0x82**，`args[0] = pas_id`、`args[1] = mdata_phys`。
+  上游的 metadata 长度只是用来**分配**：`qcom_mdt_read_metadata()` 返回 `metadata_len`，然后
+  `dma_alloc_coherent(dev, ehdr_size + hash_size, &mdata_phys, GFP_KERNEL)`，
+  而 `size` 就是 `ehdr_size + hash_size`。**地址用哪个寄存器传**：`qcom_scm_call()` 的传输是
+  `drivers/firmware/qcom/qcom_scm-smc.c`，`desc.args[0..3]` 进 `x2..x5`，
+  所以 `args[0]`（pas_id）进 x2、`args[1]`（metadata 地址）进 **x3**；
+  端口的 `secureCall()` 是同一个形状。**结论：长度这条差异不存在** —— 上游也不传长度，
+  secure world 自己从 blob 的头里读。所以"metadata 整页分配比上游多 52 个零字节"这一条
+  **不是**可以解释拒绝的理由（上游的 blob 也是紧贴着的 4044 字节 malloc，不是整页）。
+  这一点把上一轮留在表里的最后一个可疑点划掉了。
+
+**已查完的：** 2026-11-20 读完上游并写回下面的答案：region assign 的参数块结构、
 七个参数的逐个含义、七参数怎么进 SMC64 的寄存器、DTB 那一步搬不搬分段、
 PAS 三个步骤的参数类型字、fixed 镜像走哪条路、探针顺序与 DTB 的 INIT_IMAGE 属于哪个阶段。
 
@@ -571,3 +604,31 @@ in physicalMask ... pass 0x00000000FFFFFFFFULL for a buffer to be accessed by ha
 或者改走固定低 DRAM 映射（音频链已经验证过 `IODeviceMemory::withRange(0xd0000000, 64 KiB)
 -> map(kIOMapAnywhere | kIOMapWriteCombineCache)` 这条配方）。
 
+
+**基带起来了（2026-11-20，阶段 9，证据 `evidence/2026-11-20-modem-up.md`）。**
+这一段是本次移植的关键结果，把上面的线索都收掉：
+
+| 事实 | 怎么证的 |
+| --- | --- |
+| metadata 必须在 4 GiB 以下 | 改到固定窗口 0x81480000（低于 4 GiB、页对齐、整页分配、两个槽不重叠）之后，blob 的 INIT_IMAGE 与 AUTH_AND_RESET、镜像的 INIT_IMAGE 与 MEM_SETUP **全部被接受**，31 个分段全部拷完 |
+| region assign 不是原因 | DSM 区域（0xd4d00000，0x3300000 字节）按上游 `sm8550_mpss_resource` 的要求从 hypervisor（VMID 3）交给 modem 的 MSA（VMID 0xf），读写都给了，调用回答 scm 0/0，但拒绝没变 |
+| AOSS 窗口在 0xc300000，不在 0xc30000 | 端口的 `kAossBase` **少写了一位十六进制**（0x00c30000），映射到了低 1 MiB，读第一个描述符字就挂死并 panic。修正后描述符按上游预期读出：word 0 是 `QMP_MAGIC` 0x4d41494c，word 1 是 `QMP_VERSION` 1，word 13 是邮箱大小 728，word 14 是偏移 296 |
+| 上游的启动顺序在这块板上是对的 | `qcom_pas_start` 的顺序：blob 的 INIT_IMAGE 与分段拷贝 → 邮箱握手 → 给 always-on processor 的 load_state 消息 → blob 的 AUTH_AND_RESET → 镜像的 INIT_IMAGE 与 MEM_SETUP 与分段拷贝 → 镜像的 AUTH_AND_RESET。**load_state 在 blob 的 reset 之前**，与上游一致 |
+| 握手之前必须先敲 doorbell | `qcom_qmp_step` 原来只在中断处理里被调用，所以握手从来没被发起过（门铃没敲） |
+
+两个 bring-up 路径上的缺陷一并修掉：
+
+| 缺陷 | 怎么修的 |
+| --- | --- |
+| `waitEvents` 忽略了 `assert_wait_timeout` 的返回值 | 超时就返回 0，把等待从线程上摘掉，让调用方看到超时而不是永远阻塞。**同样的缺陷在 `package/FuxiAdspProbe.cpp` 里也有，一并修了** |
+| `qcom_qmp_step` 只从中断处理里被调用 | 握手改成主动轮询：先发一步，再等回应，超时有界 |
+
+**这一轮没有证明的**：`glink_up` 仍然是 0，所以 QRTR/GLINK 的数据面没有建立，
+**卡 1 的 SIM 还没有被读**；`smp2p_ready` 读到的是 4，是该项自己的编码，**还没有和上游的
+`q6v5_ready_interrupt` 对过**；RF 仍然关着。
+
+**打印走哪条路**（2026-11-20 实测）：`printf` 会进 USB CDC 的日志，`kprintf` 也会
+（`PE_kputc` 已被 USB debug console 的补丁接上）。ADSP 探针一直没有输出，
+**不是控制台坏了，是这块板子开机用的是 `fuxi-adsp=1`（只清点固件），
+根本不映射 AOSS、也不调用 `hookQmp`**（`board.toml` 的开机参数）。
+所以 ADSP 的 QMP 路径在这块板上从未跑过，它不能当作 modem 的参照。
