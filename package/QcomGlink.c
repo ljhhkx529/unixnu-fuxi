@@ -1,6 +1,13 @@
 /* SPDX-License-Identifier: BSD-2-Clause-Patent */
 #include "QcomGlink.h"
 
+#if defined(KERNEL)
+#include <pexpert/pexpert.h>
+#else
+#include <stdio.h>
+#define kprintf printf
+#endif
+
 /* The sender keeps 8 bytes so a full FIFO never looks empty, and 16 more for a READ_NOTIF when it runs out of room. */
 #define FULL_RESERVE 8u
 #define BLOCKED_RESERVE 16u
@@ -257,6 +264,29 @@ static void note_unknown(QcomGlink *g, const char *name)
     for (unsigned b = 0; b < n; ++b) list[used++] = name[b];
     list[used] = 0;
 }
+/* Takes a channel slot for a channel the remote opened and nobody here serves.
+ *
+ * Upstream allocates a channel for every name the remote opens, so the handshake completes and the remote
+ * keeps talking (Linux drivers/rpmsg/qcom_glink_native.c, qcom_glink_rx_open). The slot carries no intents:
+ * this side has no buffers to give it, and the channel exists only so the open can be acknowledged. */
+static QcomGlinkChannel *allocate_remote(QcomGlink *g, const char *name)
+{
+    for (unsigned i = 0; i < QCOM_GLINK_MAX_CHANNELS; ++i) {
+        QcomGlinkChannel *c = &g->channel[i];
+        if (c->used) continue;
+        for (size_t b = 0; b < sizeof *c; ++b) ((uint8_t *)c)[b] = 0;
+        const size_t n = name_length(name);
+        for (size_t b = 0; b < n; ++b) c->name[b] = name[b];
+        c->used = 1;
+        c->lcid = g->next_lcid++;
+        /* The remote opened it, so the opening dance is the remote's: our OPEN waits for theirs. */
+        c->initiator = 0;
+        c->open_sent = 2;
+        return c;
+    }
+    return 0;
+}
+
 static int receive_one(QcomGlink *g)
 {
     const uint32_t avail = qcom_glink_rx_avail(&g->rx);
@@ -297,16 +327,29 @@ static int receive_one(QcomGlink *g)
             if (same) c = k;
         }
         if (!c) {
+            /* Upstream answers an open it does not know: it allocates a channel for the name and sends the
+               OPEN_ACK (Linux drivers/rpmsg/qcom_glink_native.c, qcom_glink_rx_open and
+               qcom_glink_create_remote). Leaving the open unanswered stops the remote: it waits for the
+               acknowledgement and gives up on the edge. The modem opens SSM_RTR_MODEM_APPS, the edge it
+               uses to ask for a subsystem restart, and it says nothing more once that open is not answered.
+               So the channel is allocated and answered here; it carries no intents, because nobody on this
+               side serves it yet, and it is reported so the board's probe can say what came up. */
             g->unknown_opens++;
             for (unsigned b = 0; b < QCOM_GLINK_NAME; ++b) g->last_unknown[b] = name[b];
             note_unknown(g, name);
-        } else {
-            if (c->remote_open && c->up && c->client.state) c->client.state(c->context, c, 0);
-            if (c->remote_open) reset_channel(c);
-            if (command(g, QCOM_GLINK_OPEN_ACK, param1, 0)) return 0;
-            c->rcid = param1;
-            c->remote_open = 1;
+            c = allocate_remote(g, name);
+            if (!c) {
+                rx_advance(&g->rx, align8(8 + n));
+                g->rx_messages++;
+                return 1;
+            }
+            kprintf("QcomGlink: the remote opened %s, which nobody here serves, so it is answered anyway\n", name);
         }
+        if (c->remote_open && c->up && c->client.state) c->client.state(c->context, c, 0);
+        if (c->remote_open) reset_channel(c);
+        if (command(g, QCOM_GLINK_OPEN_ACK, param1, 0)) return 0;
+        c->rcid = param1;
+        c->remote_open = 1;
         rx_advance(&g->rx, align8(8 + n));
         g->rx_messages++;
         return 1;
