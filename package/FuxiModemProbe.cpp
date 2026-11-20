@@ -37,7 +37,6 @@
 #include "FuxiModemAssign.h"
 #include "FuxiModemLowMeta.h"
 #include "FuxiAdspFirmware.h"
-#include "QcomGlink.h"
 #include "QcomMdt.h"
 #include "QcomQmp.h"
 #include "QcomRpmh.h"
@@ -58,6 +57,20 @@ extern "C" unsigned long gPhysBase, gPhysSize;
 extern "C" int fuxi_modem_start(const void *config);
 extern "C" void fuxi_modem_poll(void);
 extern "C" void fuxi_modem_report(unsigned second);
+
+/* What the adapter's link has seen. The struct is the adapter's, but the probe cannot include its
+ * header (the component is built separately), so the fields are spelled out here in the same order. */
+struct LinkStatus {
+    uint8_t ready;
+    uint8_t hello_sent;
+    uint8_t reserved[2];
+    uint32_t rx_packets;
+    uint32_t tx_packets;
+    uint32_t tx_again;
+    uint32_t open_failures;
+    uint32_t qrtr_servers;
+};
+extern "C" void fuxi_modem_status(LinkStatus *status);
 
 /* The counters the bring-up produces, read back by the USB control channel's diagnostics entry point.
  * The symbol is external so that other half can see it: the channel enumerates long after this file's
@@ -106,12 +119,6 @@ constexpr uint16_t kGlinkTxItem = 479;
 constexpr uint16_t kGlinkRxItem = 480;
 constexpr uint32_t kGlinkFifoBytes = 0x4000;
 constexpr uint16_t kModemPid = 1;
-
-/* The modem's GLINK channel and the intent it grants on it. The channel name and the intents are the board's
- * (qcom,modem_qrtr in the device tree). */
-constexpr const char *kIpcRtrChannel = "IPCRTR";
-constexpr uint32_t kIpcRtrIntentSize = 0x2000;
-constexpr uint32_t kIpcRtrIntentCount = 8;
 
 /* The AOP message that releases the modem. Linux's q6v5 sends it with the remoteproc's load_state name, which
  * for this remoteproc is "modem". */
@@ -177,8 +184,6 @@ struct Owner {
     QcomSmemPartition part;
     QcomSmp2p smp2p;
     QcomQmp qmp;
-    QcomGlink glink;
-    QcomGlinkChannel *channel;
     QcomRscLayout layout;
     Image dtb, modem;
 
@@ -888,15 +893,7 @@ void serviceEvents(uint32_t bits)
     if (bits & kEvRsc) (void)0;
     if (bits & kEvAop) (void)qcom_qmp_step(&gOwner.qmp);
     if (bits & (kEvSmp2p | kEvGlink)) serviceSmp2p();
-    if (gOwner.glink_started && (bits & kEvGlink)) {
-        if (!gOwner.glink.rx.data) {
-            uint32_t size = 0;
-            if (volatile uint8_t *rx = item(kGlinkRxItem, &size)) {
-                qcom_glink_set_rx(&gOwner.glink, rx, size);
-            }
-        }
-        (void)qcom_glink_poll(&gOwner.glink);
-    }
+    /* The GLINK itself belongs to the adapter in the component now, and the adapter's poll runs it. */
 }
 
 /* ---- the steps ---- */
@@ -1283,33 +1280,11 @@ int stepIpcc()
     return 0;
 }
 
-/* The GLINK edge, and with it the QRTR link. The adapter in the component owns the QRTR protocol; this only
- * hands it the SMEM window and the doorbell, and opens the channel the modem opens. */
-int stepGlink()
-{
-    int rc = allocItem(kGlinkDescItem, 32);
-    if (!rc) rc = allocItem(kGlinkTxItem, kGlinkFifoBytes);
-    if (rc) return rc;
-    uint32_t desc_size = 0, tx_size = 0;
-    volatile uint8_t *desc = item(kGlinkDescItem, &desc_size);
-    volatile uint8_t *tx = item(kGlinkTxItem, &tx_size);
-    if (!desc || !tx || desc_size < 32 || tx_size < kGlinkFifoBytes) return -2;
-    volatile uint32_t *words = reinterpret_cast<volatile uint32_t *>(desc);
-    const QcomGlinkFifo tx_fifo = {&words[1], &words[0], tx, tx_size};
-    const QcomGlinkFifo rx_fifo = {&words[3], &words[2], nullptr, 0};
-    qcom_glink_init(&gOwner.glink, tx_fifo, rx_fifo, kickGlink, nullptr);
-    static uint8_t storage[kIpcRtrIntentSize * kIpcRtrIntentCount];
-    const QcomGlinkClient client = {nullptr, nullptr};
-    gOwner.channel = qcom_glink_channel(&gOwner.glink, kIpcRtrChannel, kIpcRtrIntentSize, kIpcRtrIntentCount, storage,
-                                        &client, nullptr, 0);
-    if (!gOwner.channel) return -12;
-    gOwner.glink_started = true;
-    setStage(kStLink);
-    return 0;
-}
-
-/* The component's adapter takes over the link: it finds the modem's items itself, so the window it needs is the
- * SMEM one. The doorbell is the one above. */
+/* The GLINK edge, and with it the QRTR link. The adapter in the component owns the QRTR protocol and the
+ * GLINK itself, so this only makes sure the three items exist and hands the adapter the SMEM window and the
+ * doorbell. It used to build a second GLINK on the same items, which left two readers on one descriptor and
+ * no way for the link's state to reach the report: the modem opened the channel, the adapter's GLINK never
+ * heard it, and the link stayed down. */
 struct LinkConfig {
     volatile uint8_t *smem_base;
     uint32_t smem_size;
@@ -1317,15 +1292,74 @@ struct LinkConfig {
     void *kick_context;
 };
 
+int stepGlink()
+{
+    /* The three items are the GLINK edge's own: the descriptor, the transmit FIFO and the receive FIFO
+     * (Linux drivers/rpmsg/qcom_glink_smem.c: SMEM_GLINK_NATIVE_XPRT_DESCRIPTOR 478, FIFO_0 479, FIFO_1 480).
+     * They have to exist before the adapter looks for them, because the modem opens the channel into them. */
+    int rc = allocItem(kGlinkDescItem, 32);
+    if (!rc) rc = allocItem(kGlinkTxItem, kGlinkFifoBytes);
+    if (rc) {
+        printf("FUXI_MODEM: the GLINK items could not be made (%d)\n", rc);
+        return rc;
+    }
+    uint32_t desc_size = 0, tx_size = 0, rx_size = 0;
+    volatile uint8_t *desc = item(kGlinkDescItem, &desc_size);
+    volatile uint8_t *tx = item(kGlinkTxItem, &tx_size);
+    volatile uint8_t *rx = item(kGlinkRxItem, &rx_size);
+    if (!desc || desc_size < 32 || !tx || tx_size < kGlinkFifoBytes || !rx || rx_size == 0) {
+        printf("FUXI_MODEM: the GLINK items are missing (desc %u, tx %u, rx %u)\n", desc_size, tx_size, rx_size);
+        return -2;
+    }
+    printf("FUXI_MODEM: the GLINK items are there (desc %u bytes, tx %u, rx %u)\n", desc_size, tx_size, rx_size);
+    gOwner.glink_started = true;
+    setStage(kStLink);
+    return 0;
+}
+
+/* The component's adapter takes over the link: it finds the modem's items itself, so the window it needs is the
+ * SMEM one. The doorbell is the one above. */
 int stepAdapter()
 {
-    const LinkConfig config = {gOwner.smem_window.va, kSmemSize, nullptr, nullptr};
+    const LinkConfig config = {gOwner.smem_window.va, kSmemSize, kickGlink, nullptr};
     const int rc = fuxi_modem_start(&config);
     if (rc) {
         printf("FUXI_MODEM: the QRTR adapter refused the link (%d)\n", rc);
         return rc;
     }
+    printf("FUXI_MODEM: the QRTR adapter took the link\n");
     return 0;
+}
+
+/* Runs the adapter's GLINK and its QRTR until the modem opens the channel and the first HELLO goes out.
+ *
+ * The adapter answers what the modem asks for, so the modem's channel open is only answered if something
+ * runs the link. The bring-up used to stop right after handing the link over, which left the channel open
+ * unanswered and the link down. */
+int waitLink()
+{
+    LinkStatus status = {};
+    uint64_t deadline = 0;
+    clock_interval_to_deadline(10000, kMillisecondScale, &deadline);
+    while (mach_absolute_time() < deadline) {
+        /* The GLINK doorbell wakes the probe, so the event wait is what runs the link. */
+        serviceEvents(waitEvents(10) | kEvGlink);
+        fuxi_modem_poll();
+        fuxi_modem_status(&status);
+        gOwner.glink_up = status.ready ? 1 : 0;
+        if (status.ready && status.hello_sent) {
+            printf("FUXI_MODEM: the link is up and the first HELLO went out (tx %u, rx %u)\n",
+                   status.tx_packets, status.rx_packets);
+            return 0;
+        }
+    }
+    fuxi_modem_status(&status);
+    gOwner.glink_up = status.ready ? 1 : 0;
+    printf("FUXI_MODEM: the link did not come up within 10 s (ready %u, hello %u, tx %u, rx %u, again %u, "
+           "open failures %u, servers %u)\n",
+           status.ready, status.hello_sent, status.tx_packets, status.rx_packets, status.tx_again,
+           status.open_failures, status.qrtr_servers);
+    return -6;
 }
 
 /* Waits for the modem's ready bits over SMP2P. */
@@ -2199,6 +2233,12 @@ void ownerThread(void *, wait_result_t)
     rc = stepGlink();
     if (rc) goto failed;
     rc = stepAdapter();
+    if (rc) goto failed;
+    /* The link has to come up before the bring-up is over: the modem opens the IPCRTR channel into the
+     * GLINK items, and only the adapter's poll answers it. The SIM is read over this link, so a modem
+     * that is up but whose link never came up is not a modem that can read a card. */
+    printf("FUXI_MODEM: step: the link\n");
+    rc = waitLink();
     if (rc) goto failed;
     setStage(kStUp);
     printf("FUXI_MODEM: the modem is up, stage %u\n", gOwner.stage);
