@@ -632,3 +632,22 @@ in physicalMask ... pass 0x00000000FFFFFFFFULL for a buffer to be accessed by ha
 **不是控制台坏了，是这块板子开机用的是 `fuxi-adsp=1`（只清点固件），
 根本不映射 AOSS、也不调用 `hookQmp`**（`board.toml` 的开机参数）。
 所以 ADSP 的 QMP 路径在这块板上从未跑过，它不能当作 modem 的参照。
+
+**数据面通了，而且名字服务也通了（2026-11-20，证据 `evidence/2026-11-20-modem-link-up.md`
+与 `evidence/2026-11-20-modem-name-service.md`）。**
+
+| 事实 | 怎么证的 |
+| --- | --- |
+| GLINK 描述符 32 字节、两个 FIFO 各 16 KiB，条目 478/479/480 | 真机读到，modem 打开了 IPCRTR 通道，第一条 HELLO 发了出去，`glink_up` 是 1，诊断页的 bring-up 是阶段 9 |
+| 端口自己的等待会把 owner 线程挂死 | `waitEvents` 醒来时 pending 位已经被别的路径取走了，接着无超时地 `thread_block(THREAD_CONTINUE_NULL)`，再没有东西会叫醒它。**停掉的线程和安静的信道看起来一模一样**，所以链路才显得没声音。改成返回 0 而不是阻塞，报告改成每秒都打印，于是两者能分辨开 |
+| 没人服务的通道，remote 开的也要应答 | 上游 `drivers/rpmsg/qcom_glink_native.c` 的 `qcom_glink_rx_open` 会给名字分配通道并发 OPEN_ACK，`qcom_glink_create_remote` 再发自己的 OPEN。modem 开的 `SSM_RTR_MODEM_APPS`（它用来请求子系统重启）之前只被计数、不被应答 |
+| **QRTR 的控制包必须带包体，命令字在包体的第一个字** | 上游 `net/qrtr/ns.c` 的 `qrtr_ns_worker` 是 switch 在 `pkt->cmd` 上，也就是**包体**里的命令字，不是 header 的 type 字段；包体是整个 `qrtr_ctrl_pkt`（命令字 + 16 字节 union，见 `include/uapi/linux/qrtr.h`）。端口的 HELLO **没有包体**，所以 modem 读不到命令字，而上游自己的收包路径（`af_qrtr.c` 的 `if (!size ...) goto err`）也会直接拒绝这种包。**我们的 HELLO 对 modem 是不可见的，这就是它不公布服务的原因** |
+
+这个约定是**从真机抓到的字节定的，不是读代码推的**：QRTR 层现在有一个可选的 trace 钩子
+（`qrtr_set_trace`），真机抓到 modem 自己的 HELLO 是 52 字节——header 说 type 2、size 20，
+20 字节的包体的第一个字是命令字 2，union 里是 node 7907、port 10。
+改成带包体之后，modem 回了 **NEW_SERVER（type 4）**：service 66（0x42）、instance 0xb401、
+node 0、port 1，**心跳里的 server 计数从 0 变成 2**。
+
+**这一轮没有证明的**：**卡 1 的 SIM 还没有被读**，也没有向任何服务发过 QMI 请求，所以没有信号；
+service 66 还没有对上名字（第二个公布的服务也还没 dump 出来）；RF 仍然关着。
