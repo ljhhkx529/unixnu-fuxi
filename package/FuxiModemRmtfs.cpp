@@ -36,7 +36,7 @@
 
 extern int printf(const char *format, ...);
 /* The board's assign for the RMTFS buffer, in FuxiModemProbe.cpp. */
-extern "C" int fuxi_modem_rmtfs_assign(uint64_t address, uint64_t size);
+extern "C" int fuxi_modem_rmtfs_assign(uint64_t address, uint64_t size, unsigned owners);
 /* The partition reader. It is read only by construction: it exposes no write counterpart. */
 extern "C" int native_ufs_part_find(const char *name, uint32_t *lun, uint64_t *first, uint64_t *blocks)
     __attribute__((weak_import));
@@ -79,13 +79,13 @@ uint32_t gBufferGiven;
 uint32_t gOpens, gCloses, gReads, gWrites, gSectorsRead, gSectorsWritten, gRefused;
 
 /* The window, from the board's header: the region the buffer must not touch. */
-bool forbidden()
+bool forbidden(uint64_t base)
 {
     for (unsigned i = 0; i < FUXI_RMTFS_FORBIDDEN_COUNT; ++i) {
         const struct fuxi_rmtfs_range range = fuxi_rmtfs_forbidden(i);
-        if (fuxi_rmtfs_overlaps(FUXI_RMTFS_BUFFER_BASE, FUXI_RMTFS_BUFFER_SIZE, range.base, range.size)) {
-            printf("FUXI_RMTFS: the buffer at %llx overlaps %s\n",
-                   static_cast<unsigned long long>(FUXI_RMTFS_BUFFER_BASE), range.name);
+        if (fuxi_rmtfs_overlaps(base, FUXI_RMTFS_BUFFER_SIZE, range.base, range.size)) {
+            printf("FUXI_RMTFS: the buffer at %llx overlaps %s\n", static_cast<unsigned long long>(base),
+                   range.name);
             return true;
         }
     }
@@ -153,22 +153,21 @@ bool loadFile(unsigned index)
 bool mapBuffer()
 {
     if (gBuffer) return true;
-    if (forbidden()) return false;
-    IODeviceMemory *memory = IODeviceMemory::withRange(FUXI_RMTFS_BUFFER_BASE, FUXI_RMTFS_BUFFER_SIZE);
+    const uint64_t base = FUXI_RMTFS_BUFFER_BASE;
+    if (forbidden(base)) return false;
+    IODeviceMemory *memory = IODeviceMemory::withRange(base, FUXI_RMTFS_BUFFER_SIZE);
     if (!memory) {
-        printf("FUXI_RMTFS: the buffer at %llx could not be described\n",
-               static_cast<unsigned long long>(FUXI_RMTFS_BUFFER_BASE));
+        printf("FUXI_RMTFS: the buffer at %llx could not be described\n", static_cast<unsigned long long>(base));
         return false;
     }
     gBufferMap = memory->map(kIOMapAnywhere | kIOMapWriteCombineCache);
     memory->release();
     if (!gBufferMap) {
-        printf("FUXI_RMTFS: the buffer at %llx could not be mapped\n",
-               static_cast<unsigned long long>(FUXI_RMTFS_BUFFER_BASE));
+        printf("FUXI_RMTFS: the buffer at %llx could not be mapped\n", static_cast<unsigned long long>(base));
         return false;
     }
     gBuffer = reinterpret_cast<volatile uint8_t *>(gBufferMap->getVirtualAddress());
-    gBufferPhys = FUXI_RMTFS_BUFFER_BASE;
+    gBufferPhys = base;
     gBufferSize = FUXI_RMTFS_BUFFER_SIZE;
     /* The whole window is zeroed before anything is put in it, so a byte the modem reads that nobody
        wrote is zero and not whatever was there before. */
@@ -315,12 +314,21 @@ extern "C" int fuxi_rmtfs_prepare(void)
 }
 
 /* The buffer, handed to the modem by the secure world. The assign is the same call the modem's own
- * region is assigned with, and it names three owners: the hypervisor's own, the modem's MSA and the
- * navigation processor (hakios.mpss.c, rmtfs_share: HLOS, MSS_MSA and NAV, all read and write). */
+ * region is assigned with, and it names the owners the reference names minus the one this board does
+ * not have: the hypervisor's own and the modem's MSA (hakios.mpss.c, rmtfs_share: HLOS, MSS_MSA and
+ * NAV, all read and write; the reference has a boot option for a board that cannot take the third,
+ * `option("modem_no_nav") ? 2 : 3`).
+ *
+ * The secure world refused the third owner on 2026-11-22, and accepted the two at once, and the modem
+ * read and wrote its files through the buffer afterwards. So the two are what this board names, and
+ * the call is made once: the shape is not a guess any more.
+ *
+ * The buffer's address is the compute DSP's reserved region, the window the port took first, and the
+ * secure world accepts it there: the refusal on 2026-11-22 was about the owners, not about the memory. */
 extern "C" int fuxi_rmtfs_share(void)
 {
     if (!gBuffer) return -5;
-    const int rc = fuxi_modem_rmtfs_assign(gBufferPhys, gBufferSize);
+    const int rc = fuxi_modem_rmtfs_assign(gBufferPhys, gBufferSize, FUXI_RMTFS_OWNERS);
     if (rc) {
         printf("FUXI_RMTFS: the buffer was not shared (%d)\n", rc);
         return rc;

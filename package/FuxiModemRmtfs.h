@@ -16,9 +16,10 @@
  * The reference port for the same modem in XNU takes the same window out of the compute DSP's memory on
  * its own board (hakios.mpss.c, rmtfs_buffer_make: RMTFS_BUFFER_PA_DEFAULT 0x9c700000, the same size).
  *
- * The buffer is handed to three owners with assign_mem, and not to one: the hypervisor's own owner, the
- * modem's MSA and the navigation processor (hakios.mpss.c, rmtfs_share: the destinations are HLOS,
- * MSS_MSA and NAV, all with read and write).
+ * The buffer is handed to two owners with assign_mem, and not to one: the hypervisor's own owner and
+ * the modem's MSA (hakios.mpss.c, rmtfs_share: the destinations are HLOS, MSS_MSA and NAV, all with
+ * read and write; the secure world refuses the third on this board, and the reference has a boot
+ * option for a board that cannot take it, `option("modem_no_nav") ? 2 : 3`).
  *
  * The four files hold the IMEI and the radio calibration, so nothing here ever writes them. The
  * partitions are read once into memory, and a write request from the modem changes the memory copy and
@@ -38,6 +39,19 @@
    reference uses (hakios.mpss.c: RMTFS_BUFFER_SIZE 0x280000). */
 #define FUXI_RMTFS_BUFFER_BASE 0x9c900000ull
 #define FUXI_RMTFS_BUFFER_SIZE 0x280000ull
+
+/* The owners the buffer is handed to: the hypervisor's own and the modem's MSA.
+ *
+ * The reference names a third one, the navigation processor (hakios.mpss.c, rmtfs_share: the
+ * destinations are HLOS, MSS_MSA and NAV, all with read and write), and it has a boot option for a
+ * board that cannot take it (`option("modem_no_nav") ? 2 : 3`).
+ *
+ * This board cannot take it, and the secure world says so: on 2026-11-22 the assign with the three
+ * owners was refused (-2, answer word 86) and the same call with two owners was accepted at once,
+ * and the modem read and wrote its files through the buffer afterwards. The device tree agrees: it
+ * declares the virtual machines 0x3, 0x2d, 0x31 and 0x32, and there is no 0x2b (the navigation
+ * processor) anywhere in it, and its own rmtfs node carries no qcom,vm-nav-path. */
+#define FUXI_RMTFS_OWNERS 2u
 
 /* The four files the modem asks for, and the partition behind each one. The paths and the order are
    the reference's (hakios.mpss.c, rmtfs_files). The file's number in the answers is its place here
@@ -97,9 +111,8 @@ struct fuxi_rmtfs_ops {
    itself maps, and the modem's buffer landing in any of them would corrupt it or the firmware.
    The buffer's own region, the compute DSP's memory, is not in the list: that is where it goes.
 
-   The first two are the ones the window sits between: the compute video processor's region ends
-   exactly where the window starts, and the modem's own memory ends well before it. The rest are the
-   modem's carveouts and the windows the port maps itself. */
+   The first is the one the window sits against: the compute video processor's region ends exactly
+   where the window starts. The rest are the modem's carveouts and the windows the port maps itself. */
 struct fuxi_rmtfs_range {
     uint64_t base;
     uint64_t size;

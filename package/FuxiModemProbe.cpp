@@ -114,10 +114,10 @@ extern "C" void fuxi_modem_status(LinkStatus *status);
  * bring-up has run, and the kernel's own print of the counters is long gone by then. */
 extern "C" volatile int32_t native_fuxi_modem_stats[16] = {};
 
-/* The modem's RMTFS buffer, handed to three owners: the hypervisor's own, the modem's MSA and the
- * navigation processor. It is defined below, outside the anonymous namespace, because the board's
- * RMTFS adapter calls it. */
-extern "C" int fuxi_modem_rmtfs_assign(uint64_t address, uint64_t size);
+/* The modem's RMTFS buffer, handed to the owners the header names: the hypervisor's own and the
+ * modem's MSA. It is defined below, outside the anonymous namespace, because the board's RMTFS
+ * adapter calls it. */
+extern "C" int fuxi_modem_rmtfs_assign(uint64_t address, uint64_t size, unsigned owners);
 
 namespace {
 
@@ -2479,11 +2479,18 @@ failed:
  * The call's shape is the one in stepAssign above: the memory to map, the size of the source list,
  * the new owners' records and their size go into the block of external arguments, and the first
  * three arguments go in the registers. */
-int fuxi_modem_rmtfs_assign(uint64_t address, uint64_t size)
+/* One assign: the memory at the given address, given to the given owners.
+ *
+ * The source owner is the hypervisor's own and the new owners are the ones named. The call's shape is
+ * the one in stepAssign above: the memory to map, the size of the source list, the new owners' records
+ * and their size go into the block of external arguments, and the first three arguments go in the
+ * registers.
+ *
+ * The answer is printed as it comes, so a refused call says which shape was refused. */
+static int fuxi_modem_assign_once(uint64_t address, uint64_t size, const uint32_t *dest_vmids,
+                                   const uint32_t *dest_perms, unsigned dest_count, const char *label)
 {
-    printf("FUXI_MODEM: the rmtfs assign starts\n");
-    /* One source owner (the hypervisor's own) and three new ones. */
-    const unsigned src_count = 1, dest_count = 3;
+    const unsigned src_count = 1;
     const uint64_t block_bytes = fuxi_modem_assign_block_size(src_count, dest_count);
     const uint64_t ext_bytes = FUXI_MODEM_ASSIGN_EXT_SIZE;
     const uint64_t total = block_bytes + ext_bytes;
@@ -2499,12 +2506,9 @@ int fuxi_modem_rmtfs_assign(uint64_t address, uint64_t size)
     uint8_t *block = va;
     uint8_t *ext = va + block_bytes;
 
-    /* The three parts of the block. The source is the hypervisor's own owner; the three new owners
-     * are the hypervisor's own again (so this side keeps its share), the modem's MSA and the
-     * navigation processor. */
+    /* The three parts of the block. The source is the hypervisor's own owner; the new owners are the
+       ones the caller named. */
     const uint32_t src_vmids[1] = {FUXI_MODEM_VMID_HLOS};
-    const uint32_t dest_vmids[3] = {FUXI_MODEM_VMID_HLOS, FUXI_MODEM_VMID_MSS_MSA, FUXI_MODEM_VMID_NAV};
-    const uint32_t dest_perms[3] = {FUXI_MODEM_PERM_RW, FUXI_MODEM_PERM_RW, FUXI_MODEM_PERM_RW};
     fuxi_modem_assign_write_block_many(block, address, size, src_vmids, src_count, dest_vmids, dest_perms,
                                         dest_count);
 
@@ -2518,9 +2522,10 @@ int fuxi_modem_rmtfs_assign(uint64_t address, uint64_t size)
     fuxi_modem_assign_write_ext(ext, src_size, dest_phys, dest_size);
     cleanToPoc(va, static_cast<size_t>(total));
 
-    printf("FUXI_MODEM: the rmtfs assign hands %llx of %llu bytes to vmid %u, %u and %u\n",
-           static_cast<unsigned long long>(address), static_cast<unsigned long long>(size),
-           FUXI_MODEM_VMID_HLOS, FUXI_MODEM_VMID_MSS_MSA, FUXI_MODEM_VMID_NAV);
+    printf("FUXI_MODEM: the assign %s hands %llx of %llu bytes to %u owner(s):", label,
+           static_cast<unsigned long long>(address), static_cast<unsigned long long>(size), dest_count);
+    for (unsigned i = 0; i < dest_count; ++i) printf(" %u", dest_vmids[i]);
+    printf("\n");
 
     const uint64_t ext_phys = base + block_bytes;
     const ScmResult result = smcCall(FUXI_MODEM_MP_SVC, FUXI_MODEM_MP_ASSIGN, fuxi_modem_assign_arginfo(),
@@ -2528,12 +2533,39 @@ int fuxi_modem_rmtfs_assign(uint64_t address, uint64_t size)
     gOwner.assign_x0 = gOwner.scm_x0;
     gOwner.assign_x1 = gOwner.scm_x1;
     buffer->release();
-    printf("FUXI_MODEM: the rmtfs assign's answer is %u/%u\n", gOwner.scm_x0, gOwner.scm_x1);
+    printf("FUXI_MODEM: the assign %s's answer is %u/%u\n", label, gOwner.scm_x0, gOwner.scm_x1);
     if (!fuxi_modem_scm_ok(result.x0, result.x1)) {
-        printf("FUXI_MODEM: the rmtfs assign was refused (scm %u/%u)\n", gOwner.scm_x0, gOwner.scm_x1);
+        printf("FUXI_MODEM: the assign %s was refused (scm %u/%u)\n", label, gOwner.scm_x0, gOwner.scm_x1);
         return -3;
     }
+    printf("FUXI_MODEM: the assign %s was accepted\n", label);
     return 0;
+}
+
+/* The buffer, handed to the modem.
+ *
+ * The buffer is the one the modem moves its files' sectors through, and the modem cannot reach it
+ * until the secure world has been asked to let it in. The assign is the same call the modem's own
+ * region is assigned with.
+ *
+ * The owners are the hypervisor's own and the modem's MSA. The reference names a third one, the
+ * navigation processor (hakios.mpss.c, rmtfs_share: the destinations are HLOS, MSS_MSA and NAV, all
+ * with read and write), and it has a boot option for a board that cannot take it
+ * (`option("modem_no_nav") ? 2 : 3`).
+ *
+ * This board cannot take it, and the secure world says so: on 2026-11-22 the assign with the three
+ * owners was refused (the answer was -2 with the answer word 86), and the same call with two owners
+ * was accepted at once, and the modem read and wrote its files through the buffer afterwards. The
+ * device tree agrees: it declares the virtual machines 0x3, 0x2d, 0x31 and 0x32, and there is no 0x2b
+ * (the navigation processor) anywhere in it, and its own rmtfs node carries no qcom,vm-nav-path. */
+extern "C" int fuxi_modem_rmtfs_assign(uint64_t address, uint64_t size, unsigned owners)
+{
+    printf("FUXI_MODEM: the rmtfs assign starts\n");
+    if (owners < 1) owners = 1;
+    if (owners > 3) owners = 3;
+    const uint32_t three[3] = {FUXI_MODEM_VMID_HLOS, FUXI_MODEM_VMID_MSS_MSA, FUXI_MODEM_VMID_NAV};
+    const uint32_t rw[3] = {FUXI_MODEM_PERM_RW, FUXI_MODEM_PERM_RW, FUXI_MODEM_PERM_RW};
+    return fuxi_modem_assign_once(address, size, three, rw, owners, "rmtfs");
 }
 
 /* The read-only inventory of the firmware partition: what the modem's files are called and how big they
