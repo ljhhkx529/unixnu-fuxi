@@ -46,9 +46,11 @@
 #define FUXI_MODEM_MP_ASSIGN 0x16u
 
 /* The virtual machine identifiers. Linux include/dt-bindings/firmware/qcom,scm.h: the hypervisor's own
-   owner is 0x3 and the modem's MSA is 0xF. */
+   owner is 0x3 and the modem's MSA is 0xF. The navigation processor's is 0x2b, which the reference
+   hands the same memory as well (hakios.mpss.c, rmtfs_share: VMID_NAV 0x2b). */
 #define FUXI_MODEM_VMID_HLOS 0x3u
 #define FUXI_MODEM_VMID_MSS_MSA 0xFu
+#define FUXI_MODEM_VMID_NAV 0x2bu
 
 /* The permissions. Linux include/linux/firmware/qcom/qcom_scm.h: read is 0x4, write is 0x2, so read
    and write together is 0x6. */
@@ -182,7 +184,10 @@ static inline void fuxi_modem_assign_write_ext(uint8_t *ext, uint64_t src_size,
 }
 
 /* The block of the assignment itself, written little-endian the way upstream writes it. The three
-   parts are the source owners, the memory to map, and the new owners. */
+   parts are the source owners, the memory to map, and the new owners.
+ *
+   The one owner is the modem's DSM region, which goes from the hypervisor's own owner to the modem's
+   MSA alone. */
 static inline void fuxi_modem_assign_write_block(uint8_t *block, uint64_t mem_addr, uint64_t mem_size,
                                                   uint32_t src_vmid, uint32_t dest_vmid, uint32_t dest_perm)
 {
@@ -205,6 +210,46 @@ static inline void fuxi_modem_assign_write_block(uint8_t *block, uint64_t mem_ad
         perm[4 + b] = (uint8_t)(dest_perm >> (8 * b));
     }
     for (unsigned b = 0; b < 16; ++b) perm[8 + b] = 0;
+}
+
+/* The same block, for several owners on each side.
+ *
+ * The modem's RMTFS buffer is handed to three owners and not one: the hypervisor's own owner, the
+ * modem's MSA and the navigation processor (hakios.mpss.c, rmtfs_share: the destinations are HLOS,
+ * MSS_MSA and NAV, all with read and write). The block's shape does not change with the number of
+ * owners: the source list grows by one 32-bit VMID each, and the new owners' records grow by one
+ * 24-byte record each. Both lists start on 64-byte boundaries, and the sizes of the first two parts
+ * are rounded up to 64 before the third one starts.
+ *
+ * The vmids and the permissions are arrays of the same length, one entry per owner. */
+static inline void fuxi_modem_assign_write_block_many(uint8_t *block, uint64_t mem_addr, uint64_t mem_size,
+                                                       const uint32_t *src_vmids, unsigned src_count,
+                                                       const uint32_t *dest_vmids, const uint32_t *dest_perms,
+                                                       unsigned dest_count)
+{
+    /* The source list: one 32-bit VMID per owner. */
+    for (unsigned i = 0; i < src_count; ++i)
+        for (unsigned b = 0; b < 4; ++b)
+            block[i * FUXI_MODEM_ASSIGN_SRC_ENTRY + b] = (uint8_t)(src_vmids[i] >> (8 * b));
+
+    /* The memory to map: a 64-bit address and a 64-bit size. */
+    uint8_t *map = block + fuxi_modem_assign_mem_map_offset(src_count);
+    for (unsigned b = 0; b < 8; ++b) {
+        map[b] = (uint8_t)(mem_addr >> (8 * b));
+        map[8 + b] = (uint8_t)(mem_size >> (8 * b));
+    }
+
+    /* The new owners: each a 32-bit VMID, a 32-bit permission, a 64-bit context, the context's size
+       and one unused word. Upstream leaves the context and its size at zero. */
+    uint8_t *perm = block + fuxi_modem_assign_perm_offset(src_count, dest_count);
+    for (unsigned i = 0; i < dest_count; ++i) {
+        uint8_t *record = perm + i * FUXI_MODEM_ASSIGN_PERM_SIZE;
+        for (unsigned b = 0; b < 4; ++b) {
+            record[b] = (uint8_t)(dest_vmids[i] >> (8 * b));
+            record[4 + b] = (uint8_t)(dest_perms[i] >> (8 * b));
+        }
+        for (unsigned b = 0; b < 16; ++b) record[8 + b] = 0;
+    }
 }
 
 #endif

@@ -233,7 +233,12 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                # locator, QRTR service 64: it dumps the modem's own table, /image/modemr.jsn, whole, as
                # hex and as ASCII, and then starts the modem and keeps the link running, because the
                # locator is announced to the modem over that link and answers what the modem asks of it.
-               "fuxi-modem=14",
+               # Mode 15 serves the modem's remote file system, QRTR service 14, on top of the same
+               # bring-up: the four files the modem keeps on the storage are read into memory of ours,
+               # the buffer they move through is shared with the modem, and the service is announced
+               # and answered over the same link. Mode 16 is the read-only inventory of the four
+               # partitions, which starts no modem and touches no register.
+               "fuxi-modem=15",
                "fgraph=6",
                # Content follows unixnu-fuxi-old one switch at a time: sheng-aks brings up Apple
                # KeyStore, which AMFI consults before it accepts the adhoc-signed System volume.

@@ -36,6 +36,7 @@
 #include "FuxiModemScm.h"
 #include "FuxiModemAssign.h"
 #include "FuxiModemLowMeta.h"
+#include "FuxiModemRmtfs.h"
 #include "FuxiAdspFirmware.h"
 #include "QcomMdt.h"
 #include "QcomQmp.h"
@@ -57,6 +58,13 @@ extern "C" unsigned long gPhysBase, gPhysSize;
 extern "C" int fuxi_modem_start(const void *config);
 extern "C" void fuxi_modem_poll(void);
 extern "C" void fuxi_modem_report(unsigned second);
+/* The board's RMTFS adapter: the four files, the buffer, and the callbacks the component's protocol
+ * half calls. */
+extern "C" int fuxi_rmtfs_prepare(void);
+extern "C" int fuxi_rmtfs_share(void);
+extern "C" int fuxi_rmtfs_inventory(void);
+extern "C" const struct fuxi_rmtfs_ops *fuxi_rmtfs_ops(void);
+extern "C" void fuxi_rmtfs_counters(uint32_t *out, unsigned count);
 
 /* What the adapter's link has seen. The struct is the adapter's, but the probe cannot include its
  * header (the component is built separately), so the fields are spelled out here in the same order. */
@@ -95,6 +103,8 @@ struct LinkStatus {
     /* The service registry's locator: how often it was announced, how many requests it took and how many of
        them were answered. */
     uint32_t locator_announces, locator_requests, locator_answered;
+    /* RMTFS: the modem's remote file system, with the same three counts. */
+    uint32_t rmtfs_announces, rmtfs_requests, rmtfs_answered;
     char last_unknown[32];
 };
 extern "C" void fuxi_modem_status(LinkStatus *status);
@@ -103,6 +113,11 @@ extern "C" void fuxi_modem_status(LinkStatus *status);
  * The symbol is external so that other half can see it: the channel enumerates long after this file's
  * bring-up has run, and the kernel's own print of the counters is long gone by then. */
 extern "C" volatile int32_t native_fuxi_modem_stats[16] = {};
+
+/* The modem's RMTFS buffer, handed to three owners: the hypervisor's own, the modem's MSA and the
+ * navigation processor. It is defined below, outside the anonymous namespace, because the board's
+ * RMTFS adapter calls it. */
+extern "C" int fuxi_modem_rmtfs_assign(uint64_t address, uint64_t size);
 
 namespace {
 
@@ -1351,6 +1366,11 @@ struct LinkConfig {
     uint32_t smem_size;
     void (*kick)(void *context);
     void *kick_context;
+    /* RMTFS: the board's adapter for the modem's remote file system. The struct is the component's,
+       but the probe cannot include its header (the component is built separately), so the fields are
+       spelled out here in the same order. */
+    struct fuxi_rmtfs_ops rmtfs_ops;
+    void *rmtfs_context;
 };
 
 int stepGlink()
@@ -1382,7 +1402,9 @@ int stepGlink()
  * SMEM one. The doorbell is the one above. */
 int stepAdapter()
 {
-    const LinkConfig config = {gOwner.smem_window.va, kSmemSize, kickGlink, nullptr};
+    /* The board's adapter for RMTFS: the four files read into memory, and the buffer. */
+    const struct fuxi_rmtfs_ops *ops = fuxi_rmtfs_ops();
+    const LinkConfig config = {gOwner.smem_window.va, kSmemSize, kickGlink, nullptr, *ops, nullptr};
     const int rc = fuxi_modem_start(&config);
     if (rc) {
         printf("FUXI_MODEM: the QRTR adapter refused the link (%d)\n", rc);
@@ -1488,6 +1510,14 @@ void serviceLink()
              * of it. A request count that stays at zero says the modem never asked the locator. */
             printf("FUXI_MODEM: %u s: the locator was announced %u times, took %u requests, answered %u\n", second,
                    status.locator_announces, status.locator_requests, status.locator_answered);
+            /* RMTFS: the same counts for the modem's remote file system, and what it moved through the
+             * buffer. An open count of zero says the modem never asked for a file. */
+            uint32_t rmtfs[7] = {};
+            fuxi_rmtfs_counters(rmtfs, 7);
+            printf("FUXI_MODEM: %u s: the rmtfs was announced %u times, took %u requests, answered %u; "
+                   "opened %u closed %u, %u reads and %u writes of %u and %u sectors\n",
+                   second, status.rmtfs_announces, status.rmtfs_requests, status.rmtfs_answered, rmtfs[0],
+                   rmtfs[1], rmtfs[2], rmtfs[3], rmtfs[4], rmtfs[5]);
             /* The bridge's own report: the QMI services the modem announced, the clients and the queue state. It is
              * the only place that names the service ids, and the service ids are how a client finds the service it
              * wants. Without this call the bridge stays silent and the announced services are never on the record. */
@@ -2344,6 +2374,17 @@ void ownerThread(void *, wait_result_t)
      * is the fact this round is after. */
     rc = stepAssign();
     if (rc) printf("FUXI_MODEM: the assign did not succeed (%d), the sequence continues\n", rc);
+    /* RMTFS: the four files are read into memory and the buffer is mapped, and the buffer is handed
+     * to the modem. This is before the modem is started at all, because the modem asks for the files
+     * as soon as its stack comes up, and the buffer has to be shared before it can ask.
+     *
+     * The share is the same kind of assign as the one above, and it names three owners: the
+     * hypervisor's own, the modem's MSA and the navigation processor. */
+    printf("FUXI_MODEM: step: the modem's files\n");
+    rc = fuxi_rmtfs_prepare();
+    if (rc) printf("FUXI_MODEM: the rmtfs did not prepare (%d), the sequence continues\n", rc);
+    rc = fuxi_rmtfs_share();
+    if (rc) printf("FUXI_MODEM: the rmtfs buffer was not shared (%d), the sequence continues\n", rc);
     printf("FUXI_MODEM: step: the proxy rails\n");
     rc = stepRails();
     if (rc) goto failed;
@@ -2426,6 +2467,74 @@ failed:
 }
 
 }  // namespace
+
+/* The modem's RMTFS buffer, handed to three owners.
+ *
+ * The buffer is the one the modem moves its files' sectors through, and the modem cannot reach it
+ * until the secure world has been asked to let it in. The assign is the same call the modem's own
+ * region is assigned with, and it names three owners: the hypervisor's own, the modem's MSA and the
+ * navigation processor (hakios.mpss.c, rmtfs_share: the destinations are HLOS, MSS_MSA and NAV, all
+ * with read and write).
+ *
+ * The call's shape is the one in stepAssign above: the memory to map, the size of the source list,
+ * the new owners' records and their size go into the block of external arguments, and the first
+ * three arguments go in the registers. */
+int fuxi_modem_rmtfs_assign(uint64_t address, uint64_t size)
+{
+    printf("FUXI_MODEM: the rmtfs assign starts\n");
+    /* One source owner (the hypervisor's own) and three new ones. */
+    const unsigned src_count = 1, dest_count = 3;
+    const uint64_t block_bytes = fuxi_modem_assign_block_size(src_count, dest_count);
+    const uint64_t ext_bytes = FUXI_MODEM_ASSIGN_EXT_SIZE;
+    const uint64_t total = block_bytes + ext_bytes;
+    if (total > kMetadataPageBytes) return -5;
+    IOBufferMemoryDescriptor *buffer = allocSecurePage();
+    if (!buffer) return -12;
+    uint8_t *va = static_cast<uint8_t *>(buffer->getBytesNoCopy());
+    if (!va) {
+        buffer->release();
+        return -5;
+    }
+    const uint64_t base = buffer->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+    uint8_t *block = va;
+    uint8_t *ext = va + block_bytes;
+
+    /* The three parts of the block. The source is the hypervisor's own owner; the three new owners
+     * are the hypervisor's own again (so this side keeps its share), the modem's MSA and the
+     * navigation processor. */
+    const uint32_t src_vmids[1] = {FUXI_MODEM_VMID_HLOS};
+    const uint32_t dest_vmids[3] = {FUXI_MODEM_VMID_HLOS, FUXI_MODEM_VMID_MSS_MSA, FUXI_MODEM_VMID_NAV};
+    const uint32_t dest_perms[3] = {FUXI_MODEM_PERM_RW, FUXI_MODEM_PERM_RW, FUXI_MODEM_PERM_RW};
+    fuxi_modem_assign_write_block_many(block, address, size, src_vmids, src_count, dest_vmids, dest_perms,
+                                        dest_count);
+
+    /* Where the secure world is told the parts are. */
+    const uint64_t map_offset = fuxi_modem_assign_mem_map_offset(src_count);
+    const uint64_t mem_to_map_phys = base + map_offset;
+    const uint64_t dest_offset = fuxi_modem_assign_perm_offset(src_count, dest_count);
+    const uint64_t dest_phys = base + dest_offset;
+    const uint64_t src_size = (uint64_t)src_count * FUXI_MODEM_ASSIGN_SRC_ENTRY;
+    const uint64_t dest_size = (uint64_t)dest_count * FUXI_MODEM_ASSIGN_PERM_SIZE;
+    fuxi_modem_assign_write_ext(ext, src_size, dest_phys, dest_size);
+    cleanToPoc(va, static_cast<size_t>(total));
+
+    printf("FUXI_MODEM: the rmtfs assign hands %llx of %llu bytes to vmid %u, %u and %u\n",
+           static_cast<unsigned long long>(address), static_cast<unsigned long long>(size),
+           FUXI_MODEM_VMID_HLOS, FUXI_MODEM_VMID_MSS_MSA, FUXI_MODEM_VMID_NAV);
+
+    const uint64_t ext_phys = base + block_bytes;
+    const ScmResult result = smcCall(FUXI_MODEM_MP_SVC, FUXI_MODEM_MP_ASSIGN, fuxi_modem_assign_arginfo(),
+                                     mem_to_map_phys, FUXI_MODEM_ASSIGN_MEM_MAP_SIZE, base, ext_phys);
+    gOwner.assign_x0 = gOwner.scm_x0;
+    gOwner.assign_x1 = gOwner.scm_x1;
+    buffer->release();
+    printf("FUXI_MODEM: the rmtfs assign's answer is %u/%u\n", gOwner.scm_x0, gOwner.scm_x1);
+    if (!fuxi_modem_scm_ok(result.x0, result.x1)) {
+        printf("FUXI_MODEM: the rmtfs assign was refused (scm %u/%u)\n", gOwner.scm_x0, gOwner.scm_x1);
+        return -3;
+    }
+    return 0;
+}
 
 /* The read-only inventory of the firmware partition: what the modem's files are called and how big they
  * are. This is the one part of the bring-up that proves nothing by running the modem, and it is the part
@@ -2628,6 +2737,13 @@ extern "C" void native_fuxi_modem_probe(void)
         (void)inspectRails();
         return;
     }
+    /* Mode 16 inventories the four partitions the modem asks for, read only. It starts no modem and
+     * touches no register: it only says which of them this board carries and how big they are, which
+     * is the fact the RMTFS service needs before anything else. */
+    if (mode == 16) {
+        (void)fuxi_rmtfs_inventory();
+        return;
+    }
     /* Mode 5 runs the pas matrix: the same INIT_IMAGE call against both device tree blobs and both
      * pas ids, to tell a wrong id from a wrong image. It hands over a buffer and takes an answer back;
      * it loads nothing and resets no processor. */
@@ -2695,6 +2811,12 @@ extern "C" void native_fuxi_modem_probe(void)
     if (mode == 14) {
         (void)dumpRegistryTable();
         /* The mode does not return: it falls through to the bring-up, which is what the locator needs. */
+    } else if (mode == 15) {
+        /* Mode 15 serves the modem's remote file system, QRTR service 14, on top of the locator's
+         * bring-up: the four files are read into memory, the buffer is shared with the modem, and
+         * RMTFS is announced and answered. The mode does not return either, because the service needs
+         * a live link. */
+        printf("FUXI_MODEM: mode 15: the modem's remote file system\n");
     } else if (mode < 4) {
         /* Mode 4 and up start the modem: they vote rails, load the images over PAS and let the modem's
          * firmware run. The radio stays off until a later step says otherwise. */
