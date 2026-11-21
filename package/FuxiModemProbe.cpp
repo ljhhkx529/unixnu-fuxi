@@ -92,6 +92,9 @@ struct LinkStatus {
     /* The QRTR flow control: the DATA packets the peer has not credited yet, and the RESUME_TX packets sent and
        received. A peer that runs out of credit stops answering, and the credit comes back with RESUME_TX. */
     uint32_t qrtr_tx_pending, qrtr_resumes_sent, qrtr_resumes_received;
+    /* The service registry's locator: how often it was announced, how many requests it took and how many of
+       them were answered. */
+    uint32_t locator_announces, locator_requests, locator_answered;
     char last_unknown[32];
 };
 extern "C" void fuxi_modem_status(LinkStatus *status);
@@ -1481,6 +1484,10 @@ void serviceLink()
             /* The lookups the modem answered. A lookup it did not answer is not counted, so this count says
              * whether the modem took the question at all. */
             printf("FUXI_MODEM: %u s: the service lookups answered %u\n", second, status.qrtr_lookups_answered);
+            /* The service registry's locator: how often it was announced to the modem, and what the modem asked
+             * of it. A request count that stays at zero says the modem never asked the locator. */
+            printf("FUXI_MODEM: %u s: the locator was announced %u times, took %u requests, answered %u\n", second,
+                   status.locator_announces, status.locator_requests, status.locator_answered);
             /* The bridge's own report: the QMI services the modem announced, the clients and the queue state. It is
              * the only place that names the service ids, and the service ids are how a client finds the service it
              * wants. Without this call the bridge stays silent and the announced services are never on the record. */
@@ -2680,17 +2687,17 @@ extern "C" void native_fuxi_modem_probe(void)
         (void)slotPas();
         return;
     }
-    /* Mode 14 dumps the modem's own service registry table, /image/modemr.jsn, whole, as hex and as
-     * ASCII. Still read only: it reads the partition and prints, it starts no modem and touches no
-     * register. The table is what the modem expects the AP to serve on QRTR service 64, so its bytes
-     * have to be read off the device before any answer to the modem is written. */
+    /* Mode 14 serves the modem's service registry locator, QRTR service 64, and dumps the table the
+     * answers come from. The table is the modem's own, /image/modemr.jsn, and it is dumped first so a run's
+     * log holds the table that the answers were built out of. The mode then starts the modem and keeps the
+     * link running: the locator is announced to the modem and answers what the modem asks of it, and
+     * neither happens without a live link. */
     if (mode == 14) {
         (void)dumpRegistryTable();
-        return;
-    }
-    /* Mode 4 and up start the modem: they vote rails, load the images over PAS and let the
-     * modem's firmware run. The radio stays off until a later step says otherwise. */
-    if (mode < 4) {
+        /* The mode does not return: it falls through to the bring-up, which is what the locator needs. */
+    } else if (mode < 4) {
+        /* Mode 4 and up start the modem: they vote rails, load the images over PAS and let the modem's
+         * firmware run. The radio stays off until a later step says otherwise. */
         printf("FUXI_MODEM: the mode %u does nothing\n", mode);
         return;
     }
