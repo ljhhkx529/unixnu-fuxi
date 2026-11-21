@@ -35,8 +35,10 @@
 | B5 | **credit 冻结在 10 pending 是"原因"** | 同文件 `:227`：**是症状**。modem 先停，credit 才不归还 | 11-21 |
 | B6 | **SMP2P `fatal` 位 = modem 死亡** | 同文件 `:383,392`：安全运行里 fatal 第 42 s 升起，**modem 仍应答 413 s** | 11-21 |
 | B7 | `fatal` 位与我们的包到达有关 | 同文件 `:286`：是 modem 自己的定时 handover 状态字，最后答复时间从 53.4 s 变到 61.5 s 而 fatal 不动 | 11-21 |
+| B8 | **servreg locator 未发布是阻塞原因** | `evidence/2026-11-21-modem-servreg-locator.md`：NEW_SERVER 到 node 0 后 modem **立刻**来问 GET_DOMAIN_LIST，两个名字都答完，**modem 之后 764 s 再没问过，也仍只发布 2 个服务**。locator 必要但不充分 | 11-21 |
+| B9 | **`tms/pddump_disabled` 是"表里缺了一条"** | 它是 PDR 的**策略查询**，不是任何域"提供"的服务：应答 **0 个域 = PD dump 未禁用 = 正确值**。参考实现对任何未知名字都只回 0 域，从不特判（`hakios.mpss.c:4634-4636`）。**任何 `.jsn` 里都不会有这个名字，不要去找** | 11-21 |
 
-> **B2–B7 是 2026-11-21 事后才补的排除，而且曾被重新提出过多次。** 若再提，先引这两行。
+> **B2–B8 是事后补的排除，而且曾被重新提出过多次。** 若再提，先引对应行。
 
 ---
 
@@ -53,28 +55,89 @@
 
 ## D. 当前真正未解决的问题（**唯一允许继续的方向**）
 
-| # | 问题 | 当前知道什么 | 下一步的唯一判据 |
-|---|---|---|---|
-| **D1** | **modem 只发布 2 个服务（0x42、0x2b），UIM/NAS/WDS/DMS 一个都没有** | 685 s 内只发 4 个包（HELLO + 2×NEW_SERVER + 1×DATA）；84 次 lookup 0 应答 | 见下 |
-| **D2** | **servreg locator 已发布并被 modem 问到，但 modem 仍未多发服务** | `evidence/2026-11-21-modem-servreg-locator.md`：NEW_SERVER 发到 node 0，modem 立刻来问 GET_DOMAIN_LIST（tms/servreg 和 tms/pddump_disabled），两个都答了。**modem 仍然只发布 2 个服务，UIM 仍然没发布** | 见 E |
-| D3 | TFTP（QRTR 4096）未实现 | 全仓 grep 无 tftp | D2 已证伪"发布 locator 就够"，下一轮做 |
+| # | 问题 | 当前知道什么 |
+|---|---|---|
+| **D1** | **modem 只发布 2 个服务（0x42 SERVREG_NOTIF、0x2b SSCTL），UIM/NAS/WDS/DMS 一个都没有** | 764 s 内只发 4 个包（HELLO + 2×NEW_SERVER + 1×DATA）；84 次 lookup 0 应答；locator 已答、modem 不再问 |
 
-**D1 的参考实现（只读，勿抄 GPL 部分）**：小米 10 的 `hakios.mpss.c` —— locator 在 `:4492-4600`，TFTP 在 `umi_modem_mhi.inc:684-840`。
-其文档原话：modem **先宣布 88 个服务，再停在 OFFLINE，等 AP 的 locator 与 TFTP 供给后才转 ONLINE**（`docs/ru/cellular.md` 的「23 октября 2026, вечер」一节）。
+### D1 的两道闸门（UMI 原文，必须分清 —— 2026-11-21 更正）
+
+| 闸门 | 控制什么 | fuxi 状态 |
+|---|---|---|
+| **RMTFS**（QRTR service 14 + 4 个分区） | **modem 是否宣布协议栈服务** | ❌ 全仓无 rmtfs，内存图无 `rmtfs_mem` |
+| **TFTP**（QRTR 4096 + `modem_pr`） | **modem 是否从 OFFLINE 转 ONLINE** | ❌ 全仓无 tftp |
+
+UMI 的原话是两句，不是一句：
+
+- `hakios.mpss.c:1251-1252` —— "WITHOUT THEM ALL THE MODEM OFFERS **NO SERVICES BUT ITS OWN** (DMS, NAS... stay away)" → **RMTFS 管"是否宣布服务"**
+- `docs/ru/cellular.md`「23 октября 2026, вечер」—— 服务完 `modem_pr` 之后 modem **同意转 ONLINE** → **TFTP 管"是否 ONLINE"**
+
+**fuxi 的症状是"只宣布 2 个服务"，命中的是 RMTFS 这道闸，不是 TFTP。**
+（本文件此前的 D3 把两件事混成一件，2026-11-21 更正：先做 RMTFS。）
+
+### 参考实现的坐标（只读，勿抄 GPL 部分）
+
+- RMTFS 常量与分区：`hakios.mpss.c:3533-3600`（`RMTFS_SERVICE 14`、5 个消息 id、4 个分区路径、`RMTFS_SECTOR 512`）
+- RMTFS 共享缓冲区：`:3632-3660`（`rmtfs_buffer_make`）、`:3658-3736`（`rmtfs_share` = `assign_mem` 给 **HLOS + MSS_MSA + NAV 三方**）
+- **RMTFS 服务端（完整实现，400 行，上过真机）：`:3765-3925` `rmtfs_receive`**
+  - `OPEN`（:3785）：**TLV 1 = 路径字符串本身，前面没有长度字节**
+  - `ALLOC_BUFF`（:3818）：请求 TLV 2 = u32 大小；应答 TLV **0x10 = u64 小端物理地址**
+  - `RW_IOVEC`（:3837）：TLV 1 = 文件号 u32(1..4)；TLV 2 = 方向 u8（非 0 = 写）；TLV 3 = `count:u8` + count×12 字节
+  - `CLOSE`（:3810）、`GET_DEV_ERROR`（:3922）
+  - **写请求只写内存副本**（:3870 之后）
+- TFTP：`umi_modem_mhi.inc:684-840`
+- 主线的 `rmtfs_mem` = **0xd4a80000，2.5 MB**，文件模式只写副本（`/tmp/x13/docs/蜂窝调研.md:11,26,47`）
+
+### 一条必须记住的对照（防止把 RMTFS 当充分条件）
+
+`/tmp/x13/docs/目标-M5.md:169-170`：**rmtfs 正常运行时**，modem 仍只发 `RFS(14)/LSM(64)/IPA控制(49)/TFTP(4096)`，无 DMS/NAS；
+同文件 `:509-512`：修好 **IPA**（SMEM 497 不预分配、IMEM `modem-tables` 改到 0x146a8000）之后，服务才全出、才有首次 LTE 注册。
+**所以 RMTFS 不是充分条件 —— 但它在前、且 fuxi 完全没有。**
 
 ---
 
-## E. 本轮（2026-11-21 locator 之后）的唯一任务
+## E. 本轮（2026-11-21 之后）的唯一任务：RMTFS（QRTR service 14）
 
-> 读出 `tms/pddump_disabled` 是在哪张 `.jsn` 表里。
-> modem 问了 locator 两个名字：`tms/servreg`（在 `modemr.jsn` 里，已答）和
-> `tms/pddump_disabled`（**不在** `modemr.jsn` 里）。后者决定了该读哪个文件。
-> 先找到它，再决定做什么；**不要一次读完六个 `.jsn`**。
+> 实现一个**只读**的 RMTFS 服务端，让 modem 能读它的 4 个文件系统。
+> 判据只有一条：**modem 是否开始发 `OPEN /boot/modem_fs1`**（或 `modem_fs2` / `modem_fsc` / `modem_fsg`）。
 
-判据：日志或 dump 里出现 `pddump` 这个服务名的出处，且能说出它属于哪张表。
+### 第 0 步（不改代码）：清点
 
-**Do not**：
-- 不要通读 `package/FuxiModemProbe.cpp`（2201 行）。模式分派在文件末尾，用 `grep -n "fuxi-modem="` 定位。
-- 不要同时改 metadata、DTB 顺序或任何无关代码。
-- 不要重新讨论 A 组或 B 组的任何一条。
-- 不要重新验证 D2（locator 已经发布并被 modem 问到了，见上）。
+在设备上确认这四个分区**存在且可读**：`modemst1`、`modemst2`、`fsc`、`fsg`（GPT 名字精确匹配）。
+若某个名字在这块板上不同或不存在，**停下来报名字**，不要猜。
+
+### 第 1 步：读进内存
+
+4 个分区各读一份只读副本到内核内存（UMI 的 `rmtfs_load()`，`hakios.mpss.c:3586-3620`）。
+**分区一个字节都不许写。**
+
+### 第 2 步：共享缓冲区
+
+一块物理连续的内存作为 RMTFS 缓冲区（主线用 **0xd4a80000 / 2.5 MB**，见 `/tmp/x13/docs/蜂窝调研.md:11`），
+并用 `assign_mem` 交给 **HLOS + MSS_MSA + NAV** 三方（UMI 的 `rmtfs_share(true)`，`hakios.mpss.c:3658-3736`；
+你自己的 `FuxiModemAssign.h` 已经是这个形状，改参数即可）。
+注意：fuxi 的内存图里**没有**这个区，先在 UEFI 内存图里加一行，或在已有保留区内选出不重叠的一段。
+
+### 第 3 步：QRTR service 14
+
+发布 service **14**，instance 0，应答 5 个消息：
+`OPEN 1`、`CLOSE 2`、`RW_IOVEC 3`、`ALLOC_BUFF 4`、`GET_DEV_ERROR 5`（`hakios.mpss.c:3553-3557`）。
+
+- `OPEN` 按路径打开：`/boot/modem_fs1`…`/boot/modem_fsg`（`rmtfs_files[4]`，`:3575-3578`）
+- `ALLOC_BUFF` 返回缓冲区的地址与大小
+- `RW_IOVEC` 读副本；**写请求只写内存副本，绝不落分区**
+- `CLOSE` 释放
+
+### Do not
+
+- **不要写 `modemst1`/`modemst2`/`fsc`/`fsg`。** 这四个分区存 IMEI 与射频校准，写坏是变砖级别。
+- 不要同时做 TFTP、IPA 或任何其它闸门。
+- 不要通读 `package/FuxiModemProbe.cpp`。模式分派在 `:2559`，模式 `1`–`14` 在 `:2569-2641` 附近，加新模式在旁边。
+- 不要重新讨论 A/B/C 组，也不要重测 B8（locator）。
+
+### 交付
+
+1. `evidence/2026-11-2X-modem-rmtfs.md`：分区清点结果、缓冲区地址与 `assign_mem` 的应答、每个 RMTFS 请求的原始字节、run id、kernel sha256、判据结论。
+2. `porting.toml` 一条 finding（findings 数组，带 commit）。
+3. `python3 scripts/porting-record.py check --device ../unixnu-fuxi` 通过（需 Python ≥ 3.11）。
+
+**若判据是否**（modem 从未来要文件）：把 RMTFS 也写进 A/B 组的排除，下一轮转 IPA（`目标-M5.md:509-512` 的证据更强），**不要**先做 TFTP。
