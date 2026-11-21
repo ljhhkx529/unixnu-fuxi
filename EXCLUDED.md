@@ -55,23 +55,26 @@
 
 | # | 问题 | 当前知道什么 | 下一步的唯一判据 |
 |---|---|---|---|
-| **D1** | **modem 只发布 2 个服务（0x42、0x2b），UIM/NAS/WDS/DMS 一个都没有** | 490 s 内只发 4 个包（HELLO + 2×NEW_SERVER + 1×DATA）；84 次 lookup 0 应答 | 见下 |
-| D2 | servreg locator（service 64 / 0x40）未被发布 | modem 未注册它；我们也没在 QRTR 上 announce 它 | 发布 service 64 后，modem 是否多发一个包 |
-| D3 | TFTP（QRTR 4096）未实现 | 全仓 grep 无 tftp | 若 D2 否证，再做 |
+| **D1** | **modem 只发布 2 个服务（0x42、0x2b），UIM/NAS/WDS/DMS 一个都没有** | 685 s 内只发 4 个包（HELLO + 2×NEW_SERVER + 1×DATA）；84 次 lookup 0 应答 | 见下 |
+| **D2** | **servreg locator 已发布并被 modem 问到，但 modem 仍未多发服务** | `evidence/2026-11-21-modem-servreg-locator.md`：NEW_SERVER 发到 node 0，modem 立刻来问 GET_DOMAIN_LIST（tms/servreg 和 tms/pddump_disabled），两个都答了。**modem 仍然只发布 2 个服务，UIM 仍然没发布** | 见 E |
+| D3 | TFTP（QRTR 4096）未实现 | 全仓 grep 无 tftp | D2 已证伪"发布 locator 就够"，下一轮做 |
 
 **D1 的参考实现（只读，勿抄 GPL 部分）**：小米 10 的 `hakios.mpss.c` —— locator 在 `:4492-4600`，TFTP 在 `umi_modem_mhi.inc:684-840`。
 其文档原话：modem **先宣布 88 个服务，再停在 OFFLINE，等 AP 的 locator 与 TFTP 供给后才转 ONLINE**（`docs/ru/cellular.md` 的「23 октября 2026, вечер」一节）。
 
 ---
 
-## E. 本轮（2026-11-21 之后）的唯一任务
+## E. 本轮（2026-11-21 locator 之后）的唯一任务
 
-> 加一个只读模式，把 `/image/modemr.jsn`（710 字节，已确认存在）完整 dump 成 hex + ASCII。
-> 一次上机。**拿到内容之前，不写任何 locator / TFTP 代码。**
+> 读出 `tms/pddump_disabled` 是在哪张 `.jsn` 表里。
+> modem 问了 locator 两个名字：`tms/servreg`（在 `modemr.jsn` 里，已答）和
+> `tms/pddump_disabled`（**不在** `modemr.jsn` 里）。后者决定了该读哪个文件。
+> 先找到它，再决定做什么；**不要一次读完六个 `.jsn`**。
 
-判据：日志里出现该文件的完整 710 字节 hex + ASCII。
+判据：日志或 dump 里出现 `pddump` 这个服务名的出处，且能说出它属于哪张表。
 
 **Do not**：
 - 不要通读 `package/FuxiModemProbe.cpp`（2201 行）。模式分派在文件末尾，用 `grep -n "fuxi-modem="` 定位。
 - 不要同时改 metadata、DTB 顺序或任何无关代码。
 - 不要重新讨论 A 组或 B 组的任何一条。
+- 不要重新验证 D2（locator 已经发布并被 modem 问到了，见上）。
