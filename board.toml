@@ -229,8 +229,11 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                # answer back, and none of them loads anything or resets a processor. Mode 12 lists
                # the two slots side by side, so which one carries the modem's firmware is a fact
                # from the device and not an assumption about the reader's order. Mode 13 hands each
-               # slot's own blob to the secure world in turn. The runtime path is the mode to run.
-               "fuxi-modem=4",
+               # slot's own blob to the secure world in turn. Mode 14 dumps the modem's own service
+               # registry table, /image/modemr.jsn, whole, as hex and as ASCII, still read only: it
+               # reads the partition and prints, and starts nothing. The table is what the modem
+               # expects the AP to serve on QRTR service 64. The runtime path is the mode to run.
+               "fuxi-modem=14",
                "fgraph=6",
                # Content follows unixnu-fuxi-old one switch at a time: sheng-aks brings up Apple
                # KeyStore, which AMFI consults before it accepts the adhoc-signed System volume.

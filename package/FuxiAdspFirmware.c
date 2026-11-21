@@ -389,3 +389,30 @@ int fuxi_adsp_fw_list(const char *path, unsigned index, char *name, size_t name_
     return 0;
 }
 
+/* Reads a plain file out of the firmware partition, whole, read only. The path is inside the volume, as for
+   the listing above ("image/modemr.jsn"). The caller frees the buffer with the size it is given.
+ *
+ * The split images have their own reader, because they are a set of pieces with a header; a file that is
+   one file, like the service registry's own tables, is read here. */
+int fuxi_adsp_fw_read_file(const char *path, uint64_t *size, void **out)
+{
+    if (!path || !size || !out) return EINVAL;
+    *size = 0;
+    *out = NULL;
+    const int rc = mountPartition();
+    if (rc) return rc;
+    FatFile file;
+    const int found = fat_open(gVolume, path && *path ? path : "/", &file);
+    if (found) return found == FatNotFound ? ENOENT : EIO;
+    if (file.directory) return EISDIR;
+    uint8_t *bytes = IOMallocData(file.size);
+    if (!bytes) return ENOMEM;
+    if (fat_read(gVolume, &file, 0, bytes, file.size)) {
+        IOFreeData(bytes, file.size);
+        return EIO;
+    }
+    *size = file.size;
+    *out = bytes;
+    return 0;
+}
+

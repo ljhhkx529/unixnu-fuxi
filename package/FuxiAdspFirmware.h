@@ -33,6 +33,10 @@ int fuxi_adsp_fw_slot_info(const char *slot, uint32_t *lun, uint64_t *first, uin
  * well (the header part followed by the hash segment, which is what the secure world authenticates),
  * with its size in mdt_size; the caller frees it with that size. */
 int fuxi_adsp_fw_read_slot(const char *slot, const char *name, uint64_t *size, void **out, void **mdt, uint64_t *mdt_size);
+/* Reads one plain file of the device's own firmware partition, whole, read only. The path is inside
+ * the volume, as for the listing ("image/modemr.jsn"). The bytes are copied out and the caller frees
+ * them with the size it is given. Returns 0 on success. */
+int fuxi_adsp_fw_read_file(const char *path, uint64_t *size, void **out);
 #ifdef __cplusplus
 }
 #endif

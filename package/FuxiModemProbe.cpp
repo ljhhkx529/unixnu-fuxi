@@ -2466,6 +2466,44 @@ int inventoryFirmware()
     return 0;
 }
 
+/* Dumps one file of the firmware partition, whole, as hex and as ASCII. Read only: it reads the
+ * partition and prints, it starts nothing and touches no register.
+ *
+ * The file is the modem's own service registry table. The table is what the modem expects the AP to
+ * serve on QRTR service 64, so its exact bytes have to be read before any answer is written. It is
+ * printed and not parsed here: the bytes are the fact, and what they mean is read afterwards.
+ *
+ * The dump goes out through printf, so it reaches the USB control channel as well as the console. */
+int dumpRegistryTable()
+{
+    static const char *const path = "image/modemr.jsn";
+    uint64_t size = 0;
+    void *bytes = NULL;
+    const int rc = fuxi_adsp_fw_read_file(path, &size, &bytes);
+    if (rc) {
+        printf("FUXI_MODEM: %s could not be read (%d)\n", path, rc);
+        return rc;
+    }
+    printf("FUXI_MODEM: %s is %llu bytes\n", path, (unsigned long long)size);
+    const uint8_t *data = (const uint8_t *)bytes;
+    for (uint64_t at = 0; at < size; at += 16) {
+        printf("FUXI_MODEM: %04llx:", (unsigned long long)at);
+        for (unsigned i = 0; i < 16; ++i) {
+            if (at + i < size) printf(" %02x", data[at + i]);
+            else printf("   ");
+        }
+        printf("  |");
+        for (unsigned i = 0; i < 16 && at + i < size; ++i) {
+            const uint8_t c = data[at + i];
+            printf("%c", (c >= 0x20 && c < 0x7f) ? (char)c : '.');
+        }
+        printf("|\n");
+    }
+    printf("FUXI_MODEM: %s is %llu bytes, dumped\n", path, (unsigned long long)size);
+    if (bytes) IOFreeData(bytes, size);
+    return 0;
+}
+
 /* Opens both images and parses them, read only. Nothing is mapped, no register is touched and no
  * modem is started: this proves the file path, which is the part that can be wrong on its own. The
  * split image's segments are read out of the partition and joined, so a missing or mismatched
@@ -2640,6 +2678,14 @@ extern "C" void native_fuxi_modem_probe(void)
      * after the other and the refusal can be told apart from a firmware that is accepted. */
     if (mode == 13) {
         (void)slotPas();
+        return;
+    }
+    /* Mode 14 dumps the modem's own service registry table, /image/modemr.jsn, whole, as hex and as
+     * ASCII. Still read only: it reads the partition and prints, it starts no modem and touches no
+     * register. The table is what the modem expects the AP to serve on QRTR service 64, so its bytes
+     * have to be read off the device before any answer to the modem is written. */
+    if (mode == 14) {
+        (void)dumpRegistryTable();
         return;
     }
     /* Mode 4 and up start the modem: they vote rails, load the images over PAS and let the
