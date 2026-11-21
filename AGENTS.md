@@ -17,6 +17,7 @@ update the pinned revisions in `.github/workflows/build.yml` after each merge.
 | Hardware facts | `fuxi_touch_panel_porting.md` and `facts/` (every value names its source), the selected SoC DTSI |
 | Touch | [FuxiFtsTouch](https://github.com/OddlyLabs/FuxiFtsTouch), `package/FuxiTouchProbe.cpp`, `package/FuxiTouchBoard.h` |
 | Kernel | [Source and patches](https://unixnu.com/xnu/source-and-patches), `patches/xnu/series` |
+| Baseband / modem | `EXCLUDED.md` (what is closed, what is forbidden, and where that file has been wrong), `docs/modem-workflow.md` (the three baseband paths, the bring-up order, the lessons) |
 | Images | [Prelink](https://unixnu.com/concepts/prelink), [payload](https://unixnu.com/concepts/payload), [UEFI](https://unixnu.com/porting/uefi-firmware) |
 
 ## Work
