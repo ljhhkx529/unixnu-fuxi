@@ -100,6 +100,9 @@ struct LinkStatus {
     /* The QRTR flow control: the DATA packets the peer has not credited yet, and the RESUME_TX packets sent and
        received. A peer that runs out of credit stops answering, and the credit comes back with RESUME_TX. */
     uint32_t qrtr_tx_pending, qrtr_resumes_sent, qrtr_resumes_received;
+    /* The destinations the flow table is tracking: the modem opens a source port per stream, so this is the
+       number of streams and the number the table has to hold. */
+    uint32_t qrtr_tx_flows;
     /* The service registry's locator: how often it was announced, how many requests it took and how many of
        them were answered. */
     uint32_t locator_announces, locator_requests, locator_answered;
@@ -1490,9 +1493,11 @@ void serviceLink()
                    status.qrtr_hello_reply_owed, status.qrtr_hello_reply_node, status.qrtr_hello_reply_port,
                    status.qrtr_remote_node, status.qrtr_remote_node_known, status.qrtr_hello_dropped);
             /* The flow control: a peer that is out of credit stops answering, and the credit comes back with a
-             * RESUME_TX. A pending count that sits at the high watermark says the link is waiting for one. */
-            printf("FUXI_MODEM: %u s: the qrtr flow has %u packets pending, %u resumes sent, %u received\n",
-                   second, status.qrtr_tx_pending, status.qrtr_resumes_sent, status.qrtr_resumes_received);
+             * RESUME_TX. A pending count that sits at the high watermark says the link is waiting for one.
+             * The count is the sum over the destinations, and the number of them is beside it: a table that is
+             * filling up is what stops the answers from going out. */
+            printf("FUXI_MODEM: %u s: the qrtr flow has %u packets pending over %u destination(s), %u resumes sent, %u received\n",
+                   second, status.qrtr_tx_pending, status.qrtr_tx_flows, status.qrtr_resumes_sent, status.qrtr_resumes_received);
             /* The modem's own state over SMP2P. The fatal bit says the modem died rather than stopped
                answering, which is the difference between a modem that crashed on the request it was given
                and a modem that is out of credit. */
