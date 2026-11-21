@@ -83,6 +83,15 @@ struct LinkStatus {
     uint8_t qrtr_hello_reply_owed, qrtr_remote_node_known;
     uint8_t reserved2[2];
     uint32_t glink_remote_intents;
+    uint32_t glink_remote_busy;
+    uint32_t glink_no_intent, glink_intent_too_small, glink_intent_requested, glink_rx_done;
+    uint32_t qrtr_lookups;
+    /* The lookups the modem answered. A lookup it ignored is not counted, so a count that stays behind the number
+       that went out says the modem did not answer it. */
+    uint32_t qrtr_lookups_answered;
+    /* The QRTR flow control: the DATA packets the peer has not credited yet, and the RESUME_TX packets sent and
+       received. A peer that runs out of credit stops answering, and the credit comes back with RESUME_TX. */
+    uint32_t qrtr_tx_pending, qrtr_resumes_sent, qrtr_resumes_received;
     char last_unknown[32];
 };
 extern "C" void fuxi_modem_status(LinkStatus *status);
@@ -226,6 +235,10 @@ struct Owner {
     uint32_t last_glink_rx;   /* the GLINK layer's message count the last time it was reported */
 
     bool smem_ready, smem_locked, ipcc_ready, rsc_ready, glink_started, glink_up, fatal, handover;
+    /* The modem's SMP2P entries are dumped once, when they first arrive. */
+    bool smp2p_dumped;
+    /* Whether the modem's crash reason has already been read, so it is read once and not every second. */
+    bool crash_reason_read;
     bool modem_reset, dtb_reset;
 };
 
@@ -392,6 +405,30 @@ volatile uint8_t *item(uint16_t id, uint32_t *size)
     if (qcom_smem_find(&gOwner.smem, &gOwner.part, id, &at, &bytes)) return nullptr;
     if (size) *size = bytes;
     return gOwner.smem_window.va + at;
+}
+
+/* The modem's own account of why it stopped. The crash reason lives in SMEM item 421 (the mpss_resource entry
+   of Linux's remoteproc: crash_reason_smem 421), and the item holds the reason code and the register state the
+   modem saved when it went down. A modem that answered and then went quiet has written something there, and
+   that is the only statement of the cause that comes from the modem itself.
+
+   The item is read, never written: the crash reason belongs to the modem. */
+void readCrashReason()
+{
+    if (!gOwner.smem_ready) return;
+    uint32_t size = 0;
+    volatile uint8_t *data = item(421, &size);
+    if (!data) {
+        printf("FUXI_MODEM: the modem's crash reason item is not there\n");
+        return;
+    }
+    printf("FUXI_MODEM: the modem's crash reason item is %u bytes:", size);
+    for (uint32_t i = 0; i < size && i < 64; ++i) printf(" %02x", data[i]);
+    printf("\n");
+    /* The reason code is the first word (Linux's qcom_smem: the crash reason is the reason code followed by the
+       registers). The names Linux gives them are in include/linux/soc/qcom/qmi.h's crash reason list, which the
+       port does not carry, so the code is reported as a number. */
+    if (size >= 4) printf("FUXI_MODEM: the modem's crash reason code is %u\n", *(volatile uint32_t *)data);
 }
 
 /* ---- the doorbells ---- */
@@ -1412,11 +1449,14 @@ void serviceLink()
                    status.ready ? "up" : "down", status.tx_packets, status.rx_packets,
                    status.qrtr_servers, gOwner.glink_irqs);
             printf("FUXI_MODEM: %u s: glink rx %u tx %u data %u dropped %u unknown %u, fifo %u bytes, "
-                   "channel up %u remote %u sent %u acked %u, our intents %u, their intents %u\n",
+                   "channel up %u remote %u sent %u acked %u, our intents %u, their intents %u of which %u are held, "
+                   "no room %u, too small %u, asked %u, done %u\n",
                    second, status.glink_rx_messages, status.glink_tx_messages, status.glink_rx_data,
                    status.glink_dropped, status.glink_unknown_opens, status.rx_avail,
                    status.ch_up, status.ch_remote_open, status.ch_open_sent, status.ch_open_acked,
-                   status.ch_local_advertised, status.glink_remote_intents);
+                   status.ch_local_advertised, status.glink_remote_intents, status.glink_remote_busy,
+                   status.glink_no_intent, status.glink_intent_too_small, status.glink_intent_requested,
+                   status.glink_rx_done);
             /* The name service's state: the modem's node id, and whether the answer to its HELLO is still
              * owed. If the answer never lands, the modem never announces its services. */
             printf("FUXI_MODEM: %u s: qrtr rx %u bad %u, hello got %u, reply owed %u to node %u port %u, "
@@ -1424,8 +1464,55 @@ void serviceLink()
                    second, status.qrtr_rx, status.qrtr_malformed, status.qrtr_hello_received,
                    status.qrtr_hello_reply_owed, status.qrtr_hello_reply_node, status.qrtr_hello_reply_port,
                    status.qrtr_remote_node, status.qrtr_remote_node_known, status.qrtr_hello_dropped);
+            /* The flow control: a peer that is out of credit stops answering, and the credit comes back with a
+             * RESUME_TX. A pending count that sits at the high watermark says the link is waiting for one. */
+            printf("FUXI_MODEM: %u s: the qrtr flow has %u packets pending, %u resumes sent, %u received\n",
+                   second, status.qrtr_tx_pending, status.qrtr_resumes_sent, status.qrtr_resumes_received);
+            /* The modem's own state over SMP2P. The fatal bit says the modem died rather than stopped
+               answering, which is the difference between a modem that crashed on the request it was given
+               and a modem that is out of credit. */
+            printf("FUXI_MODEM: %u s: the modem's status is ready %u, fatal %u, handover %u\n", second,
+                   gOwner.smp2p_ready, gOwner.fatal, gOwner.handover);
             if (status.last_unknown[0]) printf("FUXI_MODEM: %u s: the last unknown channel name is %s\n",
                                                 second, status.last_unknown);
+            /* The service lookups that went out. The modem only publishes the services it is asked about, so a
+             * lookup count of 0 with a live link means the modem's list was never asked for. */
+            printf("FUXI_MODEM: %u s: the service lookups sent %u\n", second, status.qrtr_lookups);
+            /* The lookups the modem answered. A lookup it did not answer is not counted, so this count says
+             * whether the modem took the question at all. */
+            printf("FUXI_MODEM: %u s: the service lookups answered %u\n", second, status.qrtr_lookups_answered);
+            /* The bridge's own report: the QMI services the modem announced, the clients and the queue state. It is
+             * the only place that names the service ids, and the service ids are how a client finds the service it
+             * wants. Without this call the bridge stays silent and the announced services are never on the record. */
+            fuxi_modem_report(second);
+            /* The modem's own SMP2P entries, dumped once. The port reads one entry ("slave-kernel") and
+               ignores the rest, but the modem publishes a set: an entry the port does not know is one the modem
+               is waiting on, and the set is the only place that shows what it wants. It is dumped here and not
+               where the entries arrive, because the entries arrive before the USB log is attached and a print
+               made then is lost. */
+            if (!gOwner.smp2p_dumped && gOwner.smp2p.in) {
+                gOwner.smp2p_dumped = 1;
+                const uint32_t valid = gOwner.smp2p.in[3] >> 16;
+                printf("FUXI_MODEM: the modem's SMP2P has %u entries\n", valid);
+                for (uint32_t i = 0; i < valid && i < QCOM_SMP2P_MAX_ENTRIES; ++i) {
+                    const volatile uint32_t *entry = &gOwner.smp2p.in[5 + 5 * i];
+                    char name[17] = {0};
+                    for (unsigned b = 0; b < 16; ++b) {
+                        const char c = (char)(entry[b / 4] >> (8 * (b % 4)));
+                        if (!c) break;
+                        name[b] = c;
+                    }
+                    printf("FUXI_MODEM: the modem's SMP2P entry %u is %s, value 0x%x\n", i, name, entry[4]);
+                }
+            }
+            /* When the modem stops answering, its own account of why is in SMEM. The crash reason item is read
+               once, the first second in which no answer came for a while, so the log says why the modem went
+               quiet instead of only that it did. */
+            if (!gOwner.crash_reason_read && second > 20 && status.glink_rx_messages == gOwner.last_glink_rx &&
+                status.glink_rx_data > 0) {
+                gOwner.crash_reason_read = true;
+                readCrashReason();
+            }
             gOwner.last_tx_again = status.tx_again;
             gOwner.last_glink_rx = status.glink_rx_messages;
             syncStats();

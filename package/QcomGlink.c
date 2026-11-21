@@ -287,6 +287,29 @@ static QcomGlinkChannel *allocate_remote(QcomGlink *g, const char *name)
     return 0;
 }
 
+/* The name of a GLINK command, so the trace's numbers are readable. */
+static const char *glink_command_name(uint16_t cmd)
+{
+    switch (cmd) {
+    case QCOM_GLINK_VERSION: return "VERSION";
+    case QCOM_GLINK_VERSION_ACK: return "VERSION_ACK";
+    case QCOM_GLINK_OPEN: return "OPEN";
+    case QCOM_GLINK_CLOSE: return "CLOSE";
+    case QCOM_GLINK_OPEN_ACK: return "OPEN_ACK";
+    case QCOM_GLINK_INTENT: return "INTENT";
+    case QCOM_GLINK_RX_DONE: return "RX_DONE";
+    case QCOM_GLINK_RX_INTENT_REQ: return "RX_INTENT_REQ";
+    case QCOM_GLINK_RX_INTENT_REQ_ACK: return "RX_INTENT_REQ_ACK";
+    case QCOM_GLINK_TX_DATA: return "TX_DATA";
+    case QCOM_GLINK_CLOSE_ACK: return "CLOSE_ACK";
+    case QCOM_GLINK_TX_DATA_CONT: return "TX_DATA_CONT";
+    case QCOM_GLINK_READ_NOTIF: return "READ_NOTIF";
+    case QCOM_GLINK_RX_DONE_W_REUSE: return "RX_DONE_W_REUSE";
+    case QCOM_GLINK_SIGNALS: return "SIGNALS";
+    default: return "?";
+    }
+}
+
 static int receive_one(QcomGlink *g)
 {
     const uint32_t avail = qcom_glink_rx_avail(&g->rx);
@@ -296,6 +319,20 @@ static int receive_one(QcomGlink *g)
     const uint16_t cmd = (uint16_t)(m[0] | m[1] << 8), param1 = (uint16_t)(m[2] | m[3] << 8);
     const uint32_t param2 = le32(m + 4);
     QcomGlinkChannel *c;
+    /* The commands the remote sends are shown: what the modem does after it stops answering is a question only
+       the wire can answer. The dump is limited, because the link talks a lot during startup.
+
+       The third number is the command's own second parameter, which means something different per command: for
+       TX_DATA it is the local intent the data is written into, for RX_INTENT_REQ the size wanted, and for
+       VERSION the features. The name of the command is given too, so the number is readable.
+
+       The print is printf and not kprintf on purpose: kprintf goes to the serial console, and the USB log is
+       where this is read. */
+    if (g->traced < 256u) {
+        g->traced++;
+        printf("QcomGlink: the remote sends command %u (%s) with %u and %u\n", cmd, glink_command_name(cmd), param1,
+               param2);
+    }
     switch (cmd) {
     case QCOM_GLINK_VERSION:
         if (param1 == GLINK_VERSION_1) g->features &= param2;
@@ -398,6 +435,7 @@ static int receive_one(QcomGlink *g)
     }
     case QCOM_GLINK_RX_DONE:
     case QCOM_GLINK_RX_DONE_W_REUSE:
+        g->rx_done++;
         if ((c = by_rcid(g, param1)))
             for (unsigned k = 0; k < QCOM_GLINK_MAX_REMOTE_INTENTS; ++k)
                 if (c->remote[k].valid && c->remote[k].id == param2) {
@@ -470,7 +508,20 @@ int qcom_glink_send(QcomGlink *g, QcomGlinkChannel *c, const void *data, uint32_
             (best == QCOM_GLINK_MAX_REMOTE_INTENTS || c->remote[k].size < c->remote[best].size))
             best = k;
     if (best == QCOM_GLINK_MAX_REMOTE_INTENTS) {
-        if (!c->intent_asked && command(g, QCOM_GLINK_RX_INTENT_REQ, c->lcid, length) == QcomGlinkOk) c->intent_asked = 1;
+        /* The two ways a send finds no room. All the intents are held: the remote has not said it is done with
+           them, so the credit is gone. Or they are all too small for this message: the credit is there but the
+           room is not, and the remote has to be asked for a bigger one. */
+        if (!c->intent_asked && command(g, QCOM_GLINK_RX_INTENT_REQ, c->lcid, length) == QcomGlinkOk) {
+            c->intent_asked = 1;
+            g->intent_requested++;
+        }
+        int big_enough = 0;
+        for (unsigned k = 0; k < QCOM_GLINK_MAX_REMOTE_INTENTS; ++k) {
+            if (!c->remote[k].valid || c->remote[k].busy) continue;
+            if (c->remote[k].size >= length) big_enough++;
+        }
+        if (big_enough) g->intent_too_small++;
+        else g->no_intent++;
         if (g->kick_pending && g->kick) {g->kick_pending = 0; g->kick(g->kick_context);}
         return QcomGlinkAgain;
     }

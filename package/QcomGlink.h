@@ -72,6 +72,15 @@ typedef struct {
     QcomGlinkChannel channel[QCOM_GLINK_MAX_CHANNELS];
     /* Counters for the log. */
     uint32_t rx_messages, tx_messages, rx_data, unknown_opens, dropped;
+    /* How many times a send found no room: the remote's intents are all held, or all of them are too small.
+       The two are counted apart, because only the first is a credit that can run out and be given back. */
+    uint32_t no_intent, intent_too_small, intent_requested;
+    /* How many times the remote told us an intent is free again. The modem answers our requests by reading
+       them, and it has to give the intent back: without that the credit is spent once and never returns. */
+    uint32_t rx_done;
+    /* How many of the remote's commands were shown in the log. The dump is limited so a busy link cannot
+       flood the log. */
+    uint32_t traced;
     char last_unknown[QCOM_GLINK_NAME];
     char unknown_names[96];  /* the distinct names of those opens, space separated, as many as fit */
 } QcomGlink;
