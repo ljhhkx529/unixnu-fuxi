@@ -61,6 +61,10 @@
 | B7 | `fatal` 位与我们的包到达有关 | 同文件 `:286`：是 modem 自己的定时 handover 状态字，最后答复时间从 53.4 s 变到 61.5 s 而 fatal 不动 | 11-21 |
 | B8 | **servreg locator 未发布是阻塞原因** | `evidence/2026-11-21-modem-servreg-locator.md`：NEW_SERVER 到 node 0 后 modem **立刻**来问 GET_DOMAIN_LIST，两个名字都答完，**modem 之后 764 s 再没问过，也仍只发布 2 个服务**。locator 必要但不充分 | 11-21 |
 | B9 | **`tms/pddump_disabled` 是"表里缺了一条"** | 它是 PDR 的**策略查询**，不是任何域"提供"的服务：应答 **0 个域 = PD dump 未禁用 = 正确值**。参考实现对任何未知名字都只回 0 域，从不特判（`hakios.mpss.c:4634-4636`）。**任何 `.jsn` 里都不会有这个名字，不要去找** | 11-21 |
+| B10 | **modem 的 failure reason 94 是"我们被拒"** | `evidence/2026-11-22-modem-radio-probe.md`：94 = `QMI_PROTOCOL_ERROR_NOT_SUPPORTED`（libqmi `qmi-errors.h`），是 modem 自己说"SSCTL Get Failure Reason (0x0022) 我不实现"。UIM 的卡状态同一轮答的是 **error 0**，栈是通的 | 11-22 |
+| B11 | **NAS 的 error 74 = 我们发错了** | 同上：74 = `INFORMATION_UNAVAILABLE`，是"现在还没有这些信息"，不是拒绝。Get Signal Info 的回答里**只有 result 一个 TLV**，没有信号 TLV——radio 确实没有信号可报 | 11-22 |
+| B12 | **RMTFS 通了 radio 就该自动注册** | 同上：DMS Get Operating Mode 答 error 0、模式 **5 = PERSIST**，注册状态 0 = not registered。参考实现的顺序是 **UIM→DMS online→NAS 注册**（`hakios-umi-baseband-档案.md:911`），我们从没过 DMS online 这一步。**卡通了不等于 radio 通了** | 11-22 |
+| B13 | **QRTR 流控表 8 个槽够用** | 同上：`the qrtr flow has 17 packets pending over 12 destination(s)`。modem 每开一条流换一个源端口，目的地只增不减；上一轮的 8 槽表会丢第 9 个回答。现在是 32 槽（`UniXNU/.../qcom_qrtr.h:83`）。modem 依然一次 RESUME_TX 都不发，"信用还清就能复用"这条补救在真机上没用 | 11-22 |
 
 > **B2–B8 是事后补的排除，而且曾被重新提出过多次。** 若再提，先引对应行。
 
@@ -81,7 +85,7 @@
 
 | # | 问题 | 当前知道什么 |
 |---|---|---|
-| **D1** | **modem 只发布 2 个服务（0x42 SERVREG_NOTIF、0x2b SSCTL），UIM/NAS/WDS/DMS 一个都没有** | 764 s 内只发 4 个包（HELLO + 2×NEW_SERVER + 1×DATA）；84 次 lookup 0 应答；locator 已答、modem 不再问 |
+| **D1** | ~~**modem 只发布 2 个服务（0x42 SERVREG_NOTIF、0x2b SSCTL），UIM/NAS/WDS/DMS 一个都没有**~~ **← 11-22 已解** | 764 s 内只发 4 个包（HELLO + 2×NEW_SERVER + 1×DATA）；84 次 lookup 0 应答；locator 已答、modem 不再问。**RMTFS 的 assign 被接受之后 modem 发布 48 个服务，UIM 在里面**（见 A 组 A10） |
 
 ### D1 的两道闸门（UMI 原文，必须分清 —— 2026-11-21 更正）
 
@@ -118,50 +122,58 @@ UMI 的原话是两句，不是一句：
 **所以 RMTFS 不是充分条件 —— 但它在前、且 fuxi 完全没有。**
 
 ---
+## E. 本轮（2026-11-22 之后）的唯一任务：TFTP（QRTR service 4096）
 
-## E. 本轮（2026-11-21 之后）的唯一任务：RMTFS（QRTR service 14）
+> 实现一个**只读**的 TFTP 服务端，让 modem 能读到它的 carrier 配置。
+> 判据只有一条：**modem 的 operating mode 从 PERSIST 变掉**，或者 NAS Get Signal Info 的回答里**出现信号 TLV 0x14**。
 
-> 实现一个**只读**的 RMTFS 服务端，让 modem 能读它的 4 个文件系统。
-> 判据只有一条：**modem 是否开始发 `OPEN /boot/modem_fs1`**（或 `modem_fs2` / `modem_fsc` / `modem_fsg`）。
+### 为什么是 TFTP（不是 DMS Set Operating Mode）
 
-### 第 0 步（不改代码）：清点
+2026-11-22 实测：卡读出来了（slot 1 present + active），但 radio 是 **PERSIST**（模式 5），
+注册状态 0，信号答 error 74 = `INFORMATION_UNAVAILABLE`。
 
-在设备上确认这四个分区**存在且可读**：`modemst1`、`modemst2`、`fsc`、`fsg`（GPT 名字精确匹配）。
-若某个名字在这块板上不同或不存在，**停下来报名字**，不要猜。
+参考实现 `umi_modem_mhi.inc:685-687` 一句话说清了：
 
-### 第 1 步：读进内存
+> The modem reads its carrier configuration (modem_pr/mcfg) here and stays offline
+> (DMS DeviceNotReady) without it.
 
-4 个分区各读一份只读副本到内核内存（UMI 的 `rmtfs_load()`，`hakios.mpss.c:3586-3620`）。
-**分区一个字节都不许写。**
+**D1 的两道闸是分开的**（本文件 §D 的表）：RMTFS 管"modem 是否宣布服务"（**已通**），
+TFTP 管"modem 是否从 OFFLINE 转 ONLINE"（**没做**）。PERSIST 正是 carrier 配置缺失时 modem 的样子。
 
-### 第 2 步：共享缓冲区
+**不要用 DMS Set Operating Mode (0x2e) 代替 TFTP。** 参考实现的顺序是
+UIM→DMS online→NAS 注册，但它的 DMS online 是在 TFTP 之后；先发 0x2e 是催 modem，
+不是给它缺的那份文件。这条命令本身也不在 C 组（不是禁止），但它是**绕开**闸门而不是过闸门。
 
-一块物理连续的内存作为 RMTFS 缓冲区（主线用 **0xd4a80000 / 2.5 MB**，见 `/tmp/x13/docs/蜂窝调研.md:11`），
-并用 `assign_mem` 交给 **HLOS + MSS_MSA + NAV** 三方（UMI 的 `rmtfs_share(true)`，`hakios.mpss.c:3658-3736`；
-你自己的 `FuxiModemAssign.h` 已经是这个形状，改参数即可）。
-注意：fuxi 的内存图里**没有**这个区，先在 UEFI 内存图里加一行，或在已有保留区内选出不重叠的一段。
+### 协议（参考实现是只读的，不要抄 GPL 部分，只用它定线格式）
 
-### 第 3 步：QRTR service 14
+`umi_modem_tftp.h` 与 `umi_modem_mhi.inc:684-850`：
 
-发布 service **14**，instance 0，应答 5 个消息：
-`OPEN 1`、`CLOSE 2`、`RW_IOVEC 3`、`ALLOC_BUFF 4`、`GET_DEV_ERROR 5`（`hakios.mpss.c:3553-3557`）。
-
-- `OPEN` 按路径打开：`/boot/modem_fs1`…`/boot/modem_fsg`（`rmtfs_files[4]`，`:3575-3578`）
-- `ALLOC_BUFF` 返回缓冲区的地址与大小
-- `RW_IOVEC` 读副本；**写请求只写内存副本，绝不落分区**
-- `CLOSE` 释放
+- **服务 4096**，发布在 **version 1**（port `0x4002`）和 **version 3**（port `0x4003`）两个版本上，
+  用 type-4 的 NEW_SERVER 包，host node = 1。
+- **消息码**：RRQ 1、WRQ 2、DATA 3、ACK 4、ERROR 5、OACK 6。
+- **请求格式**：第 1 字节恒为 0，第 2 字节是操作码；然后是 NUL 结尾的路径、
+  NUL 结尾的 mode（`octet`）、再是成对的 NUL 结尾选项名和值。
+- **选项**：`blksize`(8..65464)、`timeoutms`(1..255000)、`tsize`、`rsize`(1..100 MiB)、
+  `wsize`(1..65535)、`seek`。modem 带选项来的时候**答 OACK**（不是 DATA）。
+- **读**：路径前缀 `/readonly/firmware/image/`，映射到只读分区里的 `image/<X>`。
+- **写**：`/readwrite/...` —— **确认后丢弃，一个字节都不许落盘**。
+- **结束**：最后一个 ACK 之后的短 DATA 块（不足一个 blksize）结束传输。
+- **ERROR**：opcode 5，第 3 字节是错误码，第 4 字节起是 NUL 结尾的文字。
 
 ### Do not
 
-- **不要写 `modemst1`/`modemst2`/`fsc`/`fsg`。** 这四个分区存 IMEI 与射频校准，写坏是变砖级别。
-- 不要同时做 TFTP、IPA 或任何其它闸门。
-- 不要通读 `package/FuxiModemProbe.cpp`。模式分派在 `:2559`，模式 `1`–`14` 在 `:2569-2641` 附近，加新模式在旁边。
-- 不要重新讨论 A/B/C 组，也不要重测 B8（locator）。
+- **不要写任何 modem 分区**。TFTP 是只读的：写请求照参考实现那样确认后丢弃。
+- 不要同时做 IPA 或任何别的闸门。
+- 不要重测 B8 / B10 / B11 / B12 / B13。
+- 不要把 carrier 配置从别的设备拷过来（IMEI / 射频校准）。
 
 ### 交付
 
-1. `evidence/2026-11-2X-modem-rmtfs.md`：分区清点结果、缓冲区地址与 `assign_mem` 的应答、每个 RMTFS 请求的原始字节、run id、kernel sha256、判据结论。
+1. `evidence/2026-11-2X-modem-tftp.md`：carrier 配置文件的清点结果、每个 TFTP 请求的原始字节、
+   run id、kernel sha256、operating mode 的变化、判据结论。
 2. `porting.toml` 一条 finding（findings 数组，带 commit）。
 3. `python3 scripts/porting-record.py check --device ../unixnu-fuxi` 通过（需 Python ≥ 3.11）。
 
-**若判据是否**（modem 从未来要文件）：把 RMTFS 也写进 A/B 组的排除，下一轮转 IPA（`目标-M5.md:509-512` 的证据更强），**不要**先做 TFTP。
+**若判据成立**（radio 变 online 或信号 TLV 出现）：把 TFTP 写进 A/B 组的排除，
+下一轮转**读 IMSI**（UIM Read Transparent 0x0020，EF_IMSI 0x6f07）——
+那是参考实现激活 TLV 里 0x43 的那一个。
