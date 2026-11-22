@@ -16,9 +16,10 @@
  * The protocol half is in the component's own header (drivers/QcomBaseband/platform/fuxi/fuxi_tftp.h),
  * which this one is included by: the two halves have to agree on the paths and on the adapter's contract.
  *
- * Nothing here writes anything. A write request from the modem is acknowledged and discarded, which is
- * the reference's own behaviour (umi_modem_mhi.inc:787-796): the carrier configuration is the radio's
- * own, and rewriting it is not this port's to do.
+ * Nothing here writes anything to the modem's storage. A write request from the modem is acknowledged and
+ * taken into memory, for the run, so the modem can read it back; the carrier configuration is the radio's
+ * own, and rewriting it on the radio's storage is not this port's to do. The reference keeps a written
+ * file in memory as well (hakios.mpss.c:4214-4236).
  */
 #ifndef FUXI_MODEM_TFTP_H
 #define FUXI_MODEM_TFTP_H
@@ -27,13 +28,28 @@
 
 /* The prefixes the modem asks its files under, and what each of them maps to in the modem's own volume.
  *
- * The reference serves these four (hakios.mpss.c, tftp_file_of:4264-4281) and maps every one of them to
- * "image/<the rest>" in the modem's FAT partition. The rest of the path is checked for "..", so a request
- * cannot climb out of the directory it names, and that check belongs to the adapter because the adapter is
- * the one that turns a path into a file.
+ * The modem asks for two kinds of path, and the difference is what the path means:
+ *
+ *   "/readonly/..."   a file the modem wants to read. The reference maps it to the read-only modem FAT
+ *                    partition (hakios.mpss.c, tftp_file_of:4264-4281), where "/readonly/firmware/image/X"
+ *                    is "image/X". That mapping is kept here.
+ *
+ *   "/readwrite/..."  a file the modem wants to write. The reference takes it into memory and keeps it
+ *                    for the run (hakios.mpss.c:4214-4236), and serves it back if the modem reads it
+ *                    again. The modem does exactly that here: it writes "/readwrite/mcfg.tmp" and then
+ *                    reads it back, and it writes "/readwrite/server_check.txt" to see whether the host
+ *                    took it.
+ *
+ *   "/only/..."       a file the modem wants to read or write, with no other meaning attached.
  *
  * The volume itself is the modem's own firmware partition: the port already mounts it, read only, for the
- * modem's images and for its service registry's tables (package/FuxiAdspFirmware.c). */
+ * modem's images and for its service registry's tables (package/FuxiAdspFirmware.c).
+ *
+ * The read prefix is the one the reference maps, and it is the only one that names a file on the volume.
+ * The write prefix is served from memory and never reaches the volume: nothing on the modem's storage is
+ * written, and the write that the modem makes of its own carrier configuration is a write into a buffer
+ * that this port holds for the run. That is the reference's own behaviour, and it is the reason the modem
+ * can hand over a file it has generated and then read it back. */
 #define FUXI_TFTP_PREFIX_COUNT 4u
 
 static const char *const fuxi_tftp_prefixes[FUXI_TFTP_PREFIX_COUNT] = {
@@ -65,6 +81,14 @@ typedef uint64_t (*fuxi_tftp_size_fn)(void *context, void *handle);
 typedef void (*fuxi_tftp_close_fn)(void *context, void *handle);
 typedef int (*fuxi_tftp_send_fn)(void *context, uint32_t src_port, uint32_t dst_node, uint32_t dst_port,
                                  const uint8_t *body, uint32_t length);
+/* What a file the modem wrote is kept under, so the modem can read it back. The adapter holds it: the
+   protocol half hands it each block as the block arrives, and the adapter appends. The name is the one the
+   modem used, so the read that follows the write finds the same file.
+ *
+ * The store never reaches the modem's storage. It is memory, for the run, and it goes away when the port
+   does. */
+typedef int (*fuxi_tftp_store_fn)(void *context, const char *name, uint32_t name_length, const void *data,
+                                  uint32_t length);
 
 struct fuxi_tftp_ops {
     fuxi_tftp_open_fn open;
@@ -72,6 +96,7 @@ struct fuxi_tftp_ops {
     fuxi_tftp_size_fn size;
     fuxi_tftp_close_fn close;
     fuxi_tftp_send_fn send;
+    fuxi_tftp_store_fn store;
 };
 
 #endif
