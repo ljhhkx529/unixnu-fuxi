@@ -37,6 +37,7 @@
 #include "FuxiModemAssign.h"
 #include "FuxiModemLowMeta.h"
 #include "FuxiModemRmtfs.h"
+#include "FuxiModemTftp.h"
 #include "FuxiAdspFirmware.h"
 #include "QcomMdt.h"
 #include "QcomQmp.h"
@@ -64,7 +65,9 @@ extern "C" int fuxi_rmtfs_prepare(void);
 extern "C" int fuxi_rmtfs_share(void);
 extern "C" int fuxi_rmtfs_inventory(void);
 extern "C" const struct fuxi_rmtfs_ops *fuxi_rmtfs_ops(void);
+extern "C" const struct fuxi_tftp_ops *fuxi_tftp_ops(void);
 extern "C" void fuxi_rmtfs_counters(uint32_t *out, unsigned count);
+extern "C" void fuxi_tftp_counters(uint32_t *out, unsigned count);
 
 /* What the adapter's link has seen. The struct is the adapter's, but the probe cannot include its
  * header (the component is built separately), so the fields are spelled out here in the same order. */
@@ -108,6 +111,8 @@ struct LinkStatus {
     uint32_t locator_announces, locator_requests, locator_answered;
     /* RMTFS: the modem's remote file system, with the same three counts. */
     uint32_t rmtfs_announces, rmtfs_requests, rmtfs_answered;
+    /* TFTP: the modem's carrier configuration, with the same counts and the reads and the writes. */
+    uint32_t tftp_announces, tftp_requests, tftp_answered, tftp_reads, tftp_writes, tftp_missing;
     char last_unknown[32];
 };
 extern "C" void fuxi_modem_status(LinkStatus *status);
@@ -1374,6 +1379,10 @@ struct LinkConfig {
        spelled out here in the same order. */
     struct fuxi_rmtfs_ops rmtfs_ops;
     void *rmtfs_context;
+    /* TFTP: the board's adapter for the modem's carrier configuration. The struct is the board's own
+       header's, and the probe can include it: the header is in the board's package/ directory. */
+    struct fuxi_tftp_ops tftp_ops;
+    void *tftp_context;
 };
 
 int stepGlink()
@@ -1407,7 +1416,8 @@ int stepAdapter()
 {
     /* The board's adapter for RMTFS: the four files read into memory, and the buffer. */
     const struct fuxi_rmtfs_ops *ops = fuxi_rmtfs_ops();
-    const LinkConfig config = {gOwner.smem_window.va, kSmemSize, kickGlink, nullptr, *ops, nullptr};
+    const struct fuxi_tftp_ops *tftp = fuxi_tftp_ops();
+    const LinkConfig config = {gOwner.smem_window.va, kSmemSize, kickGlink, nullptr, *ops, nullptr, *tftp, nullptr};
     const int rc = fuxi_modem_start(&config);
     if (rc) {
         printf("FUXI_MODEM: the QRTR adapter refused the link (%d)\n", rc);
@@ -1523,6 +1533,15 @@ void serviceLink()
                    "opened %u closed %u, %u reads and %u writes of %u and %u sectors\n",
                    second, status.rmtfs_announces, status.rmtfs_requests, status.rmtfs_answered, rmtfs[0],
                    rmtfs[1], rmtfs[2], rmtfs[3], rmtfs[4], rmtfs[5]);
+            /* TFTP: the same counts for the modem's carrier configuration, and what it read out of the
+             * volume. A request count that stays at zero says the modem never asked for it, which is the
+             * gate this service is behind. */
+            uint32_t tftp[6] = {};
+            fuxi_tftp_counters(tftp, 6);
+            printf("FUXI_MODEM: %u s: the tftp was announced %u times, took %u requests and answered %u; "
+                   "read %u times, %u bytes, refused %u and missing %u\n",
+                   second, status.tftp_announces, status.tftp_requests, status.tftp_answered, tftp[2], tftp[3],
+                   tftp[4], tftp[5]);
             /* The bridge's own report: the QMI services the modem announced, the clients and the queue state. It is
              * the only place that names the service ids, and the service ids are how a client finds the service it
              * wants. Without this call the bridge stays silent and the announced services are never on the record. */
