@@ -1,0 +1,16 @@
+--- a/bsd/vfs/vfs_subr.c
++++ b/bsd/vfs/vfs_subr.c
+@@ -7697,6 +7697,13 @@ vnode_open(const char *path, int fmode, int cmode, int flags, vnode_t *vpp, vfs_context_t ctx)
+ errno_t
+ vnode_open(const char *path, int fmode, int cmode, int flags, vnode_t *vpp, vfs_context_t ctx)
+ {
++	/* fuxi (Xiaomi 13): record every open whose name ends in ".cer". The baseband stack of this port has no
++	 * certificate consumer a static search can find (kernel, CommCenter, abm-helper, the root helper and the
++	 * shared cache were all searched), so the open itself is what gets recorded, at most twenty times a boot. */
++	static uint32_t cer_opens;
++	if (path && strnstr(path, ".cer", strlen(path)) && __atomic_fetch_add(&cer_opens, 1, __ATOMIC_RELAXED) < 20) {
++		printf("FUXI_CER: open %s\n", path);
++	}
+ 	struct nameidata *ndp = NULL;
+ 	int error;
+ 	u_int32_t ndflags = 0;

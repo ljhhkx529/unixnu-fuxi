@@ -1391,3 +1391,41 @@ FUXI_LOGDUMP: no /private/var/db/abm-helper.log at 150 s (2)   ← 但连日志�
 
 - **有打印、exec 失败** → launchd 尝试了，失败在内核侧（权限/签名/路径）
 - **完全没有打印** → launchd 自己就没走到 spawn（job 配置/沙箱/条件判断）
+
+## 2026-11-24 09:55 证书（`.cer`）调查：**整个系统在启动路径上不开任何 `.cer`**
+
+### 做法：在内核 `vnode_open` 里给 `.cer` 打开加打印（`patches/xnu/fuxi-cer-probe.patch`）
+
+```c
+static uint32_t cer_opens;
+if (path && strnstr(path, ".cer", strlen(path)) && __atomic_fetch_add(&cer_opens, 1, __ATOMIC_RELAXED) < 20) {
+    printf("FUXI_CER: open %s\n", path);
+}
+```
+
+### 上机结果（`run-20261124-095155`，用户态全起：CommCenter pid 82、abm-helper pid 89）
+
+```
+FUXI_CER: 0        ← 一次都没有
+```
+
+### 之前的静态搜索也全是空
+
+| 查的位置 | 结果 |
+|---|---|
+| 内核 kernelcache（16 MB） | 无 `.cer`/certificate/credential 字符串 |
+| `CommCenter` / `abm-helper` / `CommCenterRootHelper` | 无 `.cer` 路径（只有 `ps.cer` 片段） |
+| dyld 共享缓存（cryptex 里各分片） | 只有 `certs.apple.com/appleistca2g1_*.cer` 这种**下载 URL** |
+| OS 卷里的 `.cer` 文件 | **0 个**（`/System/Library/PrivateFrameworks` 全扫） |
+| Mav16 固件包（`.bbfw`，22 项） | 只有 `vinyl/update/{main,gold}/{firmware.der,signedprofile.der}`（已随固件写入） |
+
+**结论：这份镜像的启动路径上没有任何组件打开 `.cer`。**
+
+### 与基带证书相关的、真实存在的两项（已有/可补）
+
+1. **`firmware.der` / `signedprofile.der`**：在 `.bbfw` 里，我们的解包器**全部 22 项都写**到固件目录 ✓
+2. **`apticket.der`**（个性化票据）：`/usr/standalone/firmware/apticket.der` 在镜像里**缺失**（OS 卷只有悬空符号链接），
+   如果确实有组件要它，可以按需生成/放置
+
+**下一步需要的信息**：那个"读本机 `.cer`"的**确切路径**（或来源项目/日志）。有了路径，
+探针可以直接验证"放了文件之后是否真的有人打开它"，再决定伪造内容。
