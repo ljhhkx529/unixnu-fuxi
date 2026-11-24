@@ -381,7 +381,7 @@ replace-root-compatible = true
 [adt.root.string]
 # The reference implementation's identity, ported as is: this panel and the iPad layout are the combination
 # it records for the same OS build (a full-screen iPad image, no Home button).
-model = "iPad14,1"
+model = "iPad14,2"
 target-type = "J310"
 # The cellular hardware name. libTelephonyUtil keys the radio module on it, and only the cellular name turns
 # CommCenter's NoBBRadioModule into the Qualcomm branch that starts ABM.
