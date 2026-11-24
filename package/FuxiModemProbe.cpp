@@ -57,6 +57,9 @@ extern "C" unsigned long gPhysBase, gPhysSize;
 /* The component's board adapter, in the QcomBaseband component. The link and the QRTR layer live there; this
  * file only starts the modem and hands the adapter its SMEM window and its doorbell. */
 extern "C" int fuxi_modem_start(const void *config);
+/* Publishes the bridge's IOKit services; called before the link exists, so CommCenter's early radio-module
+ * decision sees them. Idempotent. */
+extern "C" void fuxi_modem_publish(void);
 extern "C" void fuxi_modem_poll(void);
 extern "C" void fuxi_modem_report(unsigned second);
 /* The board's RMTFS adapter: the four files, the buffer, and the callbacks the component's protocol
@@ -2658,6 +2661,10 @@ void ownerThread(void *, wait_result_t)
     releaseImage(gOwner.dtb);
     rc = stepGlink();
     if (rc) goto failed;
+    /* CommCenter must find the baseband services before it decides its radio module; the link is not up yet, so
+     * the bridge's QMI queue holds the first requests until it is. */
+    fuxi_modem_publish();
+    printf("FUXI_MODEM: the baseband bridge is published before the link\n");
     rc = stepAdapter();
     if (rc) goto failed;
     /* The link has to come up before the bring-up is over: the modem opens the IPCRTR channel into the
