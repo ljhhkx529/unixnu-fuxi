@@ -144,6 +144,24 @@ constexpr uint32_t kIpccSize = 0x1000u;
  * aoss_base is the same value, and the ADSP probe already uses it). */
 constexpr uint64_t kAossBase = 0x00c300000ull;
 constexpr uint32_t kAossSize = 0x400u;
+/* From the device tree and the two driver tables: fuxi-live.dts:29416 (clocks = <&rpmhcc 12>),
+ * dt-bindings/clock/qcom,rpmh.h:21 (RPMH_IPA_CLK 12), clk-rpmh.c:412 (DEFINE_CLK_RPMH_BCM(ipa, "IP0")) and
+ * tcs.h:68-79 (BCM_TCS_CMD). */
+/* The IPA firmware's reserved region: the device tree's ipa_fw_region@9b080000 of 0x10000 (the same region the
+ * kernel side maps to watch for the image). */
+constexpr uint64_t kIpaFwBase = 0x9b080000ull;
+constexpr uint64_t kIpaFwBytes = 0x00010000ull;
+constexpr const char *kIpaClockResource = "IP0";
+constexpr uint32_t kIpaClockEnable = 0x60000001u;
+/* The two Bus Clock Manager resources the IPA paths land on, from drivers/interconnect/qcom/sm8550.c:
+ *   bcm_cn0.name = "CN0" lists qhs_ipa and qsm_cfg -> the "config" path (ipa_data-v5.5.c:462-466)
+ *   bcm_mc0.name = "MC0" lists ebi              -> the "memory" path (:456-460)
+ * Both are keepalive (sm8550.c:1080, :1132) and bcm-voter.c:107-113 votes 1 on each when nothing else asks for
+ * bandwidth: the lowest request there is, and it still opens the path. */
+constexpr const char *kIpaConfigBcm = "CN0";
+constexpr const char *kIpaMemoryBcm = "MC0";
+constexpr uint32_t kIpaBcmKeepalive = 0x60004001u;   /* BCM_TCS_CMD(1, 1, 1, 1) */
+/* The IPA window constants are gone with the read: see the note in mode 18. */
 constexpr uint64_t kRscBase = 0x17a20000ull;
 constexpr uint32_t kRscSize = 0x10000u;
 constexpr uint32_t kRscTcsOffset = 0xd00u;
@@ -236,9 +254,12 @@ struct Owner {
     QcomQmp qmp;
     QcomRscLayout layout;
     Image dtb, modem;
+    /* The IPA's own firmware: the AP loads it and the secure world releases the block with it. */
+    Image ipa;
 
     uint32_t pending;
     uint32_t rsc_done;
+    uint32_t ipa_clock_voted;
     uint32_t ipcc_irqs, rsc_irqs, smp2p_irqs, glink_irqs, aop_irqs;
     uint32_t ipcc_irq_errors;
     uint32_t stage;
@@ -834,6 +855,66 @@ void shutdownModem(bool dtb, bool modem)
     }
 }
 
+
+bool readCmdDb(uint8_t *copy);
+
+/* The whole command database, entry by entry: the resource name, the RPMh address the vote goes to, and the levels
+ * the resource takes (its aux data). Read only: it maps the database, copies it and prints. It is here because the
+ * IPA's clock and its three interconnect paths are voted through this table and their names have to be read off the
+ * board rather than guessed. */
+int dumpCmdDb()
+{
+    struct CmdDbCopy {
+        uint8_t *bytes;
+        uint32_t bytes_size;
+        explicit CmdDbCopy(uint32_t size) : bytes(static_cast<uint8_t *>(IOMallocData(size))), bytes_size(size) {}
+        ~CmdDbCopy() { if (bytes) IOFreeData(bytes, bytes_size); }
+    } copy(kCmdDbSize);
+    if (!copy.bytes || !readCmdDb(copy.bytes)) {
+        printf("FUXI_MODEM: the command database cannot be read\n");
+        return -1;
+    }
+    const uint8_t *db = copy.bytes;
+    const uint32_t magic = (uint32_t)db[4] | (uint32_t)db[5] << 8 | (uint32_t)db[6] << 16 | (uint32_t)db[7] << 24;
+    printf("FUXI_MODEM: the command database magic %#010x, %u bytes at %#llx\n", magic, kCmdDbSize, kCmdDbBase);
+    if (magic != 0x0c0330dbu) {
+        printf("FUXI_MODEM: not a command database\n");
+        return -2;
+    }
+    unsigned total = 0;
+    for (unsigned slave_index = 0; slave_index < 8; ++slave_index) {
+        const uint8_t *slave = db + 8 + 16 * slave_index;
+        const unsigned id = (unsigned)slave[0] | (unsigned)slave[1] << 8;
+        if (!id) break;
+        const unsigned heads = 144u + ((unsigned)slave[2] | (unsigned)slave[3] << 8);
+        const unsigned data = 144u + ((unsigned)slave[4] | (unsigned)slave[5] << 8);
+        const unsigned count = (unsigned)slave[6] | (unsigned)slave[7] << 8;
+        printf("FUXI_MODEM: cmd-db slave %u (id %u) holds %u entries\n", slave_index, id, count);
+        for (unsigned e = 0; e < count; ++e) {
+            const uint8_t *entry = db + heads + 24u * e;
+            char name[9];
+            for (unsigned i = 0; i < 8; ++i) {
+                const uint8_t c = entry[i];
+                name[i] = (c >= 32u && c < 127u) ? static_cast<char>(c) : '.';
+            }
+            name[8] = 0;
+            const uint32_t address = (uint32_t)entry[16] | (uint32_t)entry[17] << 8 | (uint32_t)entry[18] << 16 |
+                                     (uint32_t)entry[19] << 24;
+            const unsigned aux_length = (unsigned)entry[20] | (unsigned)entry[21] << 8;
+            const unsigned aux_offset = (unsigned)entry[22] | (unsigned)entry[23] << 8;
+            printf("FUXI_MODEM: cmd-db %-8s address %#010x levels", name, address);
+            for (unsigned l = 0; l + 1 < aux_length && l < 16u; l += 2) {
+                const unsigned level = (unsigned)db[data + aux_offset + l] | (unsigned)db[data + aux_offset + l + 1] << 8;
+                printf(" %u", level);
+            }
+            printf("\n");
+            ++total;
+        }
+    }
+    printf("FUXI_MODEM: the command database holds %u entries\n", total);
+    return 0;
+}
+
 /* ---- the RPMh proxy votes ---- */
 
 uint32_t waitEvents(uint32_t ms);
@@ -921,7 +1002,60 @@ int voteRails()
     return 0;
 }
 
-/* ---- the events ---- */
+
+/* The IPA's core clock, and the read that was hanging before it.
+ *
+ * The device tree gives the IPA node clocks = <&rpmhcc 12> (fuxi-live.dts:29416; the mainline DTB agrees: the
+ * provider is qcom,kalama-rpmh-clk, index 12). Index 12 of that controller is RPMH_IPA_CLK
+ * (dt-bindings/clock/qcom,rpmh.h:21), and clk-rpmh.c:412 defines it as DEFINE_CLK_RPMH_BCM(ipa, "IP0") -- so the
+ * vote goes to the command database's IP0 resource, which this board has at 0x50040.
+ *
+ * A BCM clock votes a command word and not a level: clk-rpmh.c:271 sends BCM_TCS_CMD(1, enable, 0, 1), and with
+ * tcs.h:68-79 that is commit bit 30 | valid bit 29 | vote_y 1 = 0x60000001.
+ *
+ * Nothing here is guessed: each of those four facts is a line in a file on this machine. */
+int voteIpaClock()
+{
+    if (!gOwner.rsc_window.va) return -1;
+    struct CmdDbCopy {
+        uint8_t *bytes;
+        uint32_t bytes_size;
+        explicit CmdDbCopy(uint32_t size) : bytes(static_cast<uint8_t *>(IOMallocData(size))), bytes_size(size) {}
+        ~CmdDbCopy() { if (bytes) IOFreeData(bytes, bytes_size); }
+    } copy(kCmdDbSize);
+    if (!copy.bytes || !readCmdDb(copy.bytes)) return -2;
+    QcomRpmhResource ipa = {}, config = {}, memory = {};
+    if (qcom_cmd_db_find(copy.bytes, kCmdDbSize, kIpaClockResource, &ipa) ||
+        qcom_cmd_db_find(copy.bytes, kCmdDbSize, kIpaConfigBcm, &config) ||
+        qcom_cmd_db_find(copy.bytes, kCmdDbSize, kIpaMemoryBcm, &memory)) {
+        printf("FUXI_MODEM: the ipa power resources are not all in this board command database\n");
+        return -3;
+    }
+    printf("FUXI_MODEM: the ipa power: clock %s at %#010x, paths %s at %#010x and %s at %#010x\n",
+           kIpaClockResource, ipa.address, kIpaConfigBcm, config.address, kIpaMemoryBcm, memory.address);
+    /* The reference order is the interconnects first, the clock second (ipa_power.c:100-104), and all three fit in
+       one TCS (qcom_rpmh_active_request takes up to four commands). */
+    const uint32_t addresses[3] = {config.address, memory.address, ipa.address};
+    const uint32_t values[3] = {kIpaBcmKeepalive, kIpaBcmKeepalive, kIpaClockEnable};
+    QcomRpmhWrite writes[16];
+    const unsigned written = qcom_rpmh_active_request(&gOwner.layout, kRscTcs, addresses, values, 3, writes, 16);
+    if (!written) return -4;
+    const uint32_t irq_enable = rd(gOwner.rsc_window, kRscTcsOffset) | (1u << kRscTcs);
+    wr(gOwner.rsc_window, kRscTcsOffset, irq_enable);
+    __atomic_store_n(&gOwner.rsc_done, 0, __ATOMIC_RELEASE);
+    for (unsigned i = 0; i < written; ++i) wr(gOwner.rsc_window, kRscTcsOffset + writes[i].offset, writes[i].value);
+    uint64_t deadline = 0;
+    clock_interval_to_deadline(100, kMillisecondScale, &deadline);
+    while (!(__atomic_load_n(&gOwner.rsc_done, __ATOMIC_ACQUIRE) & (1u << kRscTcs)) && mach_absolute_time() < deadline)
+        serviceEvents(waitEvents(20));
+    bool done = (__atomic_load_n(&gOwner.rsc_done, __ATOMIC_ACQUIRE) & (1u << kRscTcs)) != 0;
+    if (!done && (rd(gOwner.rsc_window, kRscTcsOffset + gOwner.layout.irq_status) & (1u << kRscTcs))) done = true;
+    const unsigned finish = qcom_rpmh_finish(&gOwner.layout, kRscTcs, writes, 16);
+    for (unsigned i = 0; i < finish; ++i) wr(gOwner.rsc_window, kRscTcsOffset + writes[i].offset, writes[i].value);
+    gOwner.ipa_clock_voted = done ? 1u : 2u;
+    printf("FUXI_MODEM: the ipa power vote %s (interconnects %s and %s, clock %s)\n", done ? "completed" : "did NOT complete", kIpaConfigBcm, kIpaMemoryBcm, kIpaClockResource);
+    return done ? 0 : -5;
+}
 
 /* Waits for the owner to be woken. The pending bits are taken out of the word, so a bit that arrives during the
  * service is not lost. The timeout is the upper bound on the wait, not a delay: the interrupt handlers wake the
@@ -1041,6 +1175,8 @@ int stepMap()
     return 0;
 }
 
+int stepIpaFirmware();   /* defined with the other PAS steps, below */
+
 int stepRails()
 {
     /* The RSC's own register layout: the id register says which major version it is, and the version moved the
@@ -1056,6 +1192,22 @@ int stepRails()
         printf("FUXI_MODEM: the proxy rails could not be voted (%d)\n", rc);
         return rc;
     }
+    /* The IPA clock, and nothing after it.
+       2026-11-23 01:11: with the vote completed, the very next read (SHARED_MEM_SIZE at 0x54) still wedged the probe
+       thread: the log stops at "step: the proxy rails" and no later step runs, while the rest of the system boots.
+       So the clock is not the only thing gating the block on this SoC -- a power domain or a GDSC sits in front of
+       it and does not show up in the device tree as a clock consumer. The vote is kept because it completed and is
+       harmless; the read waits for that power domain to be found. */
+    const int clock_rc = voteIpaClock();
+    if (clock_rc) printf("FUXI_MODEM: the ipa clock vote did not complete (%d)\n", clock_rc);
+    /* The firmware step is behind its own boot argument. It works -- the secure world answers 0/0 on all three
+       steps and the block is released -- but the image that runs it did not reach the adapter handover, so it stays
+       off the normal path until that is understood. The votes above are not gated: they are harmless and proven. */
+    {
+        uint32_t firmware = 0;
+        if (PE_parse_boot_argn("sheng-ipa-fw", &firmware, sizeof firmware) && firmware) (void)stepIpaFirmware();
+    }
+
     setStage(kStRails);
     return 0;
 }
@@ -1231,6 +1383,50 @@ int stepPasStart()
     return 0;
 }
 
+/* The IPA's firmware: the third image the AP hands the secure world. Nothing of the IPA answers the CPU until
+ * this has been authenticated and released, which is what the aborts of 2026-11-23 were measuring.
+ *
+ * The four facts it rests on, each a line on this machine: the device tree gives the IPA its clock and its
+ * interconnects and no power domain at all (fuxi-live.dts:29411-29416); the firmware node is a PIL node with
+ * qcom,pil-force-shutdown and pas id 0x0f (:29394-29400); mainline loads the image from the AP because the node
+ * names neither modem-init nor qcom,gsi-loader (ipa_main.c:737-741), and its probe returned -2 when the file was
+ * missing (docs/目标-M5.md:404); and the region the images land in is all zeros on this board today, which is how
+ * the absence of that load was visible at all. */
+int stepIpaFirmware()
+{
+    const uint32_t pas = fuxi_modem_pas_id(FuxiModemPasImageIpa);
+    printf("FUXI_MODEM: step: the ipa's firmware\n");
+    /* qcom,pil-force-shutdown: the vendor driver forces the PIL down before it loads, so a stale image cannot
+       survive a reboot of the IPA. The call is harmless when nothing is running. */
+    (void)secureCall(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), pas, 0, 0, 0);
+    int rc = openImage(gOwner.ipa, "modem:ipa_fws");
+    if (rc) {
+        printf("FUXI_MODEM: the ipa firmware is not there (%d)\n", rc);
+        return rc;
+    }
+    printf("FUXI_MODEM: step: the ipa's metadata\n");
+    rc = authenticateHeader(gOwner.ipa, pas, kIpaFwBase, FuxiModemLowMetaIpa);
+    if (!rc) {
+        printf("FUXI_MODEM: step: the ipa's segments\n");
+        rc = loadSegments(gOwner.ipa, kIpaFwBase, kIpaFwBytes);
+    }
+    if (rc) {
+        printf("FUXI_MODEM: the ipa firmware was refused (%d)\n", rc);
+        return rc;
+    }
+    printf("FUXI_MODEM: step: the ipa's reset\n");
+    const ScmResult reset = secureCall(fuxi_modem_pas_command(fuxi_modem_pas_reset_step),
+                                       fuxi_modem_pas_arginfo(fuxi_modem_pas_reset_step), pas, 0, 0, 0);
+    printf("FUXI_MODEM: pas %u step %u answers %u/%u\n", pas, fuxi_modem_pas_reset_step,
+           static_cast<uint32_t>(reset.x0), static_cast<uint32_t>(reset.x1));
+    if (!fuxi_modem_scm_ok(reset.x0, reset.x1)) {
+        printf("FUXI_MODEM: the ipa was not released (scm %u/%u)\n", gOwner.scm_x0, gOwner.scm_x1);
+        return -3;
+    }
+    gOwner.ipa.reset = true;
+    printf("FUXI_MODEM: the ipa firmware is loaded and the block released\n");
+    return 0;
+}
 /* The AOP mailbox: the handshake, then the message that releases the modem.
  *
  * The handshake and the message are two steps here, because Linux's order puts the message
@@ -2602,23 +2798,56 @@ int inventoryFirmware()
 {
     /* The root of the volume first, so the partition itself is proven, then the firmware's directory.
      * The modem's own images live in a directory of their own, so that one is listed too. */
-    const char *const directories[] = {"/", "/image", "/image/modem_pr"};
+    const char *const directories[] = {"/", "/image", "/image/modem_pr",
+        /* The carrier configuration tree: the modem asks for files below these, and one of them
+         * (mcfg_ddr/rf/rf_static_834_00_00.mbn) is the only request the port has not been able to open. */
+        "/image/modem_pr/mcfg", "/image/modem_pr/mcfg/configs",
+        /* The two directories the modem reads its MBN lists from: its own strings name mbn_hw.txt and mbn_sw.txt
+           right after the .dig files it already asked for and got. */
+        "/image/modem_pr/mcfg/configs/mcfg_hw", "/image/modem_pr/mcfg/configs/mcfg_sw",
+        "/image/modem_pr/mcfg/configs/mcfg_ddr", "/image/modem_pr/mcfg/configs/mcfg_ddr/rf"};
     unsigned count = 0;
-    for (unsigned d = 0; d < 3; ++d) {
+    for (unsigned d = 0; d < sizeof directories / sizeof directories[0]; ++d) {
         for (unsigned index = 0; index < 1024; ++index) {
             char name[256];
             uint64_t size = 0;
             int is_directory = 0;
             const int rc = fuxi_adsp_fw_list(directories[d], index, name, sizeof name, &size, &is_directory);
             if (rc) {
+                /* A directory the tree does not carry is not the end of the inventory: mcfg_ddr is absent on this
+                   board and the listing of it is exactly what says so. Keeping the walk going is what lets the
+                   second slot be listed too. */
                 printf("FUXI_MODEM: the listing of %s failed (%d)\n", directories[d], rc);
-                return rc;
+                continue;
             }
             if (!name[0]) break;
             /* The names are the whole point, so they go out one line at a time, and the counts into the
              * stats array for the channel to read back. */
             printf("FUXI_MODEM: %s/%s %llu%s\n", directories[d], name, size, is_directory ? " (directory)" : "");
             ++count;
+        }
+    }
+    /* The same carrier configuration directory on the other slot: the port serves modem_a's volume, and the
+     * one file the modem asks for and cannot get (mcfg_ddr/rf/rf_static_834_00_00.mbn) has to be looked for
+     * somewhere before it is called absent. */
+    {
+        static const char *const other[] = {
+            "/image/modem_pr",
+            "/image/modem_pr/mcfg/configs",
+            /* The one file the modem asks for and cannot get from modem_a: if the other slot carries a newer or older
+               copy of the tree, it is here. */
+            "/image/modem_pr/mcfg/configs/mcfg_ddr",
+            "/image/modem_pr/mcfg/configs/mcfg_ddr/rf"};
+        for (unsigned o = 0; o < sizeof other / sizeof other[0]; ++o) {
+            for (unsigned index = 0; index < 128; ++index) {
+                char name[256];
+                uint64_t size = 0;
+                int is_directory = 0;
+                const int rc = fuxi_adsp_fw_list_slot("modem_b", other[o], index, name, sizeof name, &size, &is_directory);
+                if (rc) { printf("FUXI_MODEM: modem_b:%s failed (%d)\n", other[o], rc); break; }
+                if (!name[0]) break;
+                printf("FUXI_MODEM: modem_b:%s/%s %llu%s\n", other[o], name, size, is_directory ? " (directory)" : "");
+            }
         }
     }
     native_fuxi_modem_stats[10] = static_cast<int32_t>(count);
@@ -2796,6 +3025,25 @@ extern "C" void native_fuxi_modem_probe(void)
     /* Mode 16 inventories the four partitions the modem asks for, read only. It starts no modem and
      * touches no register: it only says which of them this board carries and how big they are, which
      * is the fact the RMTFS service needs before anything else. */
+    /* Mode 17 reads the command database out, entry by entry. Read only: it maps the database and prints, it
+     * starts nothing and touches no register. The IPA\'s clock and its three interconnect paths are voted through it. */
+    if (mode == 17) {
+        (void)dumpCmdDb();
+        return;
+    }
+    /* Mode 18 votes the IPA clock and then reads its registers. It exists as a separate mode precisely because the
+       read is the risky half: it can be run alone, and if it wedges, nothing else in the bring-up has been disturbed. */
+    /* Mode 18 is where the IPA register read used to live. It no longer reads: every attempt ended in a
+       synchronous external abort (esr 0x96000010, far = the window VA + 0x54) with the clock voted, both
+       interconnects voted, the window mapped, and the firmware loaded and released by the secure world through
+       PAS id 0x0f. The block does not answer this processor at all, so the probe that reads it is not "risky" --
+       it is ineffective, and an ineffective probe that takes the kernel down is worse than none. The mode is kept
+       as the record of that, and it only says so. */
+    if (mode == 18) {
+        printf("FUXI_MODEM: the ipa register read is disabled: the block returns a synchronous external abort to this\n");
+        printf("FUXI_MODEM: processor with the clock, both interconnects and the firmware all in place (2026-11-23)\n");
+        return;
+    }
     if (mode == 16) {
         (void)fuxi_rmtfs_inventory();
         return;

@@ -26,10 +26,15 @@
  * at the last moment: it goes into the copy, and the copy is not what the modem will find next boot.
  */
 #include <IOKit/IOLib.h>
+#include <IOKit/IODeviceTreeSupport.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IODeviceMemory.h>
 #include <sys/errno.h>
+#include <sys/fcntl.h>
+#include <sys/uio.h>
+#include <sys/vnode.h>
+#include <sys/vnode_if.h>
 #include <string.h>
 
 #include "FuxiModemRmtfs.h"
@@ -63,6 +68,11 @@ struct File {
 };
 
 File gFiles[FUXI_RMTFS_FILES];
+/* Which files the modem has written since the last flush. The writes go into the copy in memory only, so this is
+   what carries them to the Data volume: without it a reboot hands the modem the partitions as they were flashed,
+   which is the one place this differs from Linux, where rmtfs writes the partitions themselves. */
+static uint8_t gDirty[FUXI_RMTFS_FILES];
+static uint32_t gPersisted, gPersistFailed, gPersistError;
 
 /* The buffer: its mapping and its address. The address is what the modem is told, and the mapping is
    what this side reads and writes it through. */
@@ -227,6 +237,7 @@ int rmtfsWrite(void *context, uint32_t number, uint32_t sector, uint32_t buffer_
     /* The write goes into the copy in memory and no further: the storage is not written, so the
        calibration and the IMEI cannot be damaged by the modem. */
     for (uint32_t i = 0; i < FUXI_RMTFS_SECTOR_SIZE; ++i) file.data[at + i] = gBuffer[window + i];
+    gDirty[number - 1] = 1;
     gWrites++;
     gSectorsWritten++;
     return 0;
@@ -343,6 +354,21 @@ extern "C" int fuxi_rmtfs_share(void)
 }
 
 /* The adapter's callbacks, for the component's protocol half. */
+
+/* The boot manifest hash the port publishes on IORegistry /chosen during its SystemOS mount. The FDT does not
+ * carry it (setProperty goes to the IORegistry), so the firmware writer asks here. */
+extern "C" int fuxi_boot_manifest_hash(unsigned char *out, unsigned size)
+{
+    if (!out || size < 48) return 0;
+    IORegistryEntry *chosen = IORegistryEntry::fromPath("/chosen", gIODTPlane);
+    if (!chosen) return 0;
+    OSData *value = OSDynamicCast(OSData, chosen->getProperty("boot-manifest-hash"));
+    const bool ok = value && value->getLength() == 48;
+    if (ok) memcpy(out, value->getBytesNoCopy(), 48);
+    chosen->release();
+    return ok ? 1 : 0;
+}
+
 extern "C" const struct fuxi_rmtfs_ops *fuxi_rmtfs_ops(void)
 {
     static const struct fuxi_rmtfs_ops ops = {
@@ -351,6 +377,47 @@ extern "C" const struct fuxi_rmtfs_ops *fuxi_rmtfs_ops(void)
     return &ops;
 }
 
+/* Writes the files the modem has changed to the Data volume, one call at a time. The parent directory is the one
+ * the boot already uses (/private/var/db), because creating one needs a process and this thread has none. A
+ * failure is counted and not fatal: the copy in memory is what serves the modem for the rest of the boot. */
+extern "C" void fuxi_rmtfs_flush(void)
+{
+    for (unsigned i = 0; i < FUXI_RMTFS_FILES; ++i) {
+        File &file = gFiles[i];
+        if (!gDirty[i] || !file.present || !file.data || !file.size) continue;
+        gDirty[i] = 0;
+        char path[96];
+        snprintf(path, sizeof path, "/private/var/db/coachz-rmtfs-%s", fuxi_rmtfs_files[i].partition);
+        vfs_context_t ctx = vfs_context_current();
+        vnode_t vp = NULLVP;
+        int error = vnode_open(path, O_CREAT | O_TRUNC | FWRITE | O_NOFOLLOW, 0644, 0, &vp, ctx);
+        if (error) {
+            gPersistFailed++;
+            gPersistError = error;
+            printf("FUXI_RMTFS: %s: the copy could not be written to the Data volume (%d)\n",
+                   fuxi_rmtfs_files[i].partition, error);
+            continue;
+        }
+        uint64_t at = 0;
+        while (at < file.size) {
+            const uint32_t piece = (file.size - at) > (1u << 20) ? (1u << 20) : static_cast<uint32_t>(file.size - at);
+            int resid = 0;
+            const int failed = vn_rdwr(UIO_WRITE, vp, reinterpret_cast<caddr_t>(file.data + at), piece, at,
+                                       UIO_SYSSPACE, 0, vfs_context_ucred(ctx), &resid, NULL);
+            if (failed || resid) { gPersistFailed++; gPersistError = failed ? failed : EIO; break; }
+            at += piece;
+        }
+        vnode_close(vp, FWRITE, ctx);
+        if (at == file.size) {
+            gPersisted++;
+            printf("FUXI_RMTFS: %s: %llu bytes of the modem's writes saved to %s\n", fuxi_rmtfs_files[i].partition,
+                   static_cast<unsigned long long>(at), path);
+        } else {
+            printf("FUXI_RMTFS: %s: only %llu of %llu bytes were written (%d)\n", fuxi_rmtfs_files[i].partition,
+                   static_cast<unsigned long long>(at), static_cast<unsigned long long>(file.size), gPersistError);
+        }
+    }
+}
 /* The counters, for the board's report. */
 extern "C" void fuxi_rmtfs_counters(uint32_t *out, unsigned count)
 {

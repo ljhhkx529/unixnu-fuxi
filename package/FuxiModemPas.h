@@ -36,13 +36,19 @@ enum {
 enum {
     FuxiModemPasImageDtb = 0,
     FuxiModemPasImageModem = 1,
-    FuxiModemPasImageCount = 2
+    FuxiModemPasImageIpa = 2,
+    FuxiModemPasImageCount = 3
 };
 
 /* The PAS id of each image. These come from Linux drivers/remoteproc/qcom_q6v5_pas.c, the sm8550_mpss_resource
    entry: the modem image is PAS id 4 and the modem device tree blob is PAS id 0x26 (38). */
 #define FUXI_MODEM_PAS 4u
 #define FUXI_MODEM_DTB_PAS 0x26u
+/* The IPA's own firmware. The device tree names it as a PIL node with this pas id and qcom,pil-force-shutdown
+   (fuxi-live.dts:29394-29400). Mainline's IPA loader defaults to SELF when the node names neither modem-init
+   nor qcom,gsi-loader (ipa_main.c:737-741) and fuxi names neither, which is why its probe failed with -2 while
+   ipa_fws.mdt was missing (docs/目标-M5.md:404). */
+#define FUXI_IPA_PAS 0x0fu
 
 /* The steps of one image, in order. A relocatable image gets MEM_SETUP between INIT_IMAGE and AUTH_AND_RESET;
    a fixed-address one does not. The count is returned so the caller can check what it got. */
@@ -102,7 +108,8 @@ static inline uint32_t fuxi_modem_pas_arginfo(unsigned step)
 /* The PAS id of an image. */
 static inline uint32_t fuxi_modem_pas_id(unsigned image)
 {
-    return image == FuxiModemPasImageDtb ? FUXI_MODEM_DTB_PAS : FUXI_MODEM_PAS;
+    if (image == FuxiModemPasImageDtb) return FUXI_MODEM_DTB_PAS;
+    return image == FuxiModemPasImageIpa ? FUXI_IPA_PAS : FUXI_MODEM_PAS;
 }
 
 /* The secure world says success with x0 == 0 and x1 == 0, and nothing else. The positive cookies the first ADSP

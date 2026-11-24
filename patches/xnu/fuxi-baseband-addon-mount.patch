@@ -1,0 +1,70 @@
+The cellular bridge's CommCenter over the sealed one.
+
+The OS image is the Wi-Fi iPad (J120) build, whose CommCenter runs NoBBRadioModule and never drives a
+baseband; the compatibility copy (tools/coachz_cellular_compat.py --commcenter, carried in the GPU addon as
+baseband/CommCenter) replaces it, bindfs-mounted read-only and union over the CoreTelephony support directory
+so the rest of that directory stays visible. Same shape as fuxi-audio-addon-mount.patch: one more stage/status
+pair, one more mount, and the union is verified the same way.
+
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7214,3 +7214,13 @@ volatile int native_gpu_addon4_stage = 0;
+ volatile int native_gpu_addon4_stage = 0;
+ volatile int native_gpu_addon4_status = -1;
++volatile int native_gpu_addon5_stage = 0;
++volatile int native_gpu_addon5_status = -1;
++volatile int native_gpu_addon6_stage = 0;
++volatile int native_gpu_addon6_status = -1;
++volatile int native_gpu_addon7_stage = 0;
++volatile int native_gpu_addon7_status = -1;
++volatile int native_gpu_addon8_stage = 0;
++volatile int native_gpu_addon8_status = -1;
++volatile int native_gpu_addon9_stage = 0;
++volatile int native_gpu_addon9_status = -1;
+ static void
+@@ -7676,2 +7678,44 @@ native_gpu_addon_prepare(proc_t p, user_addr_t scratch)
+ 	    &native_gpu_addon4_stage, &native_gpu_addon4_status);
++	/* Before the unions: the firmware the manifest-mounted ABM reads has to exist when the union is made. */
++	{extern void sheng_boot_baseband_firmware(void *, uint64_t);sheng_boot_baseband_firmware(p, scratch);}
++	/* The cellular bridge's CommCenter over the sealed one (this directory is where CoreTelephony keeps it). */
++	static const char bb_source[] = "/private/var/ngpu/baseband", bb_point[] = "/System/Library/Frameworks/CoreTelephony.framework/Support";
++	native_gpu_addon_mount(p, scratch, 0xb00, bb_source, sizeof(bb_source), bb_point, sizeof(bb_point),
++	    "/System/Library/Frameworks/CoreTelephony.framework/Support/CommCenter",
++	    "/System/Library/Frameworks/CoreTelephony.framework/Support/CommCenter",
++	    &native_gpu_addon5_stage, &native_gpu_addon5_status);
++	/* Our own launchd job. /Library/LaunchDaemons is part of the sealed root, so the directory the addon wrote on
++	 * Data is union-mounted over it: launchd scans it at boot, and a job there needs neither the sealed boot manifest
++	 * nor its signature. The union keeps the sealed factory job visible next to ours. */
++	static const char jobs_source[] = "/private/var/ngpu/daemons", jobs_point[] = "/Library/LaunchDaemons";
++	native_gpu_addon_mount(p, scratch, 0xc00, jobs_source, sizeof(jobs_source), jobs_point, sizeof(jobs_point),
++	    "/Library/LaunchDaemons/com.apple.factory.NFQRCoded.plist",
++	    "/Library/LaunchDaemons/org.unixnu.fuxi.logdump.plist",
++	    &native_gpu_addon6_stage, &native_gpu_addon6_status);
++	/* The boot manifest launchd itself reads. Ours carries the cellular CommCenter without its device-tree
++	 * condition (this board has no /baseband node) and one job of our own. It is signed detached, and the
++	 * CodeDirectory that signature carries is in the owner trust module: launchd_cache_loader asks AMFI
++	 * about exactly that hash before it maps the file. */
++	static const char xpc_source[] = "/private/var/ngpu/owner-apps/xpc", xpc_point[] = "/System/Library/xpc";
++	native_gpu_addon_mount(p, scratch, 0xd00, xpc_source, sizeof(xpc_source), xpc_point, sizeof(xpc_point),
++	    "/System/Library/xpc/extensions.plist", "/System/Library/xpc/launchd.plist.sig",
++	    &native_gpu_addon7_stage, &native_gpu_addon7_status);
++	/* The firmware: our own job writes both trees on Data in the boot path; this union shows the standalone
++	 * one, and the preboot path is the real one (no union needed, and a union there would sit on top of the
++	 * SystemOS cache mount). */
++	static const char fw_source[] = "/private/var/coachz/baseband/standalone", fw_point[] = "/usr/standalone/firmware";
++	native_gpu_addon_mount(p, scratch, 0xe00, fw_source, sizeof(fw_source), fw_point, sizeof(fw_point),
++	    "/usr/standalone/firmware/SLAM", "/usr/standalone/firmware/Baseband/Mav16/Info.plist",
++	    &native_gpu_addon8_stage, &native_gpu_addon8_status);
++	/* The personalized path ABM reads first: our tree on Data, named after the port's own boot manifest hash,
++	 * union-mounted over /private/preboot so the sealed preboot stays visible underneath. */
++	static const char pb_source[] = "/private/var/coachz/baseband/preboot", pb_point[] = "/private/preboot";
++	native_gpu_addon_mount(p, scratch, 0x300, pb_source, sizeof(pb_source), pb_point, sizeof(pb_point),
++	    pb_point, pb_point, &native_gpu_addon9_stage, &native_gpu_addon9_status);
++	printf("FUXI addon mounts: commcenter %d/%d, jobs %d/%d, manifest %d/%d, firmware %d/%d, preboot %d/%d\n",
++	    (int)native_gpu_addon5_stage, (int)native_gpu_addon5_status,
++	    (int)native_gpu_addon6_stage, (int)native_gpu_addon6_status,
++	    (int)native_gpu_addon7_stage, (int)native_gpu_addon7_status,
++	    (int)native_gpu_addon8_stage, (int)native_gpu_addon8_status,
++	    (int)native_gpu_addon9_stage, (int)native_gpu_addon9_status);
+ 	native_cryptex_os_view(p, scratch);

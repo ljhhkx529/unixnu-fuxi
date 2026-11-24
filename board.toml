@@ -239,6 +239,8 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                # and answered over the same link. Mode 16 is the read-only inventory of the four
                # partitions, which starts no modem and touches no register.
                "fuxi-modem=15",
+               "sheng-no-lc=1",
+               "sheng-logdump=1",
                "fgraph=6",
                # Content follows unixnu-fuxi-old one switch at a time: sheng-aks brings up Apple
                # KeyStore, which AMFI consults before it accepts the adhoc-signed System volume.
@@ -336,10 +338,12 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
                # Jobs that cannot run here, with unixnu-fuxi-old s list. liveactivitiesd is the one that
                # matters for rendering: its SessionCore crashes with SIGTRAP in SessionSyncEngine's Swift
                # copy path about five seconds before the render server stops, and disabling it restores
-               # the render loop (BUILD-PROGRESS.md, the single-variable run). The other four need hardware
-               # this board has no driver for: a SIM and CommCenter, Bluetooth, and the identity/location
-               # services that depend on them.
-               "sheng-disable-jobs=com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.bluetoothd,com.apple.liveactivitiesd"]
+               # the render loop (BUILD-PROGRESS.md, the single-variable run). Bluetooth, and the identity
+               # and location services that depend on it, still need hardware this board has no driver for.
+               # CommCenter is no longer here: the baseband reaches QRTR service 4096 and a card status, and
+               # it is the only thing that makes cellular appear in Settings, so it is enabled to see whether
+               # it starts at all on a machine whose modem stack is 14 services and not 43.
+               "sheng-disable-jobs=com.apple.identityservicesd,com.apple.locationd,com.apple.bluetoothd,com.apple.liveactivitiesd"]
 # Signed-text fixups (from unixnu-fuxi-old board.toml), travelled in /chosen/text-fixups.
 text_fixups = ["BTAudioHALPlugin,38bec,ffc300d1f44f01a9,000080d2c0035fd6"]
 
@@ -366,35 +370,38 @@ persistent_data = true
 # Center, the springboard's own layout), and the screen type follows the
 # logical mode below. The target-type and the /product values are the phone
 # ones; the security status below is the board's own and stays as it was.
-[adt.root.string]
-model = "iPhone15,2"
-target-type = "D72"
-
-# The product node AppleImage4 requires. UniXNU-sheng puts model/artwork here
-# for its 27.x target; fuxi presents the iPhone 14 Pro identity.
 #
-# No compatible-device-fallback: its value comes from an iPhone device tree,
-# which no pinned source here carries. The value the iPadOS profile carries
-# is dropped below (os_overrides remove).
+# Experiment (2026-11-24): the reference replaces the root compatible with
+# "J121AP"; the builder used to prepend it, leaving a 31-byte three-string
+# property. HWModelStr may read the whole property, so only the single string
+# is kept. This is the variable of the C2K-vs-NoBB experiment; remove it (or
+# set false) to restore the previous shape.
+[adt]
+replace-root-compatible = true
+[adt.root.string]
+# The reference implementation's identity, ported as is: this panel and the iPad layout are the combination
+# it records for the same OS build (a full-screen iPad image, no Home button).
+model = "iPad14,1"
+target-type = "J310"
+# The cellular hardware name. libTelephonyUtil keys the radio module on it, and only the cellular name turns
+# CommCenter's NoBBRadioModule into the Qualcomm branch that starts ABM.
+compatible = "J121AP"
+
+# The product node AppleImage4 requires and MobileGestalt reads: the reference's product identity.
 [adt.product.string]
-model = "xiaomi,fuxi"
-product-name = "iPhone 14 Pro"
-product-description = "iPhone 14 Pro"
-artwork-device-idiom = "phone"
+product-name = "iPad mini (6th generation)"
+product-description = "iPad mini (6th generation)"
+compatible-device-fallback = "iPad7,3"
+# sRGB as the framebuffer route needs: with Metal present and P3 the render server picks a surface the display
+# driver refuses, and nothing reaches the screen.
 artwork-display-gamut = "sRGB"
+# ABM names the firmware family it expects under /product; the bridge stands for a Mav16 baseband.
+baseband-chipset = "mav16"
 
 [adt.product.u32]
-artwork-device-subtype = 2556
+artwork-device-subtype = 2266
 artwork-scale-factor = 3
 thin-bezel = 1
-
-# /product/product-id of the real board device tree (DeviceTree.d73ap.im4p of
-# iPhone15,2_17.7_21H16). libMobileGestalt keys its product table by these
-# 20 bytes (MGGetProductType); without them it answers 0xffffffff, and the
-# clients that switch on the product type (the audio server's routing
-# database, among others) see an unknown device.
-[adt.product.bytes]
-product-id = "d3b5ffca33e4604460655adfd77fdfa4757e7e93"
 
 # /product/audio/acoustic-id of the real board device tree: MobileGestalt's
 # AcousticID, which the audio server turns into its tuning directory
@@ -454,10 +461,24 @@ button-names = ["hold", "voldown", "volup"]
 [adt.buttons.u32]
 home-button-type = 2
 
-# The iPadOS profile's /product carries an iPad's compatible-device-fallback
-# ("iPad6,7"). The phone identity above has no such value: its own device
-# tree does not carry one, and no pinned source here carries an iPhone's
-# either. The key is dropped for this profile, so the merge does not keep
-# the profile's value.
-[os_overrides."ipados-17.7.11-21H461"]
-remove = ["adt.product.string.compatible-device-fallback"]
+# The cellular identity the OS looks for. launchd picks between the two CommCenter jobs by the presence of this
+# node (_LimitLoadToDeviceTree: baseband), and the compatible string is what makes CommCenter take the Qualcomm
+# branch: the reference implementation records that "baseband,n41" is what starts ABM on the same OS build.
+[adt.baseband.string]
+device_type = "baseband"
+compatible = "baseband,n41"
+
+# The cellular node lockdownd and the baseband stack read: class is required (lockdownd refuses the node
+# without it: "no class property of IODeviceTree:/baseband"), and euicc-chip-id names the eSIM part.
+[adt.baseband.u32]
+class = 3
+euicc-chip-id = 2
+
+# From the real J121AP device tree: the baseband node's config blob (ten u32). The board's GPIO functions
+# (function-bb_on, function-bb_rst, function-radio_on, function-coredump, function-reset_det and the rest) are
+# NOT carried: their values name Apple board GPIO controllers by phandle, this device tree has no such nodes,
+# and following those phandles hung the bus on hardware. A GPIO property here would have to name fuxi's own
+# controller, and the baseband in this port is powered through the bridge (PAS/GLINK), not through those pins.
+[adt.baseband.bytes]
+config = "fa000000f401000044480000e8030000640000006400000083000000250000001400000064000000"
+

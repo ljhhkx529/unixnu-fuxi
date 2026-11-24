@@ -52,12 +52,16 @@
    until the modem has come up (drivers/remoteproc/qcom_q6v5_pas.c, qcom_pas_start releases them
    after qcom_q6v5_wait_for_start), and so does this port. */
 #define FUXI_MODEM_LOW_META_BASE 0x81480000ull
-#define FUXI_MODEM_LOW_META_SPAN 0x3000ull
+/* 0x4000, one page more than the two images need: the IPA's own metadata takes a third page at +0x3000. The
+   window is the first free byte of the row that follows xbl_ramdump_region (0x81200000 + 0x280000) and the
+   device tree reserves nothing before 0x81a00000, so the fourth page is free exactly like the first three. */
+#define FUXI_MODEM_LOW_META_SPAN 0x5000ull
 
 /* Which of the two metadata buffers. */
 enum {
     FuxiModemLowMetaDtb = 0,
     FuxiModemLowMetaImage = 1,
+    FuxiModemLowMetaIpa = 2,
 };
 
 /* The device tree blob's metadata is 4044 bytes, which is one page, and the modem image's is 6364
@@ -66,6 +70,9 @@ enum {
 #define FUXI_MODEM_LOW_META_DTB_SPAN 0x1000ull
 #define FUXI_MODEM_LOW_META_IMAGE_OFFSET 0x1000ull
 #define FUXI_MODEM_LOW_META_IMAGE_SPAN 0x2000ull
+#define FUXI_MODEM_LOW_META_IPA_OFFSET 0x3000ull
+/* Two pages: the IPA's metadata measures 4204 bytes (the run of 2026-11-23 02:27 refused one page). */
+#define FUXI_MODEM_LOW_META_IPA_SPAN 0x2000ull
 
 /* The regions the window must not touch. Each one is a region the device tree reserves or the port
    itself maps, and the modem's metadata landing in any of them would corrupt it or the firmware.
@@ -107,12 +114,14 @@ static inline int fuxi_modem_low_meta_overlaps(uint64_t a, uint64_t alen, uint64
 /* Where a metadata buffer starts inside the window, and how much room it has. */
 static inline uint64_t fuxi_modem_low_meta_offset(unsigned which)
 {
-    return which == FuxiModemLowMetaDtb ? FUXI_MODEM_LOW_META_DTB_OFFSET : FUXI_MODEM_LOW_META_IMAGE_OFFSET;
+    if (which == FuxiModemLowMetaDtb) return FUXI_MODEM_LOW_META_DTB_OFFSET;
+    return which == FuxiModemLowMetaIpa ? FUXI_MODEM_LOW_META_IPA_OFFSET : FUXI_MODEM_LOW_META_IMAGE_OFFSET;
 }
 
 static inline uint64_t fuxi_modem_low_meta_span(unsigned which)
 {
-    return which == FuxiModemLowMetaDtb ? FUXI_MODEM_LOW_META_DTB_SPAN : FUXI_MODEM_LOW_META_IMAGE_SPAN;
+    if (which == FuxiModemLowMetaDtb) return FUXI_MODEM_LOW_META_DTB_SPAN;
+    return which == FuxiModemLowMetaIpa ? FUXI_MODEM_LOW_META_IPA_SPAN : FUXI_MODEM_LOW_META_IMAGE_SPAN;
 }
 
 /* The physical address of a metadata buffer. */
