@@ -22,7 +22,8 @@ fork [OddlyLabs/UniXNU](https://github.com/OddlyLabs/UniXNU) (branch `fuxi`), wh
 
 | 仓库 | 作用 |
 |---|---|
-| [ljhhkx529/UniXNU](https://github.com/ljhhkx529/UniXNU) | fork 自 UniXNU/UniXNU（原 `OddlyLabs/UniXNU`）。分支 `fuxi`：组件目录加了 `FuxiFtsTouch`；`bootimg` 加了 fuxi 需要的两个选项（镜像头加载偏移、把负载放进内核镜像）；**`drivers/QcomBaseband` 的基带改动也在这里，随内核一起拉取** |
+| [UniXNU/UniXNU](https://github.com/UniXNU/UniXNU) | **官方上游内核**，板级构建用它。fuxi 需要的两个 `bootimg` 选项和组件目录里的 `FuxiFtsTouch` 已经在 `patches/` 与 `components/` 里，不需要 fork |
+| [ljhhkx529/UniXNU](https://github.com/ljhhkx529/UniXNU) | 上游的 fork（分支 `fuxi`），**只在上游还没有本轮蜂窝/基带改动时需要**：`drivers/QcomBaseband` 的基带工作在这里，随内核一起拉取 |
 | [ljhhkx529/uefi-fuxi](https://github.com/ljhhkx529/uefi-fuxi) | fork 自官方固件 UniXNU/uefi-sheng（原 `OddlyLabs/uefi-fuxi`）。分支 `V2`（本地旧名 `fuxi`）：移植了 matejkoo217/uefi-fuxi 的 9 个 fuxi 提交（保留原作者），这些提交里的结论都在真机上测量过 |
 | [OddlyLabs/FuxiFtsTouch](https://github.com/OddlyLabs/FuxiFtsTouch) | 触控组件：FTM5 协议和触点跟踪，纯 C，带主机测试；本仓库用子模块引用它 |
 | [ljhhkx529/unixnu-fuxi](https://github.com/ljhhkx529/unixnu-fuxi) | 本仓库（分支 `V2`）：板级文件、探针、启动钩子补丁、硬件资料 |
@@ -54,17 +55,16 @@ UniXNU 自己提供启动菜单（UniXNUPkg）和 XNU 加载器（DarwinBoot）�
 
 ```bash
 git clone --recurse-submodules -b V2 https://github.com/ljhhkx529/unixnu-fuxi
-git clone --recurse-submodules -b fuxi https://github.com/ljhhkx529/UniXNU
+git clone --recurse-submodules https://github.com/UniXNU/UniXNU          # 官方上游
 git clone -b V2 https://github.com/ljhhkx529/uefi-fuxi
 ```
 
-内核仓库里的 `drivers/QcomBaseband` 就是这一支维护的基带驱动，**随 UniXNU 一起拉取**，不需要单独克隆：
-该目录被改成子模块之前一直是普通目录（上游 UniXNU 也是这个布局）。单独发布的镜像在
+**蜂窝/基带**还需要一个带本轮改动内核：把上面的内核换成
+`git clone --recurse-submodules -b fuxi https://github.com/ljhhkx529/UniXNU` 即可 ——
+那一支里的 `drivers/QcomBaseband` 就是基带驱动，**随内核一起拉取**（是普通目录，和上游布局一致，不是子模块，
+所以不需要额外的 `submodule update`）。单独发布的镜像在
 [ljhhkx529/QcomBaseband](https://github.com/ljhhkx529/QcomBaseband)（`main`），内容与内核里的子树一致，
 供只想要驱动、不想要整个内核的人使用。
-
-`--recurse-submodules` 会一并拉取 UniXNU 的组件（`ArmCpu`、`DarwinBoot`、`Adreno740` 等）；
-`drivers/QcomBaseband` 不是子模块，所以它不需要额外的 `submodule update`。
 
 在 UniXNU 目录里依次运行
 
