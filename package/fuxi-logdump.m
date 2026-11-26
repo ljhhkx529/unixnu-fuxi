@@ -10,6 +10,7 @@
 #import <CommonCrypto/CommonDigest.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <dlfcn.h>
 #include <objc/message.h>
 
 static const char *levelName(NSInteger level)
@@ -196,6 +197,31 @@ static NSString *mgKey(NSString *name)
     return encoded.length >= 22 ? [encoded substringToIndex:22] : encoded;
 }
 
+
+static void probeGestalt(FILE *file)
+{
+    /* The radio module gate is libTelephonyUtil asking MobileGestalt for these; the cache is removed at boot, so
+       ask the framework itself rather than reading a file. */
+    void *lib = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_NOW);
+    id (*copy)(CFStringRef) = lib ? (id (*)(CFStringRef))dlsym(lib, "MGCopyAnswer") : NULL;
+    BOOL (*boolean)(CFStringRef) = lib ? (BOOL (*)(CFStringRef))dlsym(lib, "MGGetBoolAnswer") : NULL;
+    fprintf(file, "# gestalt %s\n", lib ? "loaded" : "missing");
+    if (copy) {
+        static const char *const keys[] = {"ProductType", "HWModelStr", "IsVirtualDevice", "HasBaseband"};
+        for (unsigned i = 0; i < sizeof keys / sizeof keys[0]; ++i) {
+            CFStringRef key = (__bridge CFStringRef)[NSString stringWithUTF8String:keys[i]];
+            id value = copy(key);
+            fprintf(file, "# MGCopyAnswer %-14s %s\n", keys[i], value ? [[value description] UTF8String] : "nil");
+            printf("FUXILOG: MG %s %s\n", keys[i], value ? [[value description] UTF8String] : "nil");
+        }
+    }
+    if (boolean) {
+        CFStringRef key = (__bridge CFStringRef)@"HasBaseband";
+        fprintf(file, "# MGGetBoolAnswer HasBaseband %d\n", boolean(key));
+    }
+    fflush(file);
+}
+
 static void probeSystem(FILE *file)
 {
     /* The three questions the ABM investigation came down to: what MobileGestalt answers (the radio module
@@ -217,13 +243,14 @@ static void probeSystem(FILE *file)
             printf("FUXILOG: MG %s = %s\n", name.UTF8String, value ? [[value description] UTF8String] : "not cached");
         }
     }
+    probeGestalt(file);
     NSData *manifestData = [NSData dataWithContentsOfFile:@"/System/Library/xpc/launchd.plist"];
     id manifestPlist = manifestData ? [NSPropertyListSerialization propertyListWithData:manifestData options:NSPropertyListImmutable format:NULL error:NULL] : nil;
     NSDictionary *manifest = [manifestPlist isKindOfClass:[NSDictionary class]] ? manifestPlist : nil;
     fprintf(file, "# manifest %s (%lu bytes)\n", manifest ? "loaded" : "missing", (unsigned long)manifestData.length);
     for (NSString *job in @[@"/System/Library/LaunchDaemons/com.apple.CommCenter.plist",
                             @"/System/Library/LaunchDaemons/com.apple.CommCenter-noncellular.plist"]) {
-        NSDictionary *entry = [manifest objectForKey:job];
+        NSDictionary *entry = [[manifest objectForKey:@"LaunchDaemons"] objectForKey:job];
         fprintf(file, "# job %s: %s\n", job.lastPathComponent.UTF8String, entry ? "present" : "absent");
         if (entry) {
             fprintf(file, "#   limit-to-device-tree %s\n", [[entry objectForKey:@"_LimitLoadToDeviceTree"] description].UTF8String);
@@ -257,7 +284,7 @@ int main(void)
         FILE *file = fopen("/private/var/db/fuxi-logdump.txt", "w");
         if (file) setvbuf(file, NULL, _IONBF, 0);
         printf("FUXILOG: reading the unified log for the telephony side\n");
-        if (file) fprintf(file, "FUXILOG: the job ran, %u firmware files unpacked, preboot mirror %d\n", firmware, mirrored);
+        if (file) fprintf(file, "FUXILOG PROBE4: the job ran, %u firmware files unpacked, preboot mirror %d\n", firmware, mirrored);
         if (file) fprintf(file, "# probe begin\n");
         probeSystem(file);
         if (file) fprintf(file, "# probe end\n");
