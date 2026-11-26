@@ -627,7 +627,7 @@ void native_legacy_display_late_probe(void) {
                         sheng_gpu_power_probe();
                         {
                             unsigned gpu=0;PE_parse_boot_argn("sheng-fb-gpu",&gpu,sizeof gpu);
-                            if(gpu==1) {
+                            if(gpu==1 || gpu==2) {
                                 IOService *handoff=native_gop_presenter_create();
                                 // Not a child of the display subsystem's node: the original display code enumerates that node's children (int-075/077:
                                 // SpringBoard found no display and crashed with the presenter attached there, registered or not).
