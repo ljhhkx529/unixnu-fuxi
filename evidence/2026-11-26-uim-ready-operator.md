@@ -65,3 +65,27 @@ The factory data is present; fsc empty is its normal state on this board.
   observed directly (no UI capture). A long observation with the SIM in a live cell is the next check.
 - The bridge's transmit queue dropped DMS messages under load (`COACHZ txdrop: queue full svc 0x2 msg 0x24`),
   worth bounding before the next long run.
+
+
+## The operator name from the modem (round 2, 2026-11-26)
+
+A six-minute run with the transmit queue enlarged (256 frames, 64 drained per pass) showed no drops
+(`txdrop: 0`), the card ready throughout, and the operator name on the QMI NAS indication (0x3a):
+
+    t 74040/74181: sdu int-rx svc 0x3 msg 0x3a len 16
+                   04 04 00 3a 00 09 00 10 06 00 00 04 43 4d 43 43
+                   TLV 0x10: {length 4, "CMCC"}
+
+The NAS Serving System indication in the same window reported registration state 2 (registered,
+roaming) with CS and PS attached; the operator name and the state arrived together, then the modem
+reported state 0 at t 74721 (CS/PS still 2). The CMCC mcfg was requested three times and the carrier
+PRI was pushed with "Carrier ID / PRI Revision 0.1.186".
+
+| t (ms) | NAS 0x24 registration state | note |
+|---|---|---|
+| 70729 | 0 | after power-on, before attach |
+| 70733-74181 | 2 | registered roaming, CS=2 PS=2; CMCC name indication at 74040/74181 |
+| 74721 | 0 | CS/PS still 2; no later serving-system indication before the LPM at 115 s |
+
+So the card, the reads and the operator name are all in place; the attach itself is brief. The next
+question is the network side (SIM entitlement/coverage) versus the modem's RF, not the bridge.
