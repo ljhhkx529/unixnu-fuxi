@@ -272,6 +272,29 @@ static void probeSystem(FILE *file)
     fflush(file);
 }
 
+
+static void enableTelephonyPrivateLogs(FILE *file)
+{
+    /* ABM and BBUpdater explain a failed boot only in private %s messages; logd keeps them private unless the
+       subsystem says otherwise. Same three files the reference's kernel writes at boot. */
+    static const char xml[] = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict><key>DEFAULT-OPTIONS</key><dict>"
+        "<key>Enable-Private-Data</key><true/><key>Privacy-Enable-Level</key><string>Private</string></dict></dict></plist>\n";
+    static const char *const dirs[] = {"/private/var/preferences", "/private/var/preferences/Logging", "/private/var/preferences/Logging/Subsystems"};
+    for (unsigned i = 0; i < sizeof dirs / sizeof dirs[0]; ++i) (void)mkdir(dirs[i], 0755);
+    static const char *const names[] = {"com.apple.telephony.abm", "com.apple.telephony.bb", "com.apple.CommCenter"};
+    unsigned written = 0;
+    for (unsigned i = 0; i < sizeof names / sizeof names[0]; ++i) {
+        char path[160];
+        snprintf(path, sizeof path, "/private/var/preferences/Logging/Subsystems/%s.plist", names[i]);
+        FILE *out = fopen(path, "w");
+        if (!out) continue;
+        if (fwrite(xml, 1, sizeof xml - 1, out) == sizeof xml - 1) written++;
+        fclose(out);
+    }
+    fprintf(file, "# private logs %u/%u\n", written, (unsigned)(sizeof names / sizeof names[0]));
+    printf("FUXILOG: private telephony logs %u/%u\n", written, (unsigned)(sizeof names / sizeof names[0]));
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -283,6 +306,7 @@ int main(void)
         const bool mirrored = firmware ? mirrorPreboot(firmwareRoot) : false;
         FILE *file = fopen("/private/var/db/fuxi-logdump.txt", "w");
         if (file) setvbuf(file, NULL, _IONBF, 0);
+        enableTelephonyPrivateLogs(file);
         printf("FUXILOG: reading the unified log for the telephony side\n");
         if (file) fprintf(file, "FUXILOG PROBE4: the job ran, %u firmware files unpacked, preboot mirror %d\n", firmware, mirrored);
         if (file) fprintf(file, "# probe begin\n");
