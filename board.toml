@@ -469,10 +469,11 @@ device_type = "baseband"
 compatible = "baseband,n41"
 
 # The cellular node lockdownd and the baseband stack read: class is required (lockdownd refuses the node
-# without it: "no class property of IODeviceTree:/baseband"), and euicc-chip-id names the eSIM part.
+# without it: "no class property of IODeviceTree:/baseband"). euicc-chip-id is deliberately absent: this phone
+# has a physical SIM, and advertising an eUICC made the stack take the eSIM branch, whose state machine then
+# failed its route (seen on the Settings cellular page); the reference carries it because its iPad is eSIM.
 [adt.baseband.u32]
 class = 3
-euicc-chip-id = 2
 
 # From the real J121AP device tree: the baseband node's config blob (ten u32). The board's GPIO functions
 # (function-bb_on, function-bb_rst, function-radio_on, function-coredump, function-reset_det and the rest) are
