@@ -389,6 +389,12 @@ int main(void)
         sleep(15);
         Class storeClass = NSClassFromString(@"OSLogStore");
         if (!storeClass) {
+            /* OSLogStore lives in the OSLog framework, not in Foundation; without loading it the class is nil. */
+            (void)dlopen("/System/Library/Frameworks/OSLog.framework/OSLog", RTLD_NOW);
+            storeClass = NSClassFromString(@"OSLogStore");
+        }
+        if (file) fprintf(file, "# store class %s\n", storeClass ? "present" : "missing");
+        if (!storeClass) {
             printf("FUXILOG: OSLogStore is not in this userspace\n");
             return 1;
         }
