@@ -7,6 +7,7 @@
 // the telephony entries to stdout; the launchd job hands stdout to /dev/console, which is the line the
 // captured boot log already carries. Filtered and bounded, because the console is a slow line.
 #import <Foundation/Foundation.h>
+#import <CommonCrypto/CommonDigest.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <objc/message.h>
@@ -180,6 +181,67 @@ static unsigned unpackFirmware(void)
     return written;
 }
 
+
+static NSString *mgKey(NSString *name)
+{
+    /* MobileGestalt stores its answers under base64(MD5("MGCopyAnswer" + key))[:22] (tools/xnu_screen.py uses
+       the same derivation for ProductType). */
+    NSString *full = [@"MGCopyAnswer" stringByAppendingString:name];
+    unsigned char digest[CC_MD5_DIGEST_LENGTH];
+    CC_MD5(full.UTF8String, (CC_LONG)strlen(full.UTF8String), digest);
+    NSString *encoded = [[NSData dataWithBytes:digest length:sizeof digest] base64EncodedStringWithOptions:0];
+    return encoded.length >= 22 ? [encoded substringToIndex:22] : encoded;
+}
+
+static void probeSystem(FILE *file)
+{
+    /* The three questions the ABM investigation came down to: what MobileGestalt answers (the radio module
+       gate), which of the two CommCenter jobs the launchd manifest carries, and which CommCenter binary is in
+       effect under CoreTelephony. */
+    NSString *cachePath = @"/private/var/containers/Shared/SystemGroup/"
+        "systemgroup.com.apple.mobilegestaltcache/Library/Caches/com.apple.MobileGestalt.plist";
+    NSData *cache = [NSData dataWithContentsOfFile:cachePath];
+    fprintf(file, "# MG cache %s (%lu bytes)\n", cache ? "present" : "absent", (unsigned long)cache.length);
+    NSArray *keys = @[@"ProductType", @"HasBaseband", @"HWModelStr", @"IsVirtualDevice"];
+    if (cache) {
+        id plist = [NSPropertyListSerialization propertyListWithData:cache options:NSPropertyListImmutable format:NULL error:NULL];
+        NSDictionary *extra = [plist isKindOfClass:[NSDictionary class]] ? [plist objectForKey:@"CacheExtra"] : nil;
+        for (NSString *name in keys) {
+            NSString *key = mgKey(name);
+            id value = [extra isKindOfClass:[NSDictionary class]] ? [extra objectForKey:key] : nil;
+            fprintf(file, "# MG %-14s %s (key %s)\n", name.UTF8String,
+                    value ? [[value description] UTF8String] : "not cached", key.UTF8String);
+            printf("FUXILOG: MG %s = %s\n", name.UTF8String, value ? [[value description] UTF8String] : "not cached");
+        }
+    }
+    NSData *manifestData = [NSData dataWithContentsOfFile:@"/System/Library/xpc/launchd.plist"];
+    id manifestPlist = manifestData ? [NSPropertyListSerialization propertyListWithData:manifestData options:NSPropertyListImmutable format:NULL error:NULL] : nil;
+    NSDictionary *manifest = [manifestPlist isKindOfClass:[NSDictionary class]] ? manifestPlist : nil;
+    fprintf(file, "# manifest %s (%lu bytes)\n", manifest ? "loaded" : "missing", (unsigned long)manifestData.length);
+    for (NSString *job in @[@"/System/Library/LaunchDaemons/com.apple.CommCenter.plist",
+                            @"/System/Library/LaunchDaemons/com.apple.CommCenter-noncellular.plist"]) {
+        NSDictionary *entry = [manifest objectForKey:job];
+        fprintf(file, "# job %s: %s\n", job.lastPathComponent.UTF8String, entry ? "present" : "absent");
+        if (entry) {
+            fprintf(file, "#   limit-to-device-tree %s\n", [[entry objectForKey:@"_LimitLoadToDeviceTree"] description].UTF8String);
+            fprintf(file, "#   limit-from-device-tree %s\n", [[entry objectForKey:@"_LimitLoadFromDeviceTree"] description].UTF8String);
+            fprintf(file, "#   program %s\n", [[entry objectForKey:@"ProgramArguments"] description].UTF8String);
+            fprintf(file, "#   mach %s\n", [[[entry objectForKey:@"MachServices"] allKeys] description].UTF8String);
+        }
+    }
+    for (NSString *path in @[@"/System/Library/Frameworks/CoreTelephony.framework/Support/CommCenter",
+                             @"/private/var/ngpu/baseband/CommCenter"]) {
+        NSData *data = [NSData dataWithContentsOfFile:path];
+        unsigned char digest[CC_SHA256_DIGEST_LENGTH] = {0};
+        if (data) CC_SHA256(data.bytes, (CC_LONG)data.length, digest);
+        fprintf(file, "# file %s: %s %lu bytes sha %02x%02x%02x%02x%02x%02x%02x%02x\n", path.UTF8String,
+                data ? "present" : "absent", (unsigned long)data.length,
+                digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7]);
+        printf("FUXILOG: %s %s\n", path.UTF8String, data ? "present" : "absent");
+    }
+    fflush(file);
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -207,6 +269,7 @@ int main(void)
             }
             fflush(file);
         }
+        probeSystem(file);
         /* The real launch chain is demand driven: CommCenter connects to com.apple.abm.helper.wireless, launchd
            starts abm-helper for it, and abm-helper then asks com.apple.abm.helper.root, which starts
            CommCenterRootHelper. Looking the two names up is what launchd reacts to, so the daemon holds the
