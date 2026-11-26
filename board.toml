@@ -381,20 +381,16 @@ replace-root-compatible = true
 [adt.root.string]
 # The reference implementation's identity, ported as is: this panel and the iPad layout are the combination
 # it records for the same OS build (a full-screen iPad image, no Home button).
-model = "iPad13,19"
+model = "iPad14,2"
 target-type = "J311"
 # The cellular hardware name. libTelephonyUtil keys the radio module on it, and only the cellular name turns
-# CommCenter's NoBBRadioModule into the Qualcomm branch that starts ABM. iPad13,19 is the iPad (10th generation)
-# cellular, a China model with a physical nano-SIM slot; the previous identity (iPad14,2, the iPad mini 6
-# cellular) is eSIM-only in China, and its stack showed the eSIM row and the Add eSIM buttons over a physical
-# card. The target-type stays J311: it is what the security lock was established with, and only the names the
-# telephony stack reads change here.
-compatible = "J272AP"
+# CommCenter's NoBBRadioModule into the Qualcomm branch that starts ABM.
+compatible = "J121AP"
 
 # The product node AppleImage4 requires and MobileGestalt reads: the reference's product identity.
 [adt.product.string]
-product-name = "iPad (10th generation)"
-product-description = "iPad (10th generation)"
+product-name = "iPad mini (6th generation)"
+product-description = "iPad mini (6th generation)"
 compatible-device-fallback = "iPad7,3"
 # sRGB as the framebuffer route needs: with Metal present and P3 the render server picks a surface the display
 # driver refuses, and nothing reaches the screen.
