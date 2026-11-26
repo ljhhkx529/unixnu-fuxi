@@ -381,7 +381,7 @@ replace-root-compatible = true
 [adt.root.string]
 # The reference implementation's identity, ported as is: this panel and the iPad layout are the combination
 # it records for the same OS build (a full-screen iPad image, no Home button).
-model = "iPad14,2"
+model = "iPad14,1"
 target-type = "J310"
 # The cellular hardware name. libTelephonyUtil keys the radio module on it, and only the cellular name turns
 # CommCenter's NoBBRadioModule into the Qualcomm branch that starts ABM.
@@ -446,7 +446,7 @@ system-volume-auth-blob = "0200000000000000010000002000000061f50c6269a33b16100d8
 # Defaults: keep the device awake and report a virtual platform (no SEP).
 [adt.defaults.u32]
 sleep-disabled = 1
-vmm-present = 1
+vmm-present = 0
 # The 4.75 GiB owned window (4864 MiB): memory/64K + 1024, the same value UniXNU-sheng uses.
 "kern.maxvnodes" = 78848
 

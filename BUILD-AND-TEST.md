@@ -15,9 +15,10 @@
 1. **Host PASS 不等于 device PASS。** 主机上的 16 套音频测试只证明状态机和报文形状，
    不证明任何硬件行为。两类结论在 `porting.toml` 的 `evidence` 里用
    `kind = "host"` 和 `kind = "device"` 分开记录。
-2. **绝不刷分区。** 开发阶段只用 `fastboot boot`（临时启动），
-   唯一例外是 `scripts/fuxi-audio-s0.sh` 用的 `fastboot flash boot`，
-   那条路径已记录在案且只用于 S0 基线冻结。
+2. **刷分区需明确同意。** 默认用 `fastboot boot`（临时启动，不写分区）；
+   需要持久化时用 `fastboot flash boot_a` + `fastboot reboot`（"项目已验证"流程）。
+   `fastboot boot` 之后 CDC 可能不重新出现，处理见 §7；设备在系统里且 CDC 控制可用时，
+   用 `./scripts/fuxi-usb-debug.sh ctl-one reboot-fastboot` 进 fastboot。
 3. **不用 Android boot / ADB / vendor ramdisk。** 需要的固件与事实只能来自可复现文件、
    主线源码、固定设备树或 UniXNU 真机只读测量。
 4. **一次只扩大一个危险动作。** 同一轮里不要同时首次启用 PAS、GLINK、graph 和 unmute，
@@ -401,6 +402,21 @@ cd /Users/mac/Documents/deepseek-harness/default-workspace/unixnu-fuxi
 
 采集目录在 `/tmp/fuxi-usb/run-<时间戳>/`，日志是 `xnu-usb.log`。
 
+> **CDC 是单读端（重要）。** 不要用 `cat /dev/cu.usbmodem*` 或任何直接读端口的命令
+> 去"顺便看日志"——那会和 collector 抢同一个读端：collector 收不到设备回复的控制帧
+> （`SXNU1 ...`），`ctl` 就会超时（`capture.json` 里 `reply_frames: 0`），
+> `reboot-fastboot` 也随之失败。读日志只用 `./scripts/fuxi-usb-debug.sh log`
+> 或 `$run_dir/xnu-usb.log`；同一时间只允许一个读端。
+>
+> host 侧重启 supervisor/collector 前要清掉残留状态：
+> `rm -f /tmp/fuxi-usb/stop /tmp/fuxi-usb/supervisor.pid`。
+> `collect-xnu-usb.py` 调用 `ioreg` 需要绝对路径（macOS 的 PATH 常常没有
+> `/usr/sbin`）：`IOREG=/usr/sbin/ioreg`。
+>
+> 设备在系统里、控制通道可用但按键不便时，进 fastboot 用：
+> `./scripts/fuxi-usb-debug.sh ctl-one reboot-fastboot`
+> （`ctl-one` 是自包含会话，不依赖后台进程存活）。
+
 如果 supervisor 报 `Connection refused`，重做一次 `stop` + `start`。
 这是 host 侧的代理生命周期问题，不是设备故障。
 
@@ -423,6 +439,7 @@ rg -n -i \
 | `ping` | 活性检查 |
 | `status` | 通道与缓冲区统计 |
 | `reboot` | 重启 |
+| `reboot-fastboot` | 重启进入 fastboot（`ctl-one reboot-fastboot` 为自包含会话，推荐） |
 | `reboot-fastboot` | 重启进 fastboot |
 | `screenshot` / `shotnext` | 屏幕抓取 |
 | `diagstatus` | 读诊断状态页（当前状态视图） |
@@ -580,7 +597,9 @@ python3 scripts/build-fuxi-audio-hal.py OUTDIR [TARGET]
 | `data_volume_uuid` 不对 | `--data-ramdisk` 指错了 | 改 UUID 凑数 |
 | fastboot devices 为空 | 手机在别的模式，或线缆 | 反复重刷 |
 | `ctl ping` 报 socket not ready | 手机还没进 XNU，或没带 `qcom-usb-ctl=1` | 重刷镜像 |
-| `ctl` 报 `Connection refused` | supervisor 生命周期问题 | 重做 `stop` + `start` |
+| `ctl` 报 `Connection refused` | supervisor 生命周期问题 | 重做 `stop` + `start`（先清 `/tmp/fuxi-usb/stop`、`supervisor.pid`） |
+| `ctl` 报 `timed out` 且 `reply_frames: 0` | 有别的进程在读 CDC（`cat /dev/cu.usbmodem*`、旧采集循环） | 杀掉所有读端，只留 collector；读日志用 `log` 或 `xnu-usb.log` |
+| `collect-xnu-usb.py` 报 `No such file or directory: 'ioreg'` | host PATH 缺 `/usr/sbin` | `ln -sf /usr/sbin/ioreg /opt/homebrew/bin/ioreg`，或用 `IOREG=/usr/sbin/ioreg` |
 | `fastboot boot` 后 CDC 不出现 | bootloader 不保证重新暴露 CDC | 改用 `fastboot flash boot` + `reboot` |
 | CDC 恢复但 session 变了 | 设备复位过 | 认为是 host 问题 |
 | `AUDIO step=` 出现在默认启动 | `board.toml` 里有音频开关 | 带着它做 S0 |

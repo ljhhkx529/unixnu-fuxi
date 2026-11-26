@@ -2654,6 +2654,9 @@ void ownerThread(void *, wait_result_t)
     if (rc) goto failed;
     rc = waitReady();
     if (rc) goto failed;
+    /* The first of the four states the bring-up is judged by: the modem's own subsystem is up means the PAS
+     * start was accepted and the modem answered ready, not that anything speaks to it yet. */
+    printf("FUXI_STAGE 1/4 modem: SSR/PAS the modem subsystem is running (start accepted, ready acknowledged)\n");
     /* The modem is up, so the secure world is done with the metadata pages and both of them can go
      * back to the allocator. Linux does this at the same point (qcom_pas_start, after
      * qcom_q6v5_wait_for_start). */
@@ -2661,10 +2664,6 @@ void ownerThread(void *, wait_result_t)
     releaseImage(gOwner.dtb);
     rc = stepGlink();
     if (rc) goto failed;
-    /* CommCenter must find the baseband services before it decides its radio module; the link is not up yet, so
-     * the bridge's QMI queue holds the first requests until it is. */
-    fuxi_modem_publish();
-    printf("FUXI_MODEM: the baseband bridge is published before the link\n");
     rc = stepAdapter();
     if (rc) goto failed;
     /* The link has to come up before the bring-up is over: the modem opens the IPCRTR channel into the
