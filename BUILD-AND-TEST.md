@@ -156,6 +156,15 @@ cd /Users/mac/Documents/deepseek-harness/default-workspace/UniXNU
 
 固件卷固定 `0x300000` 字节。这一步不涉及苹果文件，可以在 Linux 上单独跑。
 
+### 2.4.1 固件卷（FD）必须用修复好的 good FD
+
+- good FD：`.fuxi/SILICIUM_UEFI.good.fd`（SHA-256 前 16 位 `248582f058b0c185`），同时放在
+  `/tmp/fuxi-firmware-good.fd` 与 `uefi-fuxi/Build/fuxiPkg/DEBUG_CLANGPDB/FV/SILICIUM_UEFI.fd`。
+- 本地 `./unixnu build firmware` 产出的 FV（增量或 clean）在 fuxi 上都会在 UEFI/ABL 阶段报
+  `ERROR: C90000002:V03000007 I0 <UUID>`，**不要**用它打包 bootimg。
+- 每次 `build firmware` 之后，把 good FD 覆盖回 `Build/.../FV/SILICIUM_UEFI.fd`；或者
+  `bootimg` 显式传 `--fd /tmp/fuxi-firmware-good.fd`。
+
 ### 2.5 打包门禁（构建后必查）
 
 ```sh
