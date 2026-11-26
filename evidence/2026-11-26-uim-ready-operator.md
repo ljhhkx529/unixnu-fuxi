@@ -89,3 +89,25 @@ PRI was pushed with "Carrier ID / PRI Revision 0.1.186".
 
 So the card, the reads and the operator name are all in place; the attach itself is brief. The next
 question is the network side (SIM entitlement/coverage) versus the modem's RF, not the bridge.
+
+
+## Round 3 (2026-11-26 09:00, card is a valid CMCC SIM)
+
+The drop at t 74.7 s was before CommCenter had set the radio's system selection: at t 116.7 s the upper
+layer sent NAS Set System Selection Preference (0x33) with mode/band/roaming preferences, and the modem
+registered home on the SIM's own PLMN:
+
+    t 117872: NAS Serving System indication, len 44
+      TLV 0x01 { reg 1 (registered, home), cs 2, ps 1, ... }
+      TLV 0x12 { mcc 0x01cc = 460, mnc 0x0000 = 00, len 4 "CMCC" }
+
+The same indication repeats on the bridge's second NAS client. A running-device capture (no reboot) then
+showed the modem staying registered for minutes: registered home at t 219.7 s (460/00), registered roaming
+at t 306.6 s (460/00), and no "not registered" indication after t 219.4 s through t 394 s.
+
+Facts recorded on the way:
+- DMS Get IDs (0x25) answered by the modem: IMEI 860589064154223 (15 digits, Luhn valid), ESN 80EF5CA6.
+- The bridge's own NAS requests on an internal client are refused by the modem with result 1, error 0x4a,
+  while the same services' indications arrive normally; the retries at 10 s intervals therefore log the
+  refusal, and the raw indications are the evidence.
+- The transmit queue is 256 frames, 64 drained per pass; the 6-minute run had zero drops.
