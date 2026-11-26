@@ -399,12 +399,20 @@ int main(void)
             return 1;
         }
         NSError *error = nil;
-        id store = ((id (*)(Class, SEL, NSInteger, NSError **))objc_msgSend)(
-            storeClass, @selector(storeWithScope:error:), 0, &error);
+        id store = nil;
+        @try {
+            store = ((id (*)(Class, SEL, NSInteger, NSError **))objc_msgSend)(
+                storeClass, @selector(storeWithScope:error:), 0, &error);
+        } @catch (NSException *exception) {
+            if (file) fprintf(file, "# store exception %s\n", exception.reason.UTF8String ?: "?");
+            printf("FUXILOG: store exception %s\n", exception.reason.UTF8String ?: "?");
+        }
         if (!store) {
+            if (file) fprintf(file, "# store missing: %s\n", (error ? error.description : @"nil").UTF8String);
             printf("FUXILOG: no store: %s\n", (error ? error.description : @"nil").UTF8String);
             return 2;
         }
+        if (file) fprintf(file, "# store ready\n");
         /* Only the recent window: the whole-boot enumeration takes minutes and the console read it too early. */
         id position = nil;
         const BOOL windowed = [store respondsToSelector:@selector(positionWithTimeIntervalSinceNow:)];
