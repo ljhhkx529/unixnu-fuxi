@@ -188,7 +188,10 @@ static NSString *mgKey(NSString *name)
        the same derivation for ProductType). */
     NSString *full = [@"MGCopyAnswer" stringByAppendingString:name];
     unsigned char digest[CC_MD5_DIGEST_LENGTH];
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     CC_MD5(full.UTF8String, (CC_LONG)strlen(full.UTF8String), digest);
+#pragma clang diagnostic pop
     NSString *encoded = [[NSData dataWithBytes:digest length:sizeof digest] base64EncodedStringWithOptions:0];
     return encoded.length >= 22 ? [encoded substringToIndex:22] : encoded;
 }
@@ -252,8 +255,12 @@ int main(void)
         static const char firmwareRoot[] = "/private/var/ngpu/owner-apps/firmware/Baseband/Mav16";
         const bool mirrored = firmware ? mirrorPreboot(firmwareRoot) : false;
         FILE *file = fopen("/private/var/db/fuxi-logdump.txt", "w");
+        if (file) setvbuf(file, NULL, _IONBF, 0);
         printf("FUXILOG: reading the unified log for the telephony side\n");
         if (file) fprintf(file, "FUXILOG: the job ran, %u firmware files unpacked, preboot mirror %d\n", firmware, mirrored);
+        if (file) fprintf(file, "# probe begin\n");
+        probeSystem(file);
+        if (file) fprintf(file, "# probe end\n");
         /* Which of the two CommCenter jobs launchd loaded, and whether CommCenter brought its baseband manager up:
            com.apple.basebandd.xpc is the service ABM lives behind, carrierspace exists only on the cellular job. */
         if (file) {
@@ -269,7 +276,6 @@ int main(void)
             }
             fflush(file);
         }
-        probeSystem(file);
         /* The real launch chain is demand driven: CommCenter connects to com.apple.abm.helper.wireless, launchd
            starts abm-helper for it, and abm-helper then asks com.apple.abm.helper.root, which starts
            CommCenterRootHelper. Looking the two names up is what launchd reacts to, so the daemon holds the
