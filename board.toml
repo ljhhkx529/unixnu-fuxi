@@ -333,7 +333,7 @@ kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-progress=2", "kt_fixed_zon
           # carries no BV/BOTH at all (bv_seen all zero) and the first submission still does not retire.
           "sheng-tu-debug=sysmem",
           "sheng-gpu-dcvs=1",
-               "sheng-fb-gpu=1",
+               "sheng-fb-gpu=2",
                "sheng-gpu-addon=1",
                # Jobs that cannot run here, with unixnu-fuxi-old s list. liveactivitiesd is the one that
                # matters for rendering: its SessionCore crashes with SIGTRAP in SessionSyncEngine's Swift
@@ -381,8 +381,8 @@ replace-root-compatible = true
 [adt.root.string]
 # The reference implementation's identity, ported as is: this panel and the iPad layout are the combination
 # it records for the same OS build (a full-screen iPad image, no Home button).
-model = "iPad14,1"
-target-type = "J310"
+model = "iPad14,2"
+target-type = "J311"
 # The cellular hardware name. libTelephonyUtil keys the radio module on it, and only the cellular name turns
 # CommCenter's NoBBRadioModule into the Qualcomm branch that starts ABM.
 compatible = "J121AP"
