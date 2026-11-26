@@ -152,6 +152,20 @@ bool loadFile(unsigned index)
     file.present = true;
     printf("FUXI_RMTFS: the partition %s (%s) is %llu bytes, read into memory of ours\n", partition, path,
            static_cast<unsigned long long>(bytes));
+    {
+        /* Read-only diagnostic: the first bytes and how much of the partition is not zero. An empty
+           (zeroed) fsg or modemst means the modem has no factory/provisioning data to rebuild its EFS
+           from, which is the first thing to rule out when the card reaches the modem but its USIM
+           application never leaves DETECTED. Nothing is written. */
+        uint32_t nonzero = 0;
+        for (uint64_t i = 0; i < bytes; ++i) nonzero += file.data[i] != 0 ? 1u : 0u;
+        printf("FUXI_RMTFS: %s first 16: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x, nonzero %u of %llu\n",
+               partition, file.data[0], file.data[1], file.data[2], file.data[3],
+               file.data[4], file.data[5], file.data[6], file.data[7],
+               file.data[8], file.data[9], file.data[10], file.data[11],
+               file.data[12], file.data[13], file.data[14], file.data[15],
+               nonzero, static_cast<unsigned long long>(bytes));
+    }
     return true;
 }
 
