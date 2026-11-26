@@ -403,14 +403,19 @@ int main(void)
         id position = nil;
         const BOOL windowed = [store respondsToSelector:@selector(positionWithTimeIntervalSinceNow:)];
         if (windowed) {
-            position = ((id (*)(id, SEL, NSTimeInterval))objc_msgSend)(store, @selector(positionWithTimeIntervalSinceNow:), -120.0);
+            position = ((id (*)(id, SEL, NSTimeInterval))objc_msgSend)(store, @selector(positionWithTimeIntervalSinceNow:), -60.0);
         }
         if (!position) {
             position = ((id (*)(id, SEL, NSTimeInterval))objc_msgSend)(store, @selector(positionWithTimeIntervalSinceLatestBoot:), 0);
         }
-        printf("FUXILOG: the window is %s\n", windowed ? "the last 120 seconds" : "the whole boot");
+        printf("FUXILOG: the window is %s\n", windowed ? "the last 60 seconds" : "the whole boot");
+        /* The whole store takes minutes; the three telephony subsystems are what the baseband question lives in. */
+        NSPredicate *predicate = [NSPredicate predicateWithFormat:
+            @"subsystem == %@ OR subsystem == %@ OR subsystem == %@",
+            @"com.apple.telephony.abm", @"com.apple.telephony.bb", @"com.apple.CommCenter"];
+        if (file) fprintf(file, "# store %s, predicate the three telephony subsystems\n", windowed ? "last 60 s" : "whole boot");
         id entries = ((id (*)(id, SEL, NSUInteger, id, id, NSError **))objc_msgSend)(
-            store, @selector(entriesEnumeratorWithOptions:position:predicate:error:), 0, position, nil, &error);
+            store, @selector(entriesEnumeratorWithOptions:position:predicate:error:), 0, position, predicate, &error);
         if (!entries) {
             printf("FUXILOG: no entries: %s\n", (error ? error.description : @"nil").UTF8String);
             return 3;
