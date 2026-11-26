@@ -34,7 +34,7 @@ entitlements.write_bytes(plistlib.dumps({
 binary = out / "fuxi-logdump"
 subprocess.run(["xcrun", "clang", "-target", target, "-isysroot", ios, "-O2", "-g0", "-Wall", "-Wextra", "-Werror",
                 "-fobjc-arc", str(PACKAGE / "fuxi-logdump.m"),
-                "-framework", "Foundation", "-lz", "-o", str(binary)], check=True)
+                "-framework", "Foundation", "-framework", "IOKit", "-lz", "-o", str(binary)], check=True)
 subprocess.run(["codesign", "--force", "--sign", "-", "--pagesize", "4096", "--identifier",
                 "org.unixnu.fuxi.logdump", "--entitlements", str(entitlements), str(binary)], check=True)
 subprocess.run(["codesign", "--verify", "--strict", str(binary)], check=True)

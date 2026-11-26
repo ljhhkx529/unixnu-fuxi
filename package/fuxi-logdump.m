@@ -48,6 +48,7 @@ static bool interesting(NSString *process, NSString *subsystem, NSString *catego
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/wait.h>
+#include <IOKit/IOKitLib.h>
 #include <sys/stat.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -339,6 +340,109 @@ static void dumpTelephonyPlists(FILE *file)
     fflush(file);
 }
 
+static void storeDump(FILE *file)
+{
+        Class storeClass = NSClassFromString(@"OSLogStore");
+        if (!storeClass) {
+            /* OSLogStore lives in the OSLog framework, not in Foundation; without loading it the class is nil. */
+            (void)dlopen("/System/Library/Frameworks/OSLog.framework/OSLog", RTLD_NOW);
+            storeClass = NSClassFromString(@"OSLogStore");
+        }
+        if (file) fprintf(file, "# store class %s\n", storeClass ? "present" : "missing");
+        if (!storeClass) {
+            printf("FUXILOG: OSLogStore is not in this userspace\n");
+            return;
+        }
+        NSError *error = nil;
+        id store = nil;
+        @try {
+            store = ((id (*)(Class, SEL, NSInteger, NSError **))objc_msgSend)(
+                storeClass, @selector(storeWithScope:error:), 0, &error);
+        } @catch (NSException *exception) {
+            if (file) fprintf(file, "# store exception %s\n", exception.reason.UTF8String ?: "?");
+            printf("FUXILOG: store exception %s\n", exception.reason.UTF8String ?: "?");
+        }
+        if (!store) {
+            if (file) fprintf(file, "# store missing: %s\n", (error ? error.description : @"nil").UTF8String);
+            printf("FUXILOG: no store: %s\n", (error ? error.description : @"nil").UTF8String);
+            return;
+        }
+        if (file) fprintf(file, "# store ready\n");
+        /* Only the recent window: the whole-boot enumeration takes minutes and the console read it too early. */
+        id position = nil;
+        const BOOL windowed = [store respondsToSelector:@selector(positionWithTimeIntervalSinceNow:)];
+        if (windowed) {
+            position = ((id (*)(id, SEL, NSTimeInterval))objc_msgSend)(store, @selector(positionWithTimeIntervalSinceNow:), -60.0);
+        }
+        if (!position) {
+            position = ((id (*)(id, SEL, NSTimeInterval))objc_msgSend)(store, @selector(positionWithTimeIntervalSinceLatestBoot:), 0);
+        }
+        printf("FUXILOG: the window is %s\n", windowed ? "the last 60 seconds" : "the whole boot");
+        /* The whole store takes minutes; the three telephony subsystems are what the baseband question lives in. */
+        NSPredicate *predicate = [NSPredicate predicateWithFormat:
+            @"subsystem == %@ OR subsystem == %@ OR subsystem == %@",
+            @"com.apple.telephony.abm", @"com.apple.telephony.bb", @"com.apple.CommCenter"];
+        if (file) fprintf(file, "# store %s, predicate the three telephony subsystems\n", windowed ? "last 60 s" : "whole boot");
+        id entries = ((id (*)(id, SEL, NSUInteger, id, id, NSError **))objc_msgSend)(
+            store, @selector(entriesEnumeratorWithOptions:position:predicate:error:), 0, position, predicate, &error);
+        if (!entries) {
+            printf("FUXILOG: no entries: %s\n", (error ? error.description : @"nil").UTF8String);
+            return;
+        }
+        NSDate *start = nil;
+        unsigned seen = 0, printed = 0;
+        for (id entry in entries) {
+            @autoreleasepool {
+                NSString *process = [entry respondsToSelector:@selector(process)] ? [entry valueForKey:@"process"] : @"";
+                NSString *subsystem = [entry respondsToSelector:@selector(subsystem)] ? [entry valueForKey:@"subsystem"] : @"";
+                NSString *category = [entry respondsToSelector:@selector(category)] ? [entry valueForKey:@"category"] : @"";
+                if (!interesting(process, subsystem, category)) continue;
+                ++seen;
+                /* 600 lines of console is about what the capture keeps clean; the rest is counted below. */
+                if (printed >= 600) continue;
+                const NSInteger level = [entry respondsToSelector:@selector(level)] ? [[entry valueForKey:@"level"] integerValue] : 0;
+                NSDate *date = [entry valueForKey:@"date"];
+                if (!start) start = date;
+                const double at = [date timeIntervalSinceDate:start];
+                NSString *message = [entry valueForKey:@"composedMessage"];
+                if (message.length > 300) message = [message substringToIndex:300];
+                printf("FUXILOG %8.3f %s %s:%s %s %s\n", at, process.UTF8String ?: "?",
+                       subsystem.UTF8String ?: "", category.UTF8String ?: "", levelName(level),
+                       message.UTF8String ?: "");
+                if (file) fprintf(file, "%8.3f %s %s:%s %s %s\n", at, process.UTF8String ?: "?",
+                       subsystem.UTF8String ?: "", category.UTF8String ?: "", levelName(level),
+                       message.UTF8String ?: "");
+                ++printed;
+            }
+        }
+        printf("FUXILOG: %u telephony entries, %u printed\n", seen, printed);
+    fflush(file);
+}
+
+static void dumpBasebandState(FILE *file)
+{
+    if (!file) return;
+    io_iterator_t iterator = 0;
+    if (IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("AppleBaseband"), &iterator) != KERN_SUCCESS) {
+        fprintf(file, "# iokit AppleBaseband: no matching service\n");
+        return;
+    }
+    io_service_t service = 0;
+    unsigned found = 0;
+    while ((service = IOIteratorNext(iterator))) {
+        CFMutableDictionaryRef properties = NULL;
+        if (IORegistryEntryCreateCFProperties(service, &properties, kCFAllocatorDefault, 0) == KERN_SUCCESS && properties) {
+            NSString *text = [(__bridge NSDictionary *)properties description];
+            if (text.length > 500) text = [text substringToIndex:500];
+            fprintf(file, "# iokit AppleBaseband %u %s\n", ++found, text.UTF8String);
+            CFRelease(properties);
+        }
+        IOObjectRelease(service);
+    }
+    IOObjectRelease(iterator);
+    fflush(file);
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -432,83 +536,21 @@ int main(void)
            half leaves the retries behind without spending the console too early. */
         sleep(15);
         dumpTelephonyPlists(file);
-        Class storeClass = NSClassFromString(@"OSLogStore");
-        if (!storeClass) {
-            /* OSLogStore lives in the OSLog framework, not in Foundation; without loading it the class is nil. */
-            (void)dlopen("/System/Library/Frameworks/OSLog.framework/OSLog", RTLD_NOW);
-            storeClass = NSClassFromString(@"OSLogStore");
-        }
-        if (file) fprintf(file, "# store class %s\n", storeClass ? "present" : "missing");
-        if (!storeClass) {
-            printf("FUXILOG: OSLogStore is not in this userspace\n");
-            return 1;
-        }
-        NSError *error = nil;
-        id store = nil;
-        @try {
-            store = ((id (*)(Class, SEL, NSInteger, NSError **))objc_msgSend)(
-                storeClass, @selector(storeWithScope:error:), 0, &error);
-        } @catch (NSException *exception) {
-            if (file) fprintf(file, "# store exception %s\n", exception.reason.UTF8String ?: "?");
-            printf("FUXILOG: store exception %s\n", exception.reason.UTF8String ?: "?");
-        }
-        if (!store) {
-            if (file) fprintf(file, "# store missing: %s\n", (error ? error.description : @"nil").UTF8String);
-            printf("FUXILOG: no store: %s\n", (error ? error.description : @"nil").UTF8String);
-            return 2;
-        }
-        if (file) fprintf(file, "# store ready\n");
-        /* Only the recent window: the whole-boot enumeration takes minutes and the console read it too early. */
-        id position = nil;
-        const BOOL windowed = [store respondsToSelector:@selector(positionWithTimeIntervalSinceNow:)];
-        if (windowed) {
-            position = ((id (*)(id, SEL, NSTimeInterval))objc_msgSend)(store, @selector(positionWithTimeIntervalSinceNow:), -60.0);
-        }
-        if (!position) {
-            position = ((id (*)(id, SEL, NSTimeInterval))objc_msgSend)(store, @selector(positionWithTimeIntervalSinceLatestBoot:), 0);
-        }
-        printf("FUXILOG: the window is %s\n", windowed ? "the last 60 seconds" : "the whole boot");
-        /* The whole store takes minutes; the three telephony subsystems are what the baseband question lives in. */
-        NSPredicate *predicate = [NSPredicate predicateWithFormat:
-            @"subsystem == %@ OR subsystem == %@ OR subsystem == %@",
-            @"com.apple.telephony.abm", @"com.apple.telephony.bb", @"com.apple.CommCenter"];
-        if (file) fprintf(file, "# store %s, predicate the three telephony subsystems\n", windowed ? "last 60 s" : "whole boot");
-        id entries = ((id (*)(id, SEL, NSUInteger, id, id, NSError **))objc_msgSend)(
-            store, @selector(entriesEnumeratorWithOptions:position:predicate:error:), 0, position, predicate, &error);
-        if (!entries) {
-            printf("FUXILOG: no entries: %s\n", (error ? error.description : @"nil").UTF8String);
-            return 3;
-        }
-        NSDate *start = nil;
-        unsigned seen = 0, printed = 0;
-        for (id entry in entries) {
-            @autoreleasepool {
-                NSString *process = [entry respondsToSelector:@selector(process)] ? [entry valueForKey:@"process"] : @"";
-                NSString *subsystem = [entry respondsToSelector:@selector(subsystem)] ? [entry valueForKey:@"subsystem"] : @"";
-                NSString *category = [entry respondsToSelector:@selector(category)] ? [entry valueForKey:@"category"] : @"";
-                if (!interesting(process, subsystem, category)) continue;
-                ++seen;
-                /* 600 lines of console is about what the capture keeps clean; the rest is counted below. */
-                if (printed >= 600) continue;
-                const NSInteger level = [entry respondsToSelector:@selector(level)] ? [[entry valueForKey:@"level"] integerValue] : 0;
-                NSDate *date = [entry valueForKey:@"date"];
-                if (!start) start = date;
-                const double at = [date timeIntervalSinceDate:start];
-                NSString *message = [entry valueForKey:@"composedMessage"];
-                if (message.length > 300) message = [message substringToIndex:300];
-                printf("FUXILOG %8.3f %s %s:%s %s %s\n", at, process.UTF8String ?: "?",
-                       subsystem.UTF8String ?: "", category.UTF8String ?: "", levelName(level),
-                       message.UTF8String ?: "");
-                if (file) fprintf(file, "%8.3f %s %s:%s %s %s\n", at, process.UTF8String ?: "?",
-                       subsystem.UTF8String ?: "", category.UTF8String ?: "", levelName(level),
-                       message.UTF8String ?: "");
-                ++printed;
+        dumpBasebandState(file);
+        for (int attempt = 1; attempt <= 3; ++attempt) {
+            fflush(file);
+            const pid_t child = fork();
+            if (child == 0) { storeDump(file); _exit(0); }
+            int status = 0;
+            bool finished = false;
+            for (int i = 0; i < 240 && !finished; ++i) {
+                if (waitpid(child, &status, WNOHANG) == child) { finished = true; break; }
+                usleep(500000);
             }
-        }
-        printf("FUXILOG: %u telephony entries, %u printed\n", seen, printed);
-        if (file) {
-            fprintf(file, "FUXILOG: %u telephony entries, %u printed\n", seen, printed);
-            fclose(file);
+            if (!finished) { (void)kill(child, SIGKILL); (void)waitpid(child, &status, 0); }
+            if (file) { fprintf(file, "# store attempt %d %s\n", attempt, finished ? "finished" : "timed out"); fflush(file); }
+            printf("FUXILOG: store attempt %d %s\n", attempt, finished ? "finished" : "timed out");
+            if (attempt < 3) sleep(20);
         }
     }
     return 0;
