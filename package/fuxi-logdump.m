@@ -295,6 +295,50 @@ static void enableTelephonyPrivateLogs(FILE *file)
     printf("FUXILOG: private telephony logs %u/%u\n", written, (unsigned)(sizeof names / sizeof names[0]));
 }
 
+
+static void dumpTelephonyPlists(FILE *file)
+{
+    if (!file) return;
+    static const char *paths[] = {
+        "/private/var/preferences/com.apple.CommCenter.plist",
+        "/private/var/preferences/com.apple.cellular.plist",
+        "/private/var/preferences/com.apple.telephony.plist",
+        "/private/var/mobile/Library/Preferences/com.apple.cellular.plist",
+        "/private/var/mobile/Library/Preferences/com.apple.CommCenter.plist",
+    };
+    static const char *roots[] = {
+        "/private/var/preferences", "/private/var/mobile/Library/Preferences",
+    };
+    fprintf(file, "# telephony prefs at %u paths\n", (unsigned)(sizeof paths / sizeof paths[0]));
+    for (unsigned i = 0; i < sizeof roots / sizeof roots[0]; ++i) {
+        NSFileManager *manager = [NSFileManager defaultManager];
+        NSArray *names = [manager contentsOfDirectoryAtPath:[NSString stringWithUTF8String:roots[i]] error:NULL];
+        for (NSString *name in names) {
+            if ([name containsString:@"cell"] || [name containsString:@"CommCenter"] || [name containsString:@"telephony"] || [name containsString:@"baseband"])
+                fprintf(file, "#   present %s/%s\n", roots[i], name.UTF8String);
+        }
+    }
+    for (unsigned i = 0; i < sizeof paths / sizeof paths[0]; ++i) {
+        NSString *path = [NSString stringWithUTF8String:paths[i]];
+        NSData *data = [NSData dataWithContentsOfFile:path];
+        if (!data) { fprintf(file, "#   %s missing\n", paths[i]); continue; }
+        NSError *error = nil;
+        id plist = [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:NULL error:&error];
+        if (!plist) { fprintf(file, "#   %s unreadable %s\n", paths[i], error.description.UTF8String ?: ""); continue; }
+        fprintf(file, "#   %s (%lu bytes)\n", paths[i], (unsigned long)data.length);
+        if ([plist isKindOfClass:[NSDictionary class]]) {
+            NSDictionary *dict = (NSDictionary *)plist;
+            for (NSString *key in dict.allKeys) {
+                id value = dict[key];
+                NSString *text = [value isKindOfClass:[NSString class]] ? value : [value description];
+                if (text.length > 400) text = [text substringToIndex:400];
+                fprintf(file, "#     %s = %s\n", key.UTF8String, text.UTF8String ?: "?");
+            }
+        }
+    }
+    fflush(file);
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -387,6 +431,7 @@ int main(void)
         /* CommCenter starts around 20 s and ABM has made its decision well before a minute; a minute and a
            half leaves the retries behind without spending the console too early. */
         sleep(15);
+        dumpTelephonyPlists(file);
         Class storeClass = NSClassFromString(@"OSLogStore");
         if (!storeClass) {
             /* OSLogStore lives in the OSLog framework, not in Foundation; without loading it the class is nil. */
