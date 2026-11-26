@@ -10,7 +10,7 @@ import subprocess
 
 # G1.3 candidate: the first three fixed, non-hardware steps only.  Descriptor,
 # mapping, MMIO and SMEM-write operations remain compile-time unimplemented.
-QUD_REVISION = 'ac6d9d4cca798d426989be60c760e0036a2f4acc'
+QUD_REVISION = '40c60f52c9ba74b7704cc44c50a13c56fb1dd0d2'
 XNU_REVISION = 'd8b80295118ef25ac3a784134bcf95cd8e88109f'
 PROFILE = 'darwin23-fuxi'
 

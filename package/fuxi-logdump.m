@@ -443,6 +443,27 @@ static void dumpBasebandState(FILE *file)
     fflush(file);
 }
 
+static void dumpCoreTelephony(FILE *file)
+{
+    if (!file) return;
+    void *ct = dlopen("/System/Library/Frameworks/CoreTelephony.framework/CoreTelephony", RTLD_NOW);
+    if (!ct) { fprintf(file, "# coretelephony missing\n"); return; }
+    static const char *const names[] = {
+        "CTSIMSupportCopySimSlotMapping", "CTSIMSupportGetSimStatus",
+        "CTSIMSupportCopySimUniqueIdentifier", "CTSIMSupportCopyMobileSubscriberIdentity",
+    };
+    for (unsigned i = 0; i < sizeof names / sizeof names[0]; ++i) {
+        void *symbol = dlsym(ct, names[i]);
+        if (!symbol) { fprintf(file, "# ct %s missing\n", names[i]); continue; }
+        CFTypeRef value = ((CFTypeRef (*)(void))symbol)();
+        NSString *text = value ? [(__bridge id)value description] : @"nil";
+        if (text.length > 400) text = [text substringToIndex:400];
+        fprintf(file, "# ct %s = %s\n", names[i], text.UTF8String ?: "?");
+        if (value) CFRelease(value);
+    }
+    fflush(file);
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -537,6 +558,10 @@ int main(void)
         sleep(15);
         dumpTelephonyPlists(file);
         dumpBasebandState(file);
+        dumpCoreTelephony(file);
+        sleep(45);
+        dumpTelephonyPlists(file);
+        dumpCoreTelephony(file);
         for (int attempt = 1; attempt <= 3; ++attempt) {
             fflush(file);
             const pid_t child = fork();
@@ -552,6 +577,9 @@ int main(void)
             printf("FUXILOG: store attempt %d %s\n", attempt, finished ? "finished" : "timed out");
             if (attempt < 3) sleep(20);
         }
+        sleep(30);
+        dumpTelephonyPlists(file);
+        dumpCoreTelephony(file);
     }
     return 0;
 }
